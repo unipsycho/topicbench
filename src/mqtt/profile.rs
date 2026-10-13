@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::PathBuf;
 
-/// Saved broker connection settings (not yet wired to rumqttc).
+/// Saved broker connection settings + topic filters.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ConnectionProfile {
     pub id: String,
@@ -19,6 +19,9 @@ pub struct ConnectionProfile {
     pub password: String,
     #[serde(default)]
     pub use_tls: bool,
+    /// MQTT topic filters applied on connect (`+` / `#` OK).
+    #[serde(default)]
+    pub subscriptions: Vec<String>,
 }
 
 impl ConnectionProfile {
@@ -32,6 +35,7 @@ impl ConnectionProfile {
             username: String::new(),
             password: String::new(),
             use_tls: false,
+            subscriptions: Vec::new(),
         }
     }
 
@@ -45,6 +49,7 @@ impl ConnectionProfile {
             username: String::new(),
             password: String::new(),
             use_tls: false,
+            subscriptions: vec!["sensors/#".into()],
         }
     }
 
@@ -58,6 +63,7 @@ impl ConnectionProfile {
             username: String::new(),
             password: String::new(),
             use_tls: false,
+            subscriptions: vec!["devices/+/telemetry".into()],
         }
     }
 }
