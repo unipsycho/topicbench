@@ -1,13 +1,15 @@
 //! rumqttc worker threads: connect, stay connected, feed UI via channel.
 //!
-//! State updates are debounced and reconnects use exponential backoff so a
-//! failing broker (auth, offline, etc.) cannot flood the UI hundreds of times/sec.
+//! Intentional disconnect sets `stop` so the worker exits and does **not**
+//! auto-reconnect until the user Connects again.
 
 use crate::mqtt::profile::ConnectionProfile;
 use crate::mqtt::session::SessionState;
 use eframe::egui::Context;
 use rumqttc::{Client, Event, MqttOptions, Packet, QoS, Transport};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Sender;
+use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -26,21 +28,25 @@ pub enum BrokerEvent {
     },
 }
 
+/// Handle returned to the UI: client for pub/sub + stop flag for Disconnect.
+pub struct LiveHandle {
+    pub client: Client,
+    pub stop: Arc<AtomicBool>,
+}
+
 const MIN_BACKOFF: Duration = Duration::from_millis(500);
 const MAX_BACKOFF: Duration = Duration::from_secs(15);
-/// Don't re-emit identical/near-identical reconnect spam faster than this.
 const STATUS_MIN_INTERVAL: Duration = Duration::from_millis(400);
 
-/// Build options + spawn event-loop thread; returns a cloneable `Client` for sub/pub.
+/// Build options + spawn event-loop thread.
 pub fn spawn(
     profile: &ConnectionProfile,
     event_tx: Sender<BrokerEvent>,
     ctx: Context,
-) -> Result<Client, String> {
+) -> Result<LiveHandle, String> {
     let mut opts = MqttOptions::new(&profile.client_id, &profile.host, profile.port);
     opts.set_keep_alive(Duration::from_secs(30));
     opts.set_clean_session(true);
-    // Soften rumqttc's own reconnect aggression where supported.
     opts.set_pending_throttle(Duration::from_secs(1));
     if !profile.username.is_empty() {
         opts.set_credentials(&profile.username, &profile.password);
@@ -50,6 +56,8 @@ pub fn spawn(
     }
 
     let (client, mut connection) = Client::new(opts, 100);
+    let stop = Arc::new(AtomicBool::new(false));
+    let stop_w = stop.clone();
     let profile_id = profile.id.clone();
     let host = profile.host.clone();
     let port = profile.port;
@@ -78,8 +86,16 @@ pub fn spawn(
                 .unwrap_or_else(Instant::now);
 
             for notification in connection.iter() {
+                // User Disconnect — leave the loop; do not reconnect.
+                if stop_w.load(Ordering::SeqCst) {
+                    break;
+                }
+
                 match notification {
                     Ok(Event::Incoming(Packet::ConnAck(ack))) => {
+                        if stop_w.load(Ordering::SeqCst) {
+                            break;
+                        }
                         if ack.code == rumqttc::ConnectReturnCode::Success {
                             backoff = MIN_BACKOFF;
                             emit_state(
@@ -93,22 +109,31 @@ pub fn spawn(
                                 true,
                             );
                         } else {
-                            // Auth/refusal — do not spin; back off before rumqttc retries.
                             emit_state(
                                 &tx,
                                 &ctx,
                                 &profile_id,
                                 SessionState::Disconnected,
-                                format!("Connection refused: {:?} (retry in {}s)", ack.code, backoff.as_secs().max(1)),
+                                format!(
+                                    "Connection refused: {:?} (retry in {}s)",
+                                    ack.code,
+                                    backoff.as_secs().max(1)
+                                ),
                                 &mut last_key,
                                 &mut last_emit,
                                 true,
                             );
+                            if stop_w.load(Ordering::SeqCst) {
+                                break;
+                            }
                             thread::sleep(backoff);
                             backoff = (backoff.saturating_mul(2)).min(MAX_BACKOFF);
                         }
                     }
                     Ok(Event::Incoming(Packet::Publish(p))) => {
+                        if stop_w.load(Ordering::SeqCst) {
+                            break;
+                        }
                         let payload = String::from_utf8_lossy(&p.payload).into_owned();
                         let _ = tx.send(BrokerEvent::Message {
                             profile_id: profile_id.clone(),
@@ -118,6 +143,9 @@ pub fn spawn(
                         ctx.request_repaint();
                     }
                     Ok(Event::Incoming(Packet::Disconnect)) => {
+                        if stop_w.load(Ordering::SeqCst) {
+                            break;
+                        }
                         emit_state(
                             &tx,
                             &ctx,
@@ -131,7 +159,9 @@ pub fn spawn(
                     }
                     Ok(_) => {}
                     Err(e) => {
-                        // rumqttc reconnects on the next iter poll — pause first.
+                        if stop_w.load(Ordering::SeqCst) {
+                            break;
+                        }
                         emit_state(
                             &tx,
                             &ctx,
@@ -140,20 +170,29 @@ pub fn spawn(
                             format!("Reconnecting in {}s… ({e})", backoff.as_secs().max(1)),
                             &mut last_key,
                             &mut last_emit,
-                            false, // throttle identical reconnect spam
+                            false,
                         );
+                        if stop_w.load(Ordering::SeqCst) {
+                            break;
+                        }
                         thread::sleep(backoff);
                         backoff = (backoff.saturating_mul(2)).min(MAX_BACKOFF);
                     }
                 }
             }
 
+            // Final stable status: intentional stop vs unexpected end
+            let detail = if stop_w.load(Ordering::SeqCst) {
+                "Disconnected".to_string()
+            } else {
+                "Session ended".to_string()
+            };
             emit_state(
                 &tx,
                 &ctx,
                 &profile_id,
                 SessionState::Disconnected,
-                "Session ended".into(),
+                detail,
                 &mut last_key,
                 &mut last_emit,
                 true,
@@ -161,10 +200,9 @@ pub fn spawn(
         })
         .map_err(|e| format!("spawn worker: {e}"))?;
 
-    Ok(client)
+    Ok(LiveHandle { client, stop })
 }
 
-/// Emit a state event only when it changes, or (for noisy reconnects) at most every STATUS_MIN_INTERVAL.
 #[allow(clippy::too_many_arguments)]
 fn emit_state(
     tx: &Sender<BrokerEvent>,
@@ -181,7 +219,6 @@ fn emit_state(
     if !changed {
         return;
     }
-    // Always emit distinct Connected/Disconnected immediately; throttle Connecting churn.
     let allow = force_if_changed
         || state != SessionState::Connecting
         || last_emit.elapsed() >= STATUS_MIN_INTERVAL;

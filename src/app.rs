@@ -137,71 +137,110 @@ impl eframe::App for MqttMonitorApp {
             ctx.request_repaint_after(Duration::from_millis(32));
         }
 
-        // Ribbon-style top bar
-        egui::TopBottomPanel::top("ribbon").exact_height(72.0).show(ctx, |ui| {
-            ui.horizontal_centered(|ui| {
+        // Word/Excel-style ribbon: logo + labeled groups (Panels ready for Format/Views later)
+        egui::TopBottomPanel::top("ribbon").exact_height(96.0).show(ctx, |ui| {
+            ui.add_space(4.0);
+            ui.horizontal(|ui| {
                 if let Some(logo) = &self.logo {
+                    // ~2× wider than prior 64px square → ~128×64 wordmark-friendly box
                     ui.add(
                         egui::Image::new(logo)
-                            .fit_to_exact_size(egui::vec2(64.0, 64.0))
+                            .fit_to_exact_size(egui::vec2(128.0, 64.0))
+                            .maintain_aspect_ratio(true)
                             .sense(egui::Sense::hover()),
                     );
-                    ui.add_space(10.0);
+                    ui.add_space(12.0);
                 }
-                ui.vertical(|ui| {
-                    ui.add_space(4.0);
-                    ui.horizontal(|ui| {
-                        ui.heading("MQTT Monitor");
-                        ui.separator();
-                        ui.label(&self.status);
-                    });
-                    ui.horizontal(|ui| {
-                        ui.label("Panels");
-                        if self
-                            .icons
-                            .button(ui, "data-sync", self.panels.live_traffic, "Live traffic")
-                            .clicked()
-                        {
-                            self.panels.live_traffic = !self.panels.live_traffic;
-                        }
-                        if self
-                            .icons
-                            .button(ui, "data-exchange", self.panels.publish, "Publish")
-                            .clicked()
-                        {
-                            self.panels.publish = !self.panels.publish;
-                        }
-                        if self
-                            .icons
-                            .button(ui, "iot-hub", self.panels.stickies, "Sticky topics")
-                            .clicked()
-                        {
-                            self.panels.stickies = !self.panels.stickies;
-                        }
-                        if self
-                            .icons
-                            .button(ui, "hierarchy-tree", self.panels.topic_tree, "Topic tree")
-                            .clicked()
-                        {
-                            self.panels.topic_tree = !self.panels.topic_tree;
-                        }
 
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            if self
-                                .icons
-                                .button(
-                                    ui,
-                                    "settings-checklist",
-                                    self.settings_open,
-                                    "Settings",
-                                )
-                                .clicked()
-                            {
-                                self.settings_open = true;
-                            }
+                // Group: Panels
+                egui::Frame::NONE
+                    .stroke(egui::Stroke::new(
+                        1.0_f32,
+                        ui.visuals().widgets.noninteractive.bg_stroke.color,
+                    ))
+                    .inner_margin(egui::Margin::symmetric(8, 4))
+                    .show(ui, |ui| {
+                        ui.vertical(|ui| {
+                            ui.label(egui::RichText::new("Panels").strong().small());
+                            ui.horizontal(|ui| {
+                                if self
+                                    .icons
+                                    .button(ui, "data-sync", self.panels.live_traffic, "Live traffic")
+                                    .clicked()
+                                {
+                                    self.panels.live_traffic = !self.panels.live_traffic;
+                                }
+                                if self
+                                    .icons
+                                    .button(ui, "data-exchange", self.panels.publish, "Publish")
+                                    .clicked()
+                                {
+                                    self.panels.publish = !self.panels.publish;
+                                }
+                                if self
+                                    .icons
+                                    .button(ui, "iot-hub", self.panels.stickies, "Sticky topics")
+                                    .clicked()
+                                {
+                                    self.panels.stickies = !self.panels.stickies;
+                                }
+                                if self
+                                    .icons
+                                    .button(ui, "hierarchy-tree", self.panels.topic_tree, "Topic tree")
+                                    .clicked()
+                                {
+                                    self.panels.topic_tree = !self.panels.topic_tree;
+                                }
+                            });
                         });
                     });
+
+                // Placeholder group slot for future Format / Views
+                ui.add_space(8.0);
+                egui::Frame::NONE
+                    .stroke(egui::Stroke::new(
+                        1.0_f32,
+                        ui.visuals().widgets.noninteractive.bg_stroke.color,
+                    ))
+                    .inner_margin(egui::Margin::symmetric(8, 4))
+                    .show(ui, |ui| {
+                        ui.vertical(|ui| {
+                            ui.label(egui::RichText::new("Views").strong().small());
+                            ui.weak("(soon)");
+                        });
+                    });
+
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    egui::Frame::NONE
+                        .stroke(egui::Stroke::new(
+                            1.0_f32,
+                            ui.visuals().widgets.noninteractive.bg_stroke.color,
+                        ))
+                        .inner_margin(egui::Margin::symmetric(8, 4))
+                        .show(ui, |ui| {
+                            ui.vertical(|ui| {
+                                ui.label(egui::RichText::new("App").strong().small());
+                                if self
+                                    .icons
+                                    .button(
+                                        ui,
+                                        "settings-checklist",
+                                        self.settings_open,
+                                        "Settings",
+                                    )
+                                    .clicked()
+                                {
+                                    self.settings_open = true;
+                                }
+                            });
+                        });
                 });
+            });
+            ui.add_space(2.0);
+            ui.horizontal(|ui| {
+                ui.heading("MQTT Monitor");
+                ui.separator();
+                ui.label(&self.status);
             });
         });
 

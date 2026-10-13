@@ -1,11 +1,11 @@
 //! Embedded UI icons from `assets/icons/`.
 
-use eframe::egui::{self, ImageButton, TextureHandle, Vec2};
+use eframe::egui::{self, Color32, Sense, Stroke, TextureHandle, Vec2};
 use std::collections::HashMap;
 
-const ICON_PX: f32 = 18.0;
+/// Ribbon icon size (larger / more readable).
+const ICON_PX: f32 = 28.0;
 
-/// Named textures loaded once at startup.
 pub struct IconSet {
     textures: HashMap<&'static str, TextureHandle>,
 }
@@ -25,27 +25,50 @@ impl IconSet {
         self.textures.get(name)
     }
 
-    /// Image-only button (toolbar toggles).
+    /// Ribbon toggle: larger icon, **1px** border only (no padded multi-layer frame).
     pub fn button(&self, ui: &mut egui::Ui, name: &str, selected: bool, tip: &str) -> egui::Response {
+        let size = Vec2::splat(ICON_PX + 4.0);
+        let (rect, response) = ui.allocate_exact_size(size, Sense::click());
+        let response = response.on_hover_text(tip);
+
+        let border = if selected {
+            Color32::from_rgb(70, 140, 200)
+        } else {
+            ui.visuals().widgets.inactive.fg_stroke.color
+        };
+        ui.painter().rect_stroke(
+            rect,
+            2.0,
+            Stroke::new(1.0_f32, border),
+            egui::StrokeKind::Outside,
+        );
+
         if let Some(tex) = self.get(name) {
             let mut img = egui::Image::new(tex).fit_to_exact_size(Vec2::splat(ICON_PX));
             if selected {
-                img = img.tint(egui::Color32::from_rgb(120, 200, 150));
+                img = img.tint(Color32::from_rgb(100, 180, 230));
             }
-            ui.add(ImageButton::new(img)).on_hover_text(tip)
+            let img_rect = egui::Rect::from_center_size(rect.center(), Vec2::splat(ICON_PX));
+            img.paint_at(ui, img_rect);
         } else {
-            ui.small_button(tip).on_hover_text(tip)
+            ui.painter().text(
+                rect.center(),
+                egui::Align2::CENTER_CENTER,
+                "·",
+                egui::FontId::proportional(16.0),
+                border,
+            );
         }
+        response
     }
 
-    /// Icon + label button.
     pub fn labeled_button(&self, ui: &mut egui::Ui, name: &str, label: &str) -> egui::Response {
         ui.horizontal(|ui| {
             if let Some(tex) = self.get(name) {
                 ui.add(
                     egui::Image::new(tex)
-                        .fit_to_exact_size(Vec2::splat(ICON_PX))
-                        .sense(egui::Sense::hover()),
+                        .fit_to_exact_size(Vec2::splat(20.0))
+                        .sense(Sense::hover()),
                 );
             }
             ui.button(label)
@@ -61,7 +84,6 @@ fn load_png(ctx: &egui::Context, id: &str, bytes: &[u8]) -> Option<TextureHandle
     Some(ctx.load_texture(id, color, egui::TextureOptions::LINEAR))
 }
 
-/// Icons we ship (filenames without .png). Sheet excluded.
 const ICONS: &[(&str, &[u8])] = &[
     ("api-docs", include_bytes!("../../assets/icons/api-docs.png")),
     ("api-methods", include_bytes!("../../assets/icons/api-methods.png")),
