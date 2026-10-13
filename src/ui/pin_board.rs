@@ -1,24 +1,48 @@
 //! Sticky strip — Raw / Value / Graph; presentation on the right.
+//! Only stickies for currently **connected** profiles are shown.
 
 use crate::mqtt::pins::{DetectedValue, PinBoard, StickyTopic, StickyViewMode};
+use crate::mqtt::profile::ProfileStore;
+use crate::mqtt::session::{SessionManager, SessionState};
 use crate::ui::clipboard;
 use crate::ui::flash;
 use crate::ui::search_bar::SearchFilter;
 use eframe::egui::{self, Color32, Pos2, RichText, Stroke};
+use std::collections::HashSet;
 use std::time::Instant;
 
-pub fn draw(ui: &mut egui::Ui, pins: &mut PinBoard, filter: &SearchFilter, status: &mut String) {
+pub fn draw(
+    ui: &mut egui::Ui,
+    pins: &mut PinBoard,
+    profiles: &mut ProfileStore,
+    sessions: &SessionManager,
+    filter: &SearchFilter,
+    status: &mut String,
+) {
     ui.heading("Sticky topics");
-    ui.label("Value/graph on the right — Raw · Value · Graph.");
+    ui.label("Value/graph on the right — Raw · Value · Graph. Shown for connected profiles only.");
     ui.add_space(4.0);
 
-    if pins.items.is_empty() {
-        ui.weak("No stickies yet — mark a topic sticky from the tree.");
+    let connected: HashSet<&str> = sessions
+        .open
+        .iter()
+        .filter(|(_, s)| s.state == SessionState::Connected)
+        .map(|(id, _)| id.as_str())
+        .collect();
+
+    let keys: Vec<String> = pins
+        .items
+        .iter()
+        .filter(|(_, p)| connected.contains(p.profile_id.as_str()))
+        .map(|(k, _)| k.clone())
+        .collect();
+
+    if keys.is_empty() {
+        ui.weak("No stickies for connected profiles — mark a topic sticky from the tree.");
         return;
     }
 
     let now = Instant::now();
-    let keys: Vec<String> = pins.items.keys().cloned().collect();
     let mut any = false;
     for key in keys {
         let Some(pin) = pins.items.get(&key).cloned() else {
@@ -73,6 +97,7 @@ pub fn draw(ui: &mut egui::Ui, pins: &mut PinBoard, filter: &SearchFilter, statu
                             }
                             if ui.small_button("Unstick").clicked() {
                                 pins.unpin(&pin.profile_id, &pin.topic);
+                                profiles.set_sticky_and_save(&pin.profile_id, &pin.topic, false);
                             }
                         });
                     });

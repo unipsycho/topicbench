@@ -3,10 +3,11 @@
 use crate::mqtt::live::{self, BrokerEvent};
 use crate::mqtt::pins::PinBoard;
 use crate::mqtt::profile::ConnectionProfile;
+use crate::mqtt::subscribe;
 use crate::mqtt::topic_tree::TopicTree;
 use eframe::egui::Context;
 use rumqttc::{Client, QoS};
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::{BTreeMap, HashSet, VecDeque};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::Arc;
@@ -78,7 +79,7 @@ impl SessionManager {
         self.disconnect(&profile.id);
 
         let handle = live::spawn(profile, self.event_tx.clone(), ctx.clone())?;
-        let subscriptions = if profile.subscriptions.is_empty() {
+        let mut subscriptions = if profile.subscriptions.is_empty() {
             self.open
                 .get(&profile.id)
                 .map(|s| s.subscriptions.clone())
@@ -86,6 +87,8 @@ impl SessionManager {
         } else {
             profile.subscriptions.clone()
         };
+        // Avoid broker double-delivery from overlapping filters (e.g. `#` + `sensors/#`).
+        subscribe::prune_redundant(&mut subscriptions);
 
         self.open.insert(
             profile.id.clone(),
@@ -117,7 +120,9 @@ impl SessionManager {
             .get_mut(profile_id)
             .ok_or_else(|| "No open session".to_string())?;
         let old = session.subscriptions.clone();
-        session.subscriptions = filters.to_vec();
+        let mut filters = filters.to_vec();
+        subscribe::prune_redundant(&mut filters);
+        session.subscriptions = filters.clone();
         if session.state != SessionState::Connected {
             return Ok(());
         }
@@ -130,7 +135,7 @@ impl SessionManager {
                 let _ = client.unsubscribe(f);
             }
         }
-        for f in filters {
+        for f in &filters {
             if !old.iter().any(|o| o == f) {
                 client
                     .subscribe(f, QoS::AtLeastOnce)
@@ -198,6 +203,8 @@ impl SessionManager {
         let now = Instant::now();
         let mut status = None;
         let mut resub: Vec<(String, Vec<String>)> = Vec::new();
+        // Same publish delivered once per overlapping subscription — count once.
+        let mut seen_msgs: HashSet<(String, String, String)> = HashSet::new();
 
         while let Ok(ev) = self.event_rx.try_recv() {
             match ev {
@@ -235,6 +242,9 @@ impl SessionManager {
                     topic,
                     payload,
                 } => {
+                    if !seen_msgs.insert((profile_id.clone(), topic.clone(), payload.clone())) {
+                        continue;
+                    }
                     if let Some(session) = self.open.get_mut(&profile_id) {
                         if session.user_stopped {
                             continue;

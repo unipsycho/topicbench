@@ -1,5 +1,6 @@
 //! Left panel: edit profiles (incl. subscriptions), connect, All vs Connected.
 
+use crate::mqtt::pins::PinBoard;
 use crate::mqtt::profile::ProfileStore;
 use crate::mqtt::session::{SessionManager, SessionState};
 use crate::mqtt::settings::AppSettings;
@@ -20,6 +21,7 @@ pub fn draw(
     ui: &mut egui::Ui,
     profiles: &mut ProfileStore,
     sessions: &mut SessionManager,
+    pins: &mut PinBoard,
     settings: &mut AppSettings,
     list_filter: &mut ProfileListFilter,
     icons: &IconSet,
@@ -37,32 +39,13 @@ pub fn draw(
         }
         ui.heading("Profiles");
     });
-    ui.label("Edit, save, connect — subscriptions live on each profile.");
+    ui.label("Edit fields here — New / Save / Delete are on the ribbon.");
     ui.add_space(4.0);
 
     ui.horizontal(|ui| {
         ui.label("Show");
         ui.selectable_value(list_filter, ProfileListFilter::All, "All");
         ui.selectable_value(list_filter, ProfileListFilter::ConnectedOnly, "Connected");
-    });
-
-    ui.horizontal(|ui| {
-        if ui.button("New").clicked() {
-            let id = profiles.add_new();
-            *status = format!("Created profile {id}");
-        }
-        if ui.button("Save").clicked() {
-            match profiles.save() {
-                Ok(()) => *status = profiles.last_io.clone(),
-                Err(e) => *status = e,
-            }
-        }
-        if ui.button("Delete").clicked() {
-            if let Some(id) = profiles.delete_selected() {
-                sessions.close(&id);
-                *status = format!("Deleted profile {id}");
-            }
-        }
     });
     ui.weak(ProfileStore::path().display().to_string());
     ui.add_space(6.0);
@@ -218,6 +201,20 @@ pub fn draw(
                     match sessions.toggle(&profile, ctx) {
                         Ok(msg) => {
                             settings.remember_connected(&id, connecting);
+                            if connecting {
+                                // Persist pruned filters (overlapping subs double-count messages).
+                                let pruned = profiles
+                                    .profiles
+                                    .get_mut(&id)
+                                    .map(|p| subscribe::prune_redundant(&mut p.subscriptions))
+                                    .unwrap_or(false);
+                                if pruned {
+                                    let _ = profiles.save();
+                                }
+                                if let Some(p) = profiles.profiles.get(&id) {
+                                    pins.restore_from_profile(p);
+                                }
+                            }
                             *status = msg;
                         }
                         Err(e) => *status = e,
