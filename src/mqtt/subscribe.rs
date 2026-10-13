@@ -32,6 +32,13 @@ pub fn add_subscription(subs: &mut Vec<String>, filter: &str) -> Result<(), Stri
     Ok(())
 }
 
+/// Remove a subscription filter from a session's list.
+pub fn remove_subscription(subs: &mut Vec<String>, filter: &str) -> bool {
+    let before = subs.len();
+    subs.retain(|s| s != filter);
+    subs.len() != before
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -42,5 +49,15 @@ mod tests {
         assert!(is_valid_filter("building/#"));
         assert!(!is_valid_filter("a/#/b"));
         assert!(!is_valid_filter("a+b"));
+    }
+
+    #[test]
+    fn add_remove_subscription() {
+        let mut subs = Vec::new();
+        add_subscription(&mut subs, "sensors/+/temp").unwrap();
+        add_subscription(&mut subs, "sensors/+/temp").unwrap();
+        assert_eq!(subs.len(), 1);
+        assert!(remove_subscription(&mut subs, "sensors/+/temp"));
+        assert!(subs.is_empty());
     }
 }

@@ -10,18 +10,24 @@ pub struct MqttMonitorApp {
     pub pins: PinBoard,
     pub publish: PublishDraft,
     pub subscribe_topic: String,
+    /// Which open session new subscriptions target.
+    pub subscribe_target: Option<String>,
     pub status: String,
 }
 
-impl Default for MqttMonitorApp {
-    fn default() -> Self {
+impl MqttMonitorApp {
+    /// Load profiles from disk (or samples) on startup.
+    pub fn new() -> Self {
+        let profiles = ProfileStore::load_or_sample();
+        let status = profiles.last_io.clone();
         Self {
-            profiles: ProfileStore::with_sample(),
+            profiles,
             sessions: SessionManager::default(),
             pins: PinBoard::default(),
             publish: PublishDraft::default(),
             subscribe_topic: "sensors/+/temp".into(),
-            status: "Shell ready — connect / subscribe / pin / publish are placeholders.".into(),
+            subscribe_target: None,
+            status,
         }
     }
 }
@@ -33,9 +39,11 @@ impl eframe::App for MqttMonitorApp {
         });
 
         eframe::egui::SidePanel::left("profiles")
-            .default_width(260.0)
+            .default_width(280.0)
             .show(ctx, |ui| {
-                profiles::draw(ui, &mut self.profiles, &mut self.sessions, &mut self.status);
+                eframe::egui::ScrollArea::vertical().show(ui, |ui| {
+                    profiles::draw(ui, &mut self.profiles, &mut self.sessions, &mut self.status);
+                });
             });
 
         eframe::egui::SidePanel::right("publish")
@@ -45,17 +53,20 @@ impl eframe::App for MqttMonitorApp {
             });
 
         eframe::egui::CentralPanel::default().show(ctx, |ui| {
-            subscribe_panel::draw(
-                ui,
-                &mut self.subscribe_topic,
-                &mut self.sessions,
-                &mut self.pins,
-                &mut self.status,
-            );
-            ui.add_space(8.0);
-            ui.separator();
-            ui.add_space(8.0);
-            pin_board::draw(ui, &mut self.pins, &self.sessions);
+            eframe::egui::ScrollArea::vertical().show(ui, |ui| {
+                subscribe_panel::draw(
+                    ui,
+                    &mut self.subscribe_topic,
+                    &mut self.subscribe_target,
+                    &mut self.sessions,
+                    &mut self.pins,
+                    &mut self.status,
+                );
+                ui.add_space(8.0);
+                ui.separator();
+                ui.add_space(8.0);
+                pin_board::draw(ui, &mut self.pins, &self.sessions);
+            });
         });
     }
 }
