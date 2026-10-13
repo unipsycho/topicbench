@@ -15,6 +15,6 @@ fn main() -> eframe::Result<()> {
     eframe::run_native(
         "MQTT Monitor",
         options,
-        Box::new(|_cc| Ok(Box::new(app::MqttMonitorApp::default()))),
+        Box::new(|_cc| Ok(Box::new(app::MqttMonitorApp::new()))),
     )
 }

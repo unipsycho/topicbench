@@ -17,12 +17,14 @@ GUI stack: **egui / eframe** — same toolkit used by ArtCraft Crafting Apps ([P
 
 ```bash
 git clone https://gitlab.com/agileautomation/mqtt-master.git
-cd mqtt-monitor
+cd mqtt-master
 cargo run
 ```
 
+Profiles save to `~/.config/mqtt-monitor/profiles.json` (or `$XDG_CONFIG_HOME/mqtt-monitor/profiles.json`).
+
 Release build: `cargo build --release`  
-Unit tests: `cargo test` (topic-filter validation).
+Unit tests: `cargo test`.
 
 ## Package (optional)
 
@@ -45,4 +47,4 @@ cargo packager --release
 | `src/mqtt/publish.rs` | Publish draft (QoS / retain) |
 | `src/ui/*` | egui panels |
 
-v1 is a **working window + placeholders**. Next: persist profiles, rumqttc connect/subscribe/publish per session, and live pin updates.
+Profiles are editable and persisted; subscriptions pick an open device/profile. Next: rumqttc connect/subscribe/publish per session, and live pin updates.

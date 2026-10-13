@@ -64,4 +64,15 @@ impl SessionManager {
             .map(|(id, _)| id.as_str())
             .collect()
     }
+
+    /// Keep open session display names in sync when a profile is renamed.
+    pub fn sync_profile_name(&mut self, profile_id: &str, profile_name: &str) {
+        if let Some(session) = self.open.get_mut(profile_id) {
+            session.profile_name = profile_name.to_string();
+        }
+    }
+
+    pub fn close(&mut self, profile_id: &str) {
+        self.open.remove(profile_id);
+    }
 }
