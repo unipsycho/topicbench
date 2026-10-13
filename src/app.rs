@@ -121,8 +121,8 @@ impl MqttMonitorApp {
     }
 
     fn draw_ribbon(&mut self, ctx: &egui::Context) {
-        // Dark full-width chrome; height follows content (no empty band under captions).
-        // Plain horizontal layout — NOT horizontal_centered+RTL, which clipped Panels/Settings.
+        // Dark chrome. Groups shrink-wrap (see icons::ribbon_group) so Profiles cannot
+        // expand across the bar and leave Panels/Settings with zero width.
         egui::TopBottomPanel::top("ribbon")
             .resizable(false)
             .show_separator_line(false)
@@ -136,10 +136,11 @@ impl MqttMonitorApp {
                 ui.visuals_mut().override_text_color = Some(CHROME_TEXT);
                 ui.spacing_mut().item_spacing.y = 0.0;
 
-                ui.horizontal(|ui| {
+                // Top-align groups so large icons sit snug (horizontal() centers vertically).
+                ui.with_layout(egui::Layout::left_to_right(egui::Align::Min), |ui| {
                     ui.spacing_mut().item_spacing.x = 4.0;
 
-                    // Brand stack: title above AA logo, centered, high contrast
+                    // Brand stack: title above AA logo (fixed width, high contrast)
                     ui.vertical(|ui| {
                         ui.set_width(118.0);
                         ui.spacing_mut().item_spacing.y = 2.0;
@@ -159,6 +160,7 @@ impl MqttMonitorApp {
                                 );
                             }
                         });
+                        ui.shrink_width_to_current();
                     });
 
                     icons::ribbon_separator(ui);
@@ -210,7 +212,7 @@ impl MqttMonitorApp {
 
                     icons::ribbon_separator(ui);
 
-                    // Panels: optional content toggles (must stay visible)
+                    // Panels: Traffic / Publish / Stickies / Tree
                     icons::ribbon_group(ui, "Panels", |ui| {
                         if self
                             .icons
@@ -266,23 +268,23 @@ impl MqttMonitorApp {
                         }
                     });
 
-                    // Settings gear on the right — expanding RTL after left groups (not centered).
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        icons::ribbon_group(ui, "App", |ui| {
-                            if self
-                                .icons
-                                .command(
-                                    ui,
-                                    "settings-checklist",
-                                    "Settings",
-                                    self.settings_open,
-                                    "Open settings window",
-                                )
-                                .clicked()
-                            {
-                                self.settings_open = true;
-                            }
-                        });
+                    icons::ribbon_separator(ui);
+
+                    // Settings — same LTR row (no RTL expand); stays visible after Panels.
+                    icons::ribbon_group(ui, "App", |ui| {
+                        if self
+                            .icons
+                            .command(
+                                ui,
+                                "settings-checklist",
+                                "Settings",
+                                self.settings_open,
+                                "Open settings window",
+                            )
+                            .clicked()
+                        {
+                            self.settings_open = true;
+                        }
                     });
                 });
             });
