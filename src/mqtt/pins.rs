@@ -1,26 +1,61 @@
-//! Shared pin board: pinned topics from all open profiles, one place to compare.
+//! Shared sticky topics: live payloads, history, and per-sticky view modes.
 
-use std::collections::BTreeMap;
+use crate::mqtt::topic_tree::FLASH_MS;
+use serde::{Deserialize, Serialize};
+use std::collections::{BTreeMap, VecDeque};
+use std::time::{Duration, Instant};
 
-/// A pinned topic tied to a profile/session for side-by-side monitoring.
+const HISTORY_CAP: usize = 120;
+
+/// How a sticky topic renders its values.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum StickyViewMode {
+    #[default]
+    Normal,
+    Graph,
+    Historical,
+}
+
+impl StickyViewMode {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Normal => "Normal",
+            Self::Graph => "Graph",
+            Self::Historical => "Historical",
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
-pub struct PinnedTopic {
+pub struct HistorySample {
+    pub at: Instant,
+    pub payload: String,
+    pub numeric: Option<f64>,
+}
+
+/// A sticky/pinned topic tied to a profile for side-by-side monitoring.
+#[derive(Clone, Debug)]
+pub struct StickyTopic {
     pub profile_id: String,
     pub profile_name: String,
     pub topic: String,
-    /// Last payload placeholder — filled when MQTT I/O is wired.
     pub last_payload: String,
+    pub message_count: u64,
+    pub flash_until: Option<Instant>,
+    pub view_mode: StickyViewMode,
+    pub history: VecDeque<HistorySample>,
 }
 
-/// Pins from every open profile live here (shared board).
+/// Stickies from every open profile live here (shared board at top).
 #[derive(Default)]
 pub struct PinBoard {
-    /// Key: `profile_id\0topic` keeps pins unique per broker+topic.
-    pub items: BTreeMap<String, PinnedTopic>,
+    /// Key: `profile_id\0topic`.
+    pub items: BTreeMap<String, StickyTopic>,
 }
 
 impl PinBoard {
-    fn key(profile_id: &str, topic: &str) -> String {
+    pub fn key(profile_id: &str, topic: &str) -> String {
         format!("{profile_id}\0{topic}")
     }
 
@@ -30,11 +65,15 @@ impl PinBoard {
             return;
         }
         let key = Self::key(profile_id, topic);
-        self.items.entry(key).or_insert_with(|| PinnedTopic {
+        self.items.entry(key).or_insert_with(|| StickyTopic {
             profile_id: profile_id.to_string(),
             profile_name: profile_name.to_string(),
             topic: topic.to_string(),
-            last_payload: "(no messages yet)".into(),
+            last_payload: "(waiting…)".into(),
+            message_count: 0,
+            flash_until: None,
+            view_mode: StickyViewMode::Normal,
+            history: VecDeque::new(),
         });
     }
 
@@ -42,7 +81,41 @@ impl PinBoard {
         self.items.remove(&Self::key(profile_id, topic));
     }
 
-    pub fn clear(&mut self) {
-        self.items.clear();
+    pub fn is_sticky(&self, profile_id: &str, topic: &str) -> bool {
+        self.items.contains_key(&Self::key(profile_id, topic))
+    }
+
+    /// Update stickies that match an exact topic (or MQTT filter pin).
+    pub fn on_message(
+        &mut self,
+        profile_id: &str,
+        profile_name: &str,
+        topic: &str,
+        payload: &str,
+        now: Instant,
+    ) {
+        let flash = now + Duration::from_millis(FLASH_MS);
+        let numeric = payload.trim().parse::<f64>().ok();
+        for sticky in self.items.values_mut() {
+            if sticky.profile_id != profile_id {
+                continue;
+            }
+            if sticky.topic == topic
+                || crate::mqtt::subscribe::topic_matches_filter(topic, &sticky.topic)
+            {
+                sticky.profile_name = profile_name.to_string();
+                sticky.last_payload = payload.to_string();
+                sticky.message_count = sticky.message_count.saturating_add(1);
+                sticky.flash_until = Some(flash);
+                sticky.history.push_back(HistorySample {
+                    at: now,
+                    payload: payload.to_string(),
+                    numeric,
+                });
+                while sticky.history.len() > HISTORY_CAP {
+                    sticky.history.pop_front();
+                }
+            }
+        }
     }
 }

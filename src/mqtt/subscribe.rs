@@ -39,6 +39,29 @@ pub fn remove_subscription(subs: &mut Vec<String>, filter: &str) -> bool {
     subs.len() != before
 }
 
+/// True if `topic` matches MQTT `filter` (`+` / `#`).
+pub fn topic_matches_filter(topic: &str, filter: &str) -> bool {
+    if filter == "#" {
+        return true;
+    }
+    let t: Vec<&str> = topic.split('/').collect();
+    let f: Vec<&str> = filter.split('/').collect();
+    let mut ti = 0;
+    for (fi, part) in f.iter().enumerate() {
+        if *part == "#" {
+            return fi == f.len() - 1;
+        }
+        if ti >= t.len() {
+            return false;
+        }
+        if *part != "+" && *part != t[ti] {
+            return false;
+        }
+        ti += 1;
+    }
+    ti == t.len()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -59,5 +82,12 @@ mod tests {
         assert_eq!(subs.len(), 1);
         assert!(remove_subscription(&mut subs, "sensors/+/temp"));
         assert!(subs.is_empty());
+    }
+
+    #[test]
+    fn match_wildcards() {
+        assert!(topic_matches_filter("sensors/lab/temp", "sensors/+/temp"));
+        assert!(topic_matches_filter("sensors/lab/temp", "sensors/#"));
+        assert!(!topic_matches_filter("sensors/lab/temp", "other/#"));
     }
 }

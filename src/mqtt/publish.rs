@@ -1,4 +1,4 @@
-//! Publish panel state (payload, QoS, retain) — not yet sent via rumqttc.
+//! Publish draft state for the right-hand panel.
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Qos {
@@ -32,16 +32,4 @@ impl Default for PublishDraft {
             retain: false,
         }
     }
-}
-
-/// Placeholder publish — returns a status string until rumqttc client is wired.
-pub fn publish_placeholder(draft: &PublishDraft) -> String {
-    let broker = draft.profile_id.as_deref().unwrap_or("(no profile)");
-    format!(
-        "Publish stub → {broker} topic={} qos={} retain={} ({} bytes)",
-        draft.topic,
-        draft.qos.as_u8(),
-        draft.retain,
-        draft.payload.len()
-    )
 }

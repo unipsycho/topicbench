@@ -7,7 +7,7 @@ mod ui;
 fn main() -> eframe::Result<()> {
     let options = eframe::NativeOptions {
         viewport: eframe::egui::ViewportBuilder::default()
-            .with_inner_size([1100.0, 700.0])
+            .with_inner_size([1200.0, 760.0])
             .with_title("MQTT Monitor"),
         ..Default::default()
     };
@@ -15,6 +15,6 @@ fn main() -> eframe::Result<()> {
     eframe::run_native(
         "MQTT Monitor",
         options,
-        Box::new(|_cc| Ok(Box::new(app::MqttMonitorApp::new()))),
+        Box::new(|cc| Ok(Box::new(app::MqttMonitorApp::new(cc)))),
     )
 }

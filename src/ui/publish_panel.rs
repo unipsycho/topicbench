@@ -1,19 +1,19 @@
-//! Publish panel: topic, payload, QoS, retain — stub until rumqttc publish.
+//! Publish panel: real rumqttc publish to a connected profile.
 
-use crate::mqtt::publish::{publish_placeholder, PublishDraft, Qos};
+use crate::mqtt::publish::{PublishDraft, Qos};
 use crate::mqtt::session::{SessionManager, SessionState};
+use eframe::egui;
 
 pub fn draw(
-    ui: &mut eframe::egui::Ui,
+    ui: &mut egui::Ui,
     draft: &mut PublishDraft,
     sessions: &SessionManager,
     status: &mut String,
 ) {
     ui.heading("Publish");
-    ui.label("Send to a topic on an open/connected profile.");
+    ui.label("Send to a topic on a connected broker.");
     ui.add_space(4.0);
 
-    // Profile picker among connected sessions
     let connected: Vec<(String, String)> = sessions
         .open
         .values()
@@ -24,7 +24,7 @@ pub fn draw(
     if connected.is_empty() {
         ui.weak("No connected profiles.");
     } else {
-        eframe::egui::ComboBox::from_label("Profile")
+        egui::ComboBox::from_label("Profile")
             .selected_text(
                 draft
                     .profile_id
@@ -56,9 +56,20 @@ pub fn draw(
     });
 
     if ui.button("Publish").clicked() {
-        *status = publish_placeholder(draft);
+        match draft.profile_id.as_deref() {
+            Some(id) => match sessions.publish_live(id, &draft.topic, &draft.payload, draft.qos, draft.retain)
+            {
+                Ok(()) => {
+                    *status = format!(
+                        "Published → {id} {} (qos={} retain={})",
+                        draft.topic,
+                        draft.qos.as_u8(),
+                        draft.retain
+                    );
+                }
+                Err(e) => *status = e,
+            },
+            None => *status = "Select a connected profile to publish.".into(),
+        }
     }
-
-    ui.add_space(8.0);
-    ui.weak("TODO: rumqttc Client::try_publish on the session thread.");
 }
