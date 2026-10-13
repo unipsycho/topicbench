@@ -15,6 +15,10 @@ fn main() -> eframe::Result<()> {
     eframe::run_native(
         "MQTT Monitor",
         options,
-        Box::new(|cc| Ok(Box::new(app::MqttMonitorApp::new(cc)))),
+        Box::new(|cc| {
+            // Dark chrome for ribbon + body (Mike: no white ribbon).
+            cc.egui_ctx.set_visuals(eframe::egui::Visuals::dark());
+            Ok(Box::new(app::MqttMonitorApp::new(cc)))
+        }),
     )
 }
