@@ -196,12 +196,16 @@ impl SessionManager {
                     if let Some(session) = self.open.get_mut(&profile_id) {
                         let became_connected =
                             state == SessionState::Connected && session.state != SessionState::Connected;
+                        let changed = session.state != state || session.detail != detail;
                         session.state = state;
                         session.detail = detail.clone();
                         if became_connected {
                             resub.push((profile_id.clone(), session.subscriptions.clone()));
                         }
-                        status = Some(format!("{}: {detail}", session.profile_name));
+                        // Only push status bar text when something actually changed.
+                        if changed {
+                            status = Some(format!("{}: {detail}", session.profile_name));
+                        }
                     }
                 }
                 BrokerEvent::Message {
