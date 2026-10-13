@@ -1,0 +1,20 @@
+[package]
+name = "mqtt-monitor"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.80"
+description = "MQTT monitoring UI (MQTT Explorer–style skeleton)"
+license = "MIT OR Apache-2.0"
+readme = "README.md"
+
+[dependencies]
+# ArtCraft Crafting Apps (PhotoCraft/DesignCraft/FilmCraft) use egui; eframe is the official shell.
+# 0.31.x matches Rust >= 1.80 (image has 1.83). Bump toward latest when rustup can update.
+eframe = { version = "0.31", default-features = true, features = ["wayland", "x11"] }
+# Sync MQTT client: run EventLoop on a worker thread; feed UI via channels (fits egui).
+rumqttc = "0.24"
+
+[package.metadata.packager]
+product-name = "MQTT Monitor"
+identifier = "com.agileautomation.mqtt-monitor"
+before-packaging-command = "cargo build --release"
