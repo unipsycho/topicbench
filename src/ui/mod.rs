@@ -1,6 +1,11 @@
 //! egui panels for the MQTT Explorer–style shell.
 
+pub mod clipboard;
+pub mod flash;
 pub mod pin_board;
 pub mod profiles;
 pub mod publish_panel;
+pub mod search_bar;
+pub mod settings_panel;
 pub mod subscribe_panel;
+pub mod topic_tree_panel;

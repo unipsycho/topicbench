@@ -21,7 +21,8 @@ cd mqtt-master
 cargo run
 ```
 
-Profiles save to `~/.config/mqtt-monitor/profiles.json` (or `$XDG_CONFIG_HOME/mqtt-monitor/profiles.json`).
+Profiles save to `~/.config/mqtt-monitor/profiles.json`.  
+Settings save to `~/.config/mqtt-monitor/settings.json`.
 
 Release build: `cargo build --release`  
 Unit tests: `cargo test`.

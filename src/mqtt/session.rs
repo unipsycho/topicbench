@@ -1,8 +1,18 @@
-//! Multi-profile sessions: several brokers open/connected at once.
+//! Multi-profile live sessions backed by rumqttc workers.
 
-use std::collections::BTreeMap;
+use crate::mqtt::live::{self, BrokerEvent};
+use crate::mqtt::pins::PinBoard;
+use crate::mqtt::profile::ConnectionProfile;
+use crate::mqtt::topic_tree::TopicTree;
+use eframe::egui::Context;
+use rumqttc::{Client, QoS};
+use std::collections::{BTreeMap, VecDeque};
+use std::sync::mpsc::{self, Receiver, Sender};
+use std::time::{Duration, Instant};
 
-/// Connection lifecycle for one profile (placeholder until rumqttc threads exist).
+pub use crate::mqtt::topic_tree::FLASH_MS;
+
+/// Connection lifecycle for one profile.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SessionState {
     Disconnected,
@@ -21,40 +31,213 @@ impl SessionState {
 }
 
 #[derive(Clone, Debug)]
+pub struct TrafficLine {
+    pub topic: String,
+    pub payload: String,
+}
+
 pub struct Session {
     pub profile_id: String,
     pub profile_name: String,
     pub state: SessionState,
+    pub detail: String,
     /// Active subscriptions for this session (supports `+` / `#`).
     pub subscriptions: Vec<String>,
+    pub client: Option<Client>,
+    pub message_count: u64,
+    pub flash_until: Option<Instant>,
+    pub traffic: VecDeque<TrafficLine>,
+    pub topic_tree: TopicTree,
 }
 
+const TRAFFIC_CAP: usize = 80;
+
 /// Open sessions keyed by profile id — multiple may be Connected simultaneously.
-#[derive(Default)]
 pub struct SessionManager {
     pub open: BTreeMap<String, Session>,
+    event_tx: Sender<BrokerEvent>,
+    event_rx: Receiver<BrokerEvent>,
+}
+
+impl Default for SessionManager {
+    fn default() -> Self {
+        let (event_tx, event_rx) = mpsc::channel();
+        Self {
+            open: BTreeMap::new(),
+            event_tx,
+            event_rx,
+        }
+    }
 }
 
 impl SessionManager {
-    pub fn open_or_toggle(&mut self, profile_id: &str, profile_name: &str) {
-        if let Some(session) = self.open.get_mut(profile_id) {
-            session.state = match session.state {
-                SessionState::Disconnected => SessionState::Connected, // TODO: rumqttc connect
-                SessionState::Connecting => SessionState::Disconnected,
-                SessionState::Connected => SessionState::Disconnected, // TODO: disconnect
-            };
-            return;
-        }
+    /// Connect (or reconnect) a profile; spawns rumqttc worker.
+    pub fn connect(&mut self, profile: &ConnectionProfile, ctx: &Context) -> Result<(), String> {
+        self.disconnect(&profile.id);
+
+        let client = live::spawn(profile, self.event_tx.clone(), ctx.clone())?;
+        let subscriptions = self
+            .open
+            .get(&profile.id)
+            .map(|s| s.subscriptions.clone())
+            .unwrap_or_default();
 
         self.open.insert(
-            profile_id.to_string(),
+            profile.id.clone(),
             Session {
-                profile_id: profile_id.to_string(),
-                profile_name: profile_name.to_string(),
-                state: SessionState::Connected, // placeholder: mark open without broker I/O
-                subscriptions: Vec::new(),
+                profile_id: profile.id.clone(),
+                profile_name: profile.name.clone(),
+                state: SessionState::Connecting,
+                detail: format!("Connecting to {}:{}…", profile.host, profile.port),
+                subscriptions,
+                client: Some(client),
+                message_count: 0,
+                flash_until: None,
+                traffic: VecDeque::new(),
+                topic_tree: TopicTree::default(),
             },
         );
+        Ok(())
+    }
+
+    pub fn disconnect(&mut self, profile_id: &str) {
+        if let Some(session) = self.open.get_mut(profile_id) {
+            if let Some(client) = session.client.take() {
+                let _ = client.disconnect();
+            }
+            session.state = SessionState::Disconnected;
+            session.detail = "Disconnected".into();
+        }
+    }
+
+    /// Toggle: connect if closed/disconnected; disconnect if connecting/connected.
+    pub fn toggle(&mut self, profile: &ConnectionProfile, ctx: &Context) -> Result<String, String> {
+        let id = profile.id.as_str();
+        let should_connect = match self.open.get(id) {
+            None => true,
+            Some(s) => s.state == SessionState::Disconnected || s.client.is_none(),
+        };
+        if should_connect {
+            self.connect(profile, ctx)?;
+            Ok(format!("Connecting {}", profile.name))
+        } else {
+            self.disconnect(id);
+            Ok(format!("Disconnected {}", profile.name))
+        }
+    }
+
+    pub fn subscribe_live(&mut self, profile_id: &str, filter: &str) -> Result<(), String> {
+        let session = self
+            .open
+            .get_mut(profile_id)
+            .ok_or_else(|| "No open session".to_string())?;
+        if let Some(client) = session.client.as_ref() {
+            if session.state == SessionState::Connected {
+                client
+                    .subscribe(filter, QoS::AtLeastOnce)
+                    .map_err(|e| format!("subscribe: {e}"))?;
+            }
+        }
+        Ok(())
+    }
+
+    pub fn unsubscribe_live(&mut self, profile_id: &str, filter: &str) -> Result<(), String> {
+        let session = self
+            .open
+            .get_mut(profile_id)
+            .ok_or_else(|| "No open session".to_string())?;
+        if let Some(client) = session.client.as_ref() {
+            if session.state == SessionState::Connected {
+                client
+                    .unsubscribe(filter)
+                    .map_err(|e| format!("unsubscribe: {e}"))?;
+            }
+        }
+        Ok(())
+    }
+
+    pub fn publish_live(
+        &self,
+        profile_id: &str,
+        topic: &str,
+        payload: &str,
+        qos: crate::mqtt::publish::Qos,
+        retain: bool,
+    ) -> Result<(), String> {
+        let session = self
+            .open
+            .get(profile_id)
+            .ok_or_else(|| "No open session".to_string())?;
+        if session.state != SessionState::Connected {
+            return Err("Profile is not connected".into());
+        }
+        let client = session
+            .client
+            .as_ref()
+            .ok_or_else(|| "No MQTT client".to_string())?;
+        client
+            .publish(topic, live::to_qos(qos), retain, payload.as_bytes())
+            .map_err(|e| format!("publish: {e}"))
+    }
+
+    /// Drain worker events into session + sticky state.
+    pub fn poll_events(&mut self, pins: &mut PinBoard) -> Option<String> {
+        let now = Instant::now();
+        let mut status = None;
+        let mut resub: Vec<(String, Vec<String>)> = Vec::new();
+
+        while let Ok(ev) = self.event_rx.try_recv() {
+            match ev {
+                BrokerEvent::State {
+                    profile_id,
+                    state,
+                    detail,
+                } => {
+                    if let Some(session) = self.open.get_mut(&profile_id) {
+                        let became_connected =
+                            state == SessionState::Connected && session.state != SessionState::Connected;
+                        session.state = state;
+                        session.detail = detail.clone();
+                        if became_connected {
+                            resub.push((profile_id.clone(), session.subscriptions.clone()));
+                        }
+                        status = Some(format!("{}: {detail}", session.profile_name));
+                    }
+                }
+                BrokerEvent::Message {
+                    profile_id,
+                    topic,
+                    payload,
+                } => {
+                    if let Some(session) = self.open.get_mut(&profile_id) {
+                        session.message_count = session.message_count.saturating_add(1);
+                        session.flash_until = Some(now + Duration::from_millis(FLASH_MS));
+                        session.topic_tree.observe(&topic, &payload, now);
+                        session.traffic.push_front(TrafficLine {
+                            topic: topic.clone(),
+                            payload: payload.clone(),
+                        });
+                        while session.traffic.len() > TRAFFIC_CAP {
+                            session.traffic.pop_back();
+                        }
+                        let name = session.profile_name.clone();
+                        pins.on_message(&profile_id, &name, &topic, &payload, now);
+                    }
+                }
+            }
+        }
+
+        for (id, filters) in resub {
+            if let Some(session) = self.open.get(&id) {
+                if let Some(client) = session.client.as_ref() {
+                    for filter in &filters {
+                        let _ = client.subscribe(filter, QoS::AtLeastOnce);
+                    }
+                }
+            }
+        }
+
+        status
     }
 
     pub fn connected_ids(&self) -> Vec<&str> {
@@ -65,7 +248,6 @@ impl SessionManager {
             .collect()
     }
 
-    /// Keep open session display names in sync when a profile is renamed.
     pub fn sync_profile_name(&mut self, profile_id: &str, profile_name: &str) {
         if let Some(session) = self.open.get_mut(profile_id) {
             session.profile_name = profile_name.to_string();
@@ -73,6 +255,7 @@ impl SessionManager {
     }
 
     pub fn close(&mut self, profile_id: &str) {
+        self.disconnect(profile_id);
         self.open.remove(profile_id);
     }
 }
