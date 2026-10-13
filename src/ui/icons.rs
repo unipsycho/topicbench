@@ -1,15 +1,18 @@
 //! Embedded UI icons from `assets/icons/` (transparent PNGs for dark chrome).
 //!
-//! Ribbon: dark PhotoCraft-style chrome, Word-style group captions, compact commands.
+//! Ribbon groups must **shrink-wrap** — a nested `vertical` inside a horizontal bar
+//! otherwise expands and steals the rest of the row (hiding later groups).
 
 use eframe::egui::{self, Color32, RichText, Sense, Stroke, TextureHandle, Vec2};
 use std::collections::HashMap;
 
-/// Compact ribbon command hit box.
-const CMD_BOX: f32 = 42.0;
-const CMD_ICON: f32 = 24.0;
+/// Large ribbon glyph (restored — only margins stay tight).
+const CMD_ICON: f32 = 36.0;
+/// Hit box: big icon, little padding under the caption.
+const CMD_W: f32 = 56.0;
+const CMD_H: f32 = 58.0;
 
-/// Dark chrome tokens (reads like PhotoCraft Pro / Studio dark toolbars).
+/// Dark chrome tokens.
 pub const CHROME_BG: Color32 = Color32::from_rgb(40, 42, 48);
 pub const CHROME_SEP: Color32 = Color32::from_rgb(70, 74, 84);
 pub const CHROME_HOVER: Color32 = Color32::from_rgb(58, 62, 72);
@@ -38,7 +41,7 @@ impl IconSet {
         self.textures.get(name)
     }
 
-    /// Compact ribbon command: icon + caption; quiet hover/selected on dark chrome.
+    /// Large ribbon command: icon + caption; quiet hover/selected on dark chrome.
     pub fn command(
         &self,
         ui: &mut egui::Ui,
@@ -47,7 +50,7 @@ impl IconSet {
         selected: bool,
         tip: &str,
     ) -> egui::Response {
-        let cell = Vec2::new(CMD_BOX + 4.0, CMD_BOX + 6.0);
+        let cell = Vec2::new(CMD_W, CMD_H);
         let (rect, response) = ui.allocate_exact_size(cell, Sense::click());
         let response = response.on_hover_text(tip);
 
@@ -63,7 +66,8 @@ impl IconSet {
             ui.painter().rect_filled(rect, 3.0, CHROME_HOVER);
         }
 
-        let icon_center = egui::pos2(rect.center().x, rect.top() + CMD_BOX * 0.38);
+        // Icon upper, caption tight underneath (minimal empty band).
+        let icon_center = egui::pos2(rect.center().x, rect.top() + 22.0);
         if let Some(tex) = self.get(name) {
             let img = egui::Image::new(tex).fit_to_exact_size(Vec2::splat(CMD_ICON));
             let img_rect = egui::Rect::from_center_size(icon_center, Vec2::splat(CMD_ICON));
@@ -71,10 +75,10 @@ impl IconSet {
         }
 
         ui.painter().text(
-            egui::pos2(rect.center().x, rect.bottom() - 4.0),
+            egui::pos2(rect.center().x, rect.bottom() - 6.0),
             egui::Align2::CENTER_CENTER,
             label,
-            egui::FontId::proportional(10.0),
+            egui::FontId::proportional(11.0),
             if selected {
                 Color32::from_rgb(180, 210, 255)
             } else {
@@ -99,24 +103,24 @@ impl IconSet {
     }
 }
 
-/// Labeled ribbon group: controls on top, caption under (Word layout).
+/// Content-sized ribbon group. Critical: shrink-wrap so later groups are not clipped to 0 width.
 pub fn ribbon_group(ui: &mut egui::Ui, caption: &str, add_contents: impl FnOnce(&mut egui::Ui)) {
     ui.vertical(|ui| {
-        ui.spacing_mut().item_spacing.y = 0.0;
+        ui.spacing_mut().item_spacing.y = 1.0;
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 2.0;
             add_contents(ui);
         });
-        ui.vertical_centered(|ui| {
-            ui.label(RichText::new(caption).small().color(CHROME_CAPTION));
-        });
+        ui.label(RichText::new(caption).small().color(CHROME_CAPTION));
+        // Without this, vertical() expands across the whole remaining ribbon width.
+        ui.shrink_width_to_current();
     });
 }
 
-/// 1px vertical rule between groups.
+/// 1px vertical rule between groups (content-sized, not expanding).
 pub fn ribbon_separator(ui: &mut egui::Ui) {
     ui.add_space(4.0);
-    let (rect, _) = ui.allocate_exact_size(Vec2::new(1.0, 52.0), Sense::hover());
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(1.0, CMD_H + 4.0), Sense::hover());
     ui.painter().line_segment(
         [rect.center_top(), rect.center_bottom()],
         Stroke::new(1.0_f32, CHROME_SEP),
