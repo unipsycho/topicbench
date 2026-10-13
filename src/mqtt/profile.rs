@@ -22,6 +22,9 @@ pub struct ConnectionProfile {
     /// MQTT topic filters applied on connect (`+` / `#` OK).
     #[serde(default)]
     pub subscriptions: Vec<String>,
+    /// Sticky topics restored on connect for this profile.
+    #[serde(default)]
+    pub stickies: Vec<String>,
 }
 
 impl ConnectionProfile {
@@ -36,6 +39,7 @@ impl ConnectionProfile {
             password: String::new(),
             use_tls: false,
             subscriptions: Vec::new(),
+            stickies: Vec::new(),
         }
     }
 
@@ -50,6 +54,7 @@ impl ConnectionProfile {
             password: String::new(),
             use_tls: false,
             subscriptions: vec!["sensors/#".into()],
+            stickies: Vec::new(),
         }
     }
 
@@ -64,6 +69,27 @@ impl ConnectionProfile {
             password: String::new(),
             use_tls: false,
             subscriptions: vec!["devices/+/telemetry".into()],
+            stickies: Vec::new(),
+        }
+    }
+
+    /// Add or remove a sticky topic on this profile (returns true if list changed).
+    pub fn set_sticky(&mut self, topic: &str, on: bool) -> bool {
+        let topic = topic.trim();
+        if topic.is_empty() {
+            return false;
+        }
+        let idx = self.stickies.iter().position(|t| t == topic);
+        match (on, idx) {
+            (true, None) => {
+                self.stickies.push(topic.to_string());
+                true
+            }
+            (false, Some(i)) => {
+                self.stickies.remove(i);
+                true
+            }
+            _ => false,
         }
     }
 }
@@ -177,6 +203,18 @@ impl ProfileStore {
         self.selected_id = self.profiles.keys().next().cloned();
         Some(id)
     }
+
+    /// Persist a sticky topic change on a profile and save to disk.
+    pub fn set_sticky_and_save(&mut self, profile_id: &str, topic: &str, on: bool) {
+        let changed = self
+            .profiles
+            .get_mut(profile_id)
+            .map(|p| p.set_sticky(topic, on))
+            .unwrap_or(false);
+        if changed {
+            let _ = self.save();
+        }
+    }
 }
 
 #[cfg(test)]
@@ -196,6 +234,12 @@ mod tests {
         let loaded = ProfileStore::load_from(&path);
         assert_eq!(loaded.profiles["local"].host, "10.0.0.5");
         assert_eq!(loaded.profiles.len(), 2);
+        assert!(loaded.profiles["local"].stickies.is_empty());
+
+        store.profiles.get_mut("local").unwrap().set_sticky("sensors/temp", true);
+        store.save_to(&path).unwrap();
+        let loaded2 = ProfileStore::load_from(&path);
+        assert_eq!(loaded2.profiles["local"].stickies, vec!["sensors/temp".to_string()]);
         let _ = fs::remove_dir_all(&dir);
     }
 }

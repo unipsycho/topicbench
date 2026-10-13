@@ -30,6 +30,15 @@ impl TopicNode {
             }
         }
     }
+
+    /// Total messages in this node and all descendants (keeps growing while collapsed).
+    pub fn subtree_message_count(&self) -> u64 {
+        let mut total = self.message_count;
+        for child in self.children.values() {
+            total = total.saturating_add(child.subtree_message_count());
+        }
+        total
+    }
 }
 
 /// Root of the topic tree for one profile/session.
@@ -58,5 +67,7 @@ mod tests {
         let lab = &tree.root.children["sensors"].children["lab"];
         assert_eq!(lab.children["temp"].last_payload.as_deref(), Some("21.5"));
         assert_eq!(lab.children["humidity"].message_count, 1);
+        assert_eq!(lab.subtree_message_count(), 2);
+        assert_eq!(tree.root.children["sensors"].subtree_message_count(), 2);
     }
 }

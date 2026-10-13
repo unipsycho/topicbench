@@ -1,6 +1,7 @@
 //! Topic hierarchy grouped per connected broker/profile.
 
 use crate::mqtt::pins::PinBoard;
+use crate::mqtt::profile::ProfileStore;
 use crate::mqtt::session::{Session, SessionManager, SessionState};
 use crate::mqtt::settings::TopicTreeExpandMode;
 use crate::mqtt::topic_tree::TopicNode;
@@ -24,6 +25,7 @@ const BROKER_COLORS: [Color32; 6] = [
 pub fn draw(
     ui: &mut egui::Ui,
     sessions: &SessionManager,
+    profiles: &mut ProfileStore,
     pins: &mut PinBoard,
     expand_mode: TopicTreeExpandMode,
     expand_all_once: &mut Option<bool>,
@@ -94,6 +96,7 @@ pub fn draw(
             String::new(),
             &session.profile_id,
             &session.profile_name,
+            profiles,
             pins,
             now,
             expand_mode,
@@ -132,6 +135,7 @@ fn draw_node(
     path: String,
     profile_id: &str,
     profile_name: &str,
+    profiles: &mut ProfileStore,
     pins: &mut PinBoard,
     now: Instant,
     expand_mode: TopicTreeExpandMode,
@@ -164,11 +168,28 @@ fn draw_node(
 
         egui::Frame::NONE.fill(fill).show(ui, |ui| {
             if has_kids {
-                // Label = last segment only (not full path / parent prefix).
-                egui::CollapsingHeader::new(RichText::new(segment).strong())
-                    .id_salt(format!("tt-{profile_id}-{child_path}"))
-                    .default_open(default_open)
-                    .show(ui, |ui| {
+                // CollapsingState so we can show subtree totals while collapsed.
+                let id = ui.make_persistent_id(format!("tt-{profile_id}-{child_path}"));
+                let mut state =
+                    egui::collapsing_header::CollapsingState::load_with_default_open(
+                        ui.ctx(),
+                        id,
+                        default_open,
+                    );
+                if let Some(v) = force_open {
+                    state.set_open(v);
+                }
+                let open = state.is_open();
+                let subtree = child.subtree_message_count();
+
+                state
+                    .show_header(ui, |ui| {
+                        ui.label(RichText::new(segment).strong());
+                        if !open && subtree > 0 {
+                            ui.label(RichText::new(format!("#{subtree}")).small().weak());
+                        }
+                    })
+                    .body(|ui| {
                         if is_leaf_msg {
                             leaf_row(
                                 ui,
@@ -177,6 +198,7 @@ fn draw_node(
                                 child,
                                 profile_id,
                                 profile_name,
+                                profiles,
                                 pins,
                                 status,
                             );
@@ -187,6 +209,7 @@ fn draw_node(
                             child_path.clone(),
                             profile_id,
                             profile_name,
+                            profiles,
                             pins,
                             now,
                             expand_mode,
@@ -204,6 +227,7 @@ fn draw_node(
                     child,
                     profile_id,
                     profile_name,
+                    profiles,
                     pins,
                     status,
                 );
@@ -220,6 +244,7 @@ fn leaf_row(
     node: &TopicNode,
     profile_id: &str,
     profile_name: &str,
+    profiles: &mut ProfileStore,
     pins: &mut PinBoard,
     status: &mut String,
 ) {
@@ -243,8 +268,10 @@ fn leaf_row(
         if ui.small_button(btn).clicked() {
             if sticky {
                 pins.unpin(profile_id, full_topic);
+                profiles.set_sticky_and_save(profile_id, full_topic, false);
             } else {
                 pins.pin(profile_id, profile_name, full_topic);
+                profiles.set_sticky_and_save(profile_id, full_topic, true);
                 if let Some(payload) = &node.last_payload {
                     if let Some(s) = pins.items.get_mut(&PinBoard::key(profile_id, full_topic)) {
                         s.last_payload = payload.clone();

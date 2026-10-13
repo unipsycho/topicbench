@@ -1,5 +1,6 @@
 //! Shared sticky topics: live payloads, history, Raw/Value/Graph modes.
 
+use crate::mqtt::profile::ConnectionProfile;
 use crate::mqtt::topic_tree::FLASH_MS;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, VecDeque};
@@ -109,6 +110,13 @@ impl PinBoard {
 
     pub fn is_sticky(&self, profile_id: &str, topic: &str) -> bool {
         self.items.contains_key(&Self::key(profile_id, topic))
+    }
+
+    /// Restore stickies saved on a profile (idempotent).
+    pub fn restore_from_profile(&mut self, profile: &ConnectionProfile) {
+        for topic in &profile.stickies {
+            self.pin(&profile.id, &profile.name, topic);
+        }
     }
 
     pub fn on_message(
