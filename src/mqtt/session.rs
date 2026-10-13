@@ -7,7 +7,9 @@ use crate::mqtt::topic_tree::TopicTree;
 use eframe::egui::Context;
 use rumqttc::{Client, QoS};
 use std::collections::{BTreeMap, VecDeque};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 pub use crate::mqtt::topic_tree::FLASH_MS;
@@ -41,9 +43,11 @@ pub struct Session {
     pub profile_name: String,
     pub state: SessionState,
     pub detail: String,
-    /// Active subscriptions for this session (supports `+` / `#`).
     pub subscriptions: Vec<String>,
     pub client: Option<Client>,
+    /// Set on intentional Disconnect — worker must not reconnect.
+    pub stop: Option<Arc<AtomicBool>>,
+    pub user_stopped: bool,
     pub message_count: u64,
     pub flash_until: Option<Instant>,
     pub traffic: VecDeque<TrafficLine>,
@@ -52,7 +56,6 @@ pub struct Session {
 
 const TRAFFIC_CAP: usize = 80;
 
-/// Open sessions keyed by profile id — multiple may be Connected simultaneously.
 pub struct SessionManager {
     pub open: BTreeMap<String, Session>,
     event_tx: Sender<BrokerEvent>,
@@ -71,13 +74,10 @@ impl Default for SessionManager {
 }
 
 impl SessionManager {
-    /// Connect (or reconnect) a profile; spawns rumqttc worker.
-    /// Applies the profile’s saved topic filters once ConnAck succeeds.
     pub fn connect(&mut self, profile: &ConnectionProfile, ctx: &Context) -> Result<(), String> {
         self.disconnect(&profile.id);
 
-        let client = live::spawn(profile, self.event_tx.clone(), ctx.clone())?;
-        // Prefer profile-persisted filters; fall back to any in-memory list.
+        let handle = live::spawn(profile, self.event_tx.clone(), ctx.clone())?;
         let subscriptions = if profile.subscriptions.is_empty() {
             self.open
                 .get(&profile.id)
@@ -95,7 +95,9 @@ impl SessionManager {
                 state: SessionState::Connecting,
                 detail: format!("Connecting to {}:{}…", profile.host, profile.port),
                 subscriptions,
-                client: Some(client),
+                client: Some(handle.client),
+                stop: Some(handle.stop),
+                user_stopped: false,
                 message_count: 0,
                 flash_until: None,
                 traffic: VecDeque::new(),
@@ -105,7 +107,6 @@ impl SessionManager {
         Ok(())
     }
 
-    /// Sync session subscription list from a profile (e.g. after edit while connected).
     pub fn apply_profile_subscriptions(
         &mut self,
         profile_id: &str,
@@ -139,8 +140,13 @@ impl SessionManager {
         Ok(())
     }
 
+    /// User Disconnect: stop worker reconnect loop; stay Disconnected until Connect.
     pub fn disconnect(&mut self, profile_id: &str) {
         if let Some(session) = self.open.get_mut(profile_id) {
+            session.user_stopped = true;
+            if let Some(stop) = session.stop.take() {
+                stop.store(true, Ordering::SeqCst);
+            }
             if let Some(client) = session.client.take() {
                 let _ = client.disconnect();
             }
@@ -149,12 +155,11 @@ impl SessionManager {
         }
     }
 
-    /// Toggle: connect if closed/disconnected; disconnect if connecting/connected.
     pub fn toggle(&mut self, profile: &ConnectionProfile, ctx: &Context) -> Result<String, String> {
         let id = profile.id.as_str();
         let should_connect = match self.open.get(id) {
             None => true,
-            Some(s) => s.state == SessionState::Disconnected || s.client.is_none(),
+            Some(s) => s.state == SessionState::Disconnected || s.client.is_none() || s.user_stopped,
         };
         if should_connect {
             self.connect(profile, ctx)?;
@@ -189,7 +194,6 @@ impl SessionManager {
             .map_err(|e| format!("publish: {e}"))
     }
 
-    /// Drain worker events into session + sticky state.
     pub fn poll_events(&mut self, pins: &mut PinBoard) -> Option<String> {
         let now = Instant::now();
         let mut status = None;
@@ -203,6 +207,16 @@ impl SessionManager {
                     detail,
                 } => {
                     if let Some(session) = self.open.get_mut(&profile_id) {
+                        // After intentional Disconnect, ignore reconnect chatter.
+                        if session.user_stopped {
+                            if state == SessionState::Disconnected {
+                                session.state = SessionState::Disconnected;
+                                session.detail = "Disconnected".into();
+                                status = Some(format!("{}: Disconnected", session.profile_name));
+                            }
+                            continue;
+                        }
+
                         let became_connected =
                             state == SessionState::Connected && session.state != SessionState::Connected;
                         let changed = session.state != state || session.detail != detail;
@@ -211,7 +225,6 @@ impl SessionManager {
                         if became_connected {
                             resub.push((profile_id.clone(), session.subscriptions.clone()));
                         }
-                        // Only push status bar text when something actually changed.
                         if changed {
                             status = Some(format!("{}: {detail}", session.profile_name));
                         }
@@ -223,6 +236,9 @@ impl SessionManager {
                     payload,
                 } => {
                     if let Some(session) = self.open.get_mut(&profile_id) {
+                        if session.user_stopped {
+                            continue;
+                        }
                         session.message_count = session.message_count.saturating_add(1);
                         session.flash_until = Some(now + Duration::from_millis(FLASH_MS));
                         session.topic_tree.observe(&topic, &payload, now);
@@ -242,6 +258,9 @@ impl SessionManager {
 
         for (id, filters) in resub {
             if let Some(session) = self.open.get(&id) {
+                if session.user_stopped {
+                    continue;
+                }
                 if let Some(client) = session.client.as_ref() {
                     for filter in &filters {
                         let _ = client.subscribe(filter, QoS::AtLeastOnce);

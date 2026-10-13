@@ -164,12 +164,22 @@ fn draw_node(
 
         egui::Frame::NONE.fill(fill).show(ui, |ui| {
             if has_kids {
+                // Label = last segment only (not full path / parent prefix).
                 egui::CollapsingHeader::new(RichText::new(segment).strong())
                     .id_salt(format!("tt-{profile_id}-{child_path}"))
                     .default_open(default_open)
                     .show(ui, |ui| {
                         if is_leaf_msg {
-                            leaf_row(ui, &child_path, child, profile_id, profile_name, pins, status);
+                            leaf_row(
+                                ui,
+                                segment,
+                                &child_path,
+                                child,
+                                profile_id,
+                                profile_name,
+                                pins,
+                                status,
+                            );
                         }
                         draw_node(
                             ui,
@@ -187,15 +197,26 @@ fn draw_node(
                         );
                     });
             } else {
-                leaf_row(ui, &child_path, child, profile_id, profile_name, pins, status);
+                leaf_row(
+                    ui,
+                    segment,
+                    &child_path,
+                    child,
+                    profile_id,
+                    profile_name,
+                    pins,
+                    status,
+                );
             }
         });
     }
 }
 
+/// `label` = last path segment; `full_topic` used for sticky/clipboard.
 fn leaf_row(
     ui: &mut egui::Ui,
-    topic: &str,
+    label: &str,
+    full_topic: &str,
     node: &TopicNode,
     profile_id: &str,
     profile_name: &str,
@@ -203,22 +224,29 @@ fn leaf_row(
     status: &mut String,
 ) {
     ui.horizontal(|ui| {
-        clipboard::topic_label(ui, topic, status);
+        // Show relative segment; click still copies the full MQTT topic.
+        let response = ui
+            .add(egui::Label::new(RichText::new(label).monospace()).sense(egui::Sense::click()))
+            .on_hover_text(format!("Click to copy topic: {full_topic}"));
+        if response.clicked() {
+            ui.ctx().copy_text(full_topic.to_string());
+            *status = format!("Copied topic: {full_topic}");
+        }
         if let Some(payload) = &node.last_payload {
             clipboard::payload_with_copy(ui, payload, 48, status);
         }
         if node.message_count > 0 {
             ui.label(RichText::new(format!("#{}", node.message_count)).small());
         }
-        let sticky = pins.is_sticky(profile_id, topic);
-        let label = if sticky { "Unstick" } else { "Sticky" };
-        if ui.small_button(label).clicked() {
+        let sticky = pins.is_sticky(profile_id, full_topic);
+        let btn = if sticky { "Unstick" } else { "Sticky" };
+        if ui.small_button(btn).clicked() {
             if sticky {
-                pins.unpin(profile_id, topic);
+                pins.unpin(profile_id, full_topic);
             } else {
-                pins.pin(profile_id, profile_name, topic);
+                pins.pin(profile_id, profile_name, full_topic);
                 if let Some(payload) = &node.last_payload {
-                    if let Some(s) = pins.items.get_mut(&PinBoard::key(profile_id, topic)) {
+                    if let Some(s) = pins.items.get_mut(&PinBoard::key(profile_id, full_topic)) {
                         s.last_payload = payload.clone();
                         s.message_count = node.message_count;
                     }
