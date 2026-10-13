@@ -6,10 +6,10 @@
 use eframe::egui::{self, Color32, RichText, Sense, Stroke, TextureHandle, Vec2};
 use std::collections::HashMap;
 
-/// Hit box for a large ribbon command (Office-style).
-const CMD_BOX: f32 = 52.0;
+/// Hit box for a large ribbon command (Office-style; tighter under-icon padding).
+const CMD_BOX: f32 = 44.0;
 /// Glyph size ≈ half the box (PhotoCraft toolbar ratio ~0.52).
-const CMD_ICON: f32 = 28.0;
+const CMD_ICON: f32 = 26.0;
 
 /// Light chrome tokens (Studio Light / Breeze-adjacent, like PhotoCraft light themes).
 pub const CHROME_BG: Color32 = Color32::from_rgb(246, 246, 248);
@@ -47,7 +47,8 @@ impl IconSet {
         selected: bool,
         tip: &str,
     ) -> egui::Response {
-        let cell = Vec2::new(CMD_BOX + 4.0, CMD_BOX + 14.0);
+        // Compact cell: less empty space under the glyph.
+        let cell = Vec2::new(CMD_BOX + 2.0, CMD_BOX + 8.0);
         let (rect, response) = ui.allocate_exact_size(cell, Sense::click());
         let response = response.on_hover_text(tip);
 
@@ -65,7 +66,7 @@ impl IconSet {
             ui.painter().rect_filled(rect, 3.0, CHROME_HOVER);
         }
 
-        let icon_center = egui::pos2(rect.center().x, rect.top() + CMD_BOX * 0.42);
+        let icon_center = egui::pos2(rect.center().x, rect.top() + CMD_BOX * 0.40);
         if let Some(tex) = self.get(name) {
             let img = egui::Image::new(tex).fit_to_exact_size(Vec2::splat(CMD_ICON));
             let img_rect = egui::Rect::from_center_size(icon_center, Vec2::splat(CMD_ICON));
@@ -73,10 +74,10 @@ impl IconSet {
         }
 
         ui.painter().text(
-            egui::pos2(rect.center().x, rect.bottom() - 7.0),
+            egui::pos2(rect.center().x, rect.bottom() - 5.0),
             egui::Align2::CENTER_CENTER,
             label,
-            egui::FontId::proportional(11.0),
+            egui::FontId::proportional(10.0),
             if selected {
                 Color32::from_rgb(40, 80, 130)
             } else {
@@ -104,11 +105,11 @@ impl IconSet {
 /// Labeled ribbon group: controls on top, caption centered underneath (Word layout).
 pub fn ribbon_group(ui: &mut egui::Ui, caption: &str, add_contents: impl FnOnce(&mut egui::Ui)) {
     ui.vertical(|ui| {
+        ui.spacing_mut().item_spacing.y = 1.0;
         ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = 4.0;
+            ui.spacing_mut().item_spacing.x = 3.0;
             add_contents(ui);
         });
-        ui.add_space(2.0);
         ui.vertical_centered(|ui| {
             ui.label(RichText::new(caption).small().color(CHROME_CAPTION));
         });
@@ -117,13 +118,13 @@ pub fn ribbon_group(ui: &mut egui::Ui, caption: &str, add_contents: impl FnOnce(
 
 /// 1px vertical rule between groups (PhotoCraft options-bar / toolbar separators).
 pub fn ribbon_separator(ui: &mut egui::Ui) {
-    ui.add_space(8.0);
-    let (rect, _) = ui.allocate_exact_size(Vec2::new(1.0, 68.0), Sense::hover());
+    ui.add_space(6.0);
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(1.0, 56.0), Sense::hover());
     ui.painter().line_segment(
         [rect.center_top(), rect.center_bottom()],
         Stroke::new(1.0_f32, CHROME_SEP),
     );
-    ui.add_space(8.0);
+    ui.add_space(6.0);
 }
 
 fn load_png(ctx: &egui::Context, id: &str, bytes: &[u8]) -> Option<TextureHandle> {
