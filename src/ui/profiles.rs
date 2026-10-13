@@ -1,9 +1,12 @@
-//! Left panel: edit / save / connect profiles; All vs Connected filter.
+//! Left panel: edit profiles (incl. subscriptions), connect, All vs Connected.
 
 use crate::mqtt::profile::ProfileStore;
 use crate::mqtt::session::{SessionManager, SessionState};
 use crate::mqtt::settings::AppSettings;
+use crate::mqtt::subscribe;
+use crate::ui::clipboard;
 use crate::ui::flash;
+use crate::ui::icons::IconSet;
 use eframe::egui::{self, Color32, RichText};
 use std::time::Instant;
 
@@ -19,11 +22,22 @@ pub fn draw(
     sessions: &mut SessionManager,
     settings: &mut AppSettings,
     list_filter: &mut ProfileListFilter,
+    icons: &IconSet,
+    draft_filter: &mut String,
     status: &mut String,
     ctx: &egui::Context,
 ) {
-    ui.heading("Profiles");
-    ui.label("Edit, save, and connect for real MQTT I/O.");
+    ui.horizontal(|ui| {
+        if let Some(tex) = icons.get("gateway") {
+            ui.add(
+                egui::Image::new(tex)
+                    .fit_to_exact_size(egui::vec2(20.0, 20.0))
+                    .sense(egui::Sense::hover()),
+            );
+        }
+        ui.heading("Profiles");
+    });
+    ui.label("Edit, save, connect — subscriptions live on each profile.");
     ui.add_space(4.0);
 
     ui.horizontal(|ui| {
@@ -93,46 +107,108 @@ pub fn draw(
 
     let selected_id = profiles.selected_id.clone();
     if let Some(id) = selected_id {
-        if let Some(profile) = profiles.profiles.get_mut(&id) {
+        if profiles.profiles.contains_key(&id) {
             ui.heading("Edit");
-            ui.horizontal(|ui| {
-                ui.label("Name");
-                ui.text_edit_singleline(&mut profile.name);
-            });
-            ui.horizontal(|ui| {
-                ui.label("Host");
-                ui.text_edit_singleline(&mut profile.host);
-            });
-            ui.horizontal(|ui| {
-                ui.label("Port");
-                ui.add(egui::DragValue::new(&mut profile.port).range(1..=65535));
-            });
-            ui.horizontal(|ui| {
-                ui.label("Client ID");
-                ui.text_edit_singleline(&mut profile.client_id);
-            });
-            ui.horizontal(|ui| {
-                ui.label("Username");
-                ui.text_edit_singleline(&mut profile.username);
-            });
-            ui.horizontal(|ui| {
-                ui.label("Password");
-                ui.add(egui::TextEdit::singleline(&mut profile.password).password(true));
-            });
-            ui.checkbox(&mut profile.use_tls, "Use TLS");
-
-            sessions.sync_profile_name(&id, &profile.name);
+            if let Some(profile) = profiles.profiles.get_mut(&id) {
+                ui.horizontal(|ui| {
+                    ui.label("Name");
+                    ui.text_edit_singleline(&mut profile.name);
+                });
+                ui.horizontal(|ui| {
+                    ui.label("Host");
+                    ui.text_edit_singleline(&mut profile.host);
+                });
+                ui.horizontal(|ui| {
+                    ui.label("Port");
+                    ui.add(egui::DragValue::new(&mut profile.port).range(1..=65535));
+                });
+                ui.horizontal(|ui| {
+                    ui.label("Client ID");
+                    ui.text_edit_singleline(&mut profile.client_id);
+                });
+                ui.horizontal(|ui| {
+                    ui.label("Username");
+                    ui.text_edit_singleline(&mut profile.username);
+                });
+                ui.horizontal(|ui| {
+                    ui.label("Password");
+                    ui.add(egui::TextEdit::singleline(&mut profile.password).password(true));
+                });
+                ui.checkbox(&mut profile.use_tls, "Use TLS");
+                sessions.sync_profile_name(&id, &profile.name);
+            }
 
             if let Some(session) = sessions.open.get(&id) {
                 ui.weak(&session.detail);
             }
+
+            // Profile subscriptions (saved with profile; applied on connect)
+            ui.add_space(8.0);
+            ui.separator();
+            ui.horizontal(|ui| {
+                if let Some(tex) = icons.get("mqtt-cloud") {
+                    ui.add(
+                        egui::Image::new(tex)
+                            .fit_to_exact_size(egui::vec2(18.0, 18.0))
+                            .sense(egui::Sense::hover()),
+                    );
+                }
+                ui.strong("Subscriptions");
+            });
+            ui.weak("Topic filters for this profile (`+` / `#` OK). Saved with the profile.");
+
+            let mut remove_at: Option<usize> = None;
+            if let Some(profile) = profiles.profiles.get(&id) {
+                if profile.subscriptions.is_empty() {
+                    ui.weak("No filters yet.");
+                } else {
+                    for (i, sub) in profile.subscriptions.iter().enumerate() {
+                        ui.horizontal(|ui| {
+                            clipboard::topic_label(ui, sub, status);
+                            if ui.small_button("Remove").clicked() {
+                                remove_at = Some(i);
+                            }
+                        });
+                    }
+                }
+            }
+            if let Some(i) = remove_at {
+                if let Some(profile) = profiles.profiles.get_mut(&id) {
+                    if i < profile.subscriptions.len() {
+                        let removed = profile.subscriptions.remove(i);
+                        let filters = profile.subscriptions.clone();
+                        let _ = sessions.apply_profile_subscriptions(&id, &filters);
+                        *status = format!("Removed filter {removed}");
+                    }
+                }
+            }
+
+            ui.horizontal(|ui| {
+                ui.add(egui::TextEdit::singleline(draft_filter).desired_width(160.0).hint_text("topic/#"));
+                if ui.button("Add").clicked() {
+                    let filter = draft_filter.trim().to_string();
+                    match profiles.profiles.get_mut(&id) {
+                        Some(profile) => match subscribe::add_subscription(&mut profile.subscriptions, &filter)
+                        {
+                            Ok(()) => {
+                                let filters = profile.subscriptions.clone();
+                                let _ = sessions.apply_profile_subscriptions(&id, &filters);
+                                draft_filter.clear();
+                                *status = format!("Added filter {filter}");
+                            }
+                            Err(e) => *status = e,
+                        },
+                        None => {}
+                    }
+                }
+            });
 
             ui.add_space(6.0);
             let label = match sessions.open.get(&id).map(|s| s.state) {
                 Some(SessionState::Connected) | Some(SessionState::Connecting) => "Disconnect",
                 _ => "Connect",
             };
-            if ui.button(label).clicked() {
+            if icons.labeled_button(ui, "mqtt-cloud", label).clicked() {
                 let profile = profiles.profiles.get(&id).cloned();
                 if let Some(profile) = profile {
                     let connecting = match sessions.open.get(&id).map(|s| s.state) {

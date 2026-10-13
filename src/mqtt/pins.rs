@@ -1,4 +1,4 @@
-//! Shared sticky topics: live payloads, history, and per-sticky view modes.
+//! Shared sticky topics: live payloads, history, Raw/Value/Graph modes.
 
 use crate::mqtt::topic_tree::FLASH_MS;
 use serde::{Deserialize, Serialize};
@@ -12,24 +12,50 @@ const HISTORY_CAP: usize = 120;
 #[serde(rename_all = "snake_case")]
 pub enum StickyViewMode {
     #[default]
-    Normal,
+    Raw,
+    Value,
     Graph,
-    Historical,
 }
 
 impl StickyViewMode {
     pub fn label(self) -> &'static str {
         match self {
-            Self::Normal => "Normal",
+            Self::Raw => "Raw",
+            Self::Value => "Value",
             Self::Graph => "Graph",
-            Self::Historical => "Historical",
         }
+    }
+}
+
+/// Detected payload kind for Value mode.
+#[derive(Clone, Debug)]
+pub enum DetectedValue {
+    Bool(bool),
+    Number(f64),
+    Text(String),
+}
+
+impl DetectedValue {
+    pub fn from_payload(payload: &str) -> Self {
+        let t = payload.trim();
+        if t.eq_ignore_ascii_case("true") || t == "1" || t.eq_ignore_ascii_case("on") {
+            return Self::Bool(true);
+        }
+        if t.eq_ignore_ascii_case("false") || t == "0" || t.eq_ignore_ascii_case("off") {
+            return Self::Bool(false);
+        }
+        if let Ok(n) = t.parse::<f64>() {
+            return Self::Number(n);
+        }
+        Self::Text(payload.to_string())
     }
 }
 
 #[derive(Clone, Debug)]
 pub struct HistorySample {
+    #[allow(dead_code)]
     pub at: Instant,
+    #[allow(dead_code)]
     pub payload: String,
     pub numeric: Option<f64>,
 }
@@ -72,7 +98,7 @@ impl PinBoard {
             last_payload: "(waiting…)".into(),
             message_count: 0,
             flash_until: None,
-            view_mode: StickyViewMode::Normal,
+            view_mode: StickyViewMode::Raw,
             history: VecDeque::new(),
         });
     }
@@ -85,7 +111,6 @@ impl PinBoard {
         self.items.contains_key(&Self::key(profile_id, topic))
     }
 
-    /// Update stickies that match an exact topic (or MQTT filter pin).
     pub fn on_message(
         &mut self,
         profile_id: &str,

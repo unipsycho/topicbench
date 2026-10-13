@@ -1,10 +1,20 @@
-//! Settings page: auto-reconnect + topic tree expand defaults.
+//! Settings content (shown in its own viewport window).
 
 use crate::mqtt::settings::{AppSettings, TopicTreeExpandMode};
+use crate::ui::icons::IconSet;
 use eframe::egui;
 
-pub fn draw(ui: &mut egui::Ui, settings: &mut AppSettings, status: &mut String) {
-    ui.heading("Settings");
+pub fn draw(ui: &mut egui::Ui, settings: &mut AppSettings, icons: &IconSet, status: &mut String) {
+    ui.horizontal(|ui| {
+        if let Some(tex) = icons.get("settings-checklist") {
+            ui.add(
+                egui::Image::new(tex)
+                    .fit_to_exact_size(egui::vec2(22.0, 22.0))
+                    .sense(egui::Sense::hover()),
+            );
+        }
+        ui.heading("Settings");
+    });
     ui.label("Persisted under ~/.config/mqtt-monitor/settings.json");
     ui.add_space(8.0);
 
@@ -42,7 +52,7 @@ pub fn draw(ui: &mut egui::Ui, settings: &mut AppSettings, status: &mut String) 
                 }
             });
     });
-    ui.weak("Controls how new topic-tree branches open. Use Expand all / Collapse all on the tree for one-shot actions.");
+    ui.weak("Controls how new topic-tree branches open.");
 
     ui.add_space(12.0);
     ui.weak(format!(
@@ -54,10 +64,9 @@ pub fn draw(ui: &mut egui::Ui, settings: &mut AppSettings, status: &mut String) 
         }
     ));
 
-    // Future branding note (splash not built yet).
     ui.add_space(16.0);
     ui.separator();
-    ui.weak("Branding: logo is in the top bar. Splash screen on startup is planned later.");
+    ui.weak("Branding: logo is in the top ribbon. Splash screen on startup is planned later.");
 
     if dirty {
         match settings.save() {

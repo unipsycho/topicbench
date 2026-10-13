@@ -72,15 +72,20 @@ impl Default for SessionManager {
 
 impl SessionManager {
     /// Connect (or reconnect) a profile; spawns rumqttc worker.
+    /// Applies the profile’s saved topic filters once ConnAck succeeds.
     pub fn connect(&mut self, profile: &ConnectionProfile, ctx: &Context) -> Result<(), String> {
         self.disconnect(&profile.id);
 
         let client = live::spawn(profile, self.event_tx.clone(), ctx.clone())?;
-        let subscriptions = self
-            .open
-            .get(&profile.id)
-            .map(|s| s.subscriptions.clone())
-            .unwrap_or_default();
+        // Prefer profile-persisted filters; fall back to any in-memory list.
+        let subscriptions = if profile.subscriptions.is_empty() {
+            self.open
+                .get(&profile.id)
+                .map(|s| s.subscriptions.clone())
+                .unwrap_or_default()
+        } else {
+            profile.subscriptions.clone()
+        };
 
         self.open.insert(
             profile.id.clone(),
@@ -97,6 +102,40 @@ impl SessionManager {
                 topic_tree: TopicTree::default(),
             },
         );
+        Ok(())
+    }
+
+    /// Sync session subscription list from a profile (e.g. after edit while connected).
+    pub fn apply_profile_subscriptions(
+        &mut self,
+        profile_id: &str,
+        filters: &[String],
+    ) -> Result<(), String> {
+        let session = self
+            .open
+            .get_mut(profile_id)
+            .ok_or_else(|| "No open session".to_string())?;
+        let old = session.subscriptions.clone();
+        session.subscriptions = filters.to_vec();
+        if session.state != SessionState::Connected {
+            return Ok(());
+        }
+        let client = session
+            .client
+            .as_ref()
+            .ok_or_else(|| "No MQTT client".to_string())?;
+        for f in &old {
+            if !filters.iter().any(|n| n == f) {
+                let _ = client.unsubscribe(f);
+            }
+        }
+        for f in filters {
+            if !old.iter().any(|o| o == f) {
+                client
+                    .subscribe(f, QoS::AtLeastOnce)
+                    .map_err(|e| format!("subscribe: {e}"))?;
+            }
+        }
         Ok(())
     }
 
@@ -124,36 +163,6 @@ impl SessionManager {
             self.disconnect(id);
             Ok(format!("Disconnected {}", profile.name))
         }
-    }
-
-    pub fn subscribe_live(&mut self, profile_id: &str, filter: &str) -> Result<(), String> {
-        let session = self
-            .open
-            .get_mut(profile_id)
-            .ok_or_else(|| "No open session".to_string())?;
-        if let Some(client) = session.client.as_ref() {
-            if session.state == SessionState::Connected {
-                client
-                    .subscribe(filter, QoS::AtLeastOnce)
-                    .map_err(|e| format!("subscribe: {e}"))?;
-            }
-        }
-        Ok(())
-    }
-
-    pub fn unsubscribe_live(&mut self, profile_id: &str, filter: &str) -> Result<(), String> {
-        let session = self
-            .open
-            .get_mut(profile_id)
-            .ok_or_else(|| "No open session".to_string())?;
-        if let Some(client) = session.client.as_ref() {
-            if session.state == SessionState::Connected {
-                client
-                    .unsubscribe(filter)
-                    .map_err(|e| format!("unsubscribe: {e}"))?;
-            }
-        }
-        Ok(())
     }
 
     pub fn publish_live(
@@ -242,14 +251,6 @@ impl SessionManager {
         }
 
         status
-    }
-
-    pub fn connected_ids(&self) -> Vec<&str> {
-        self.open
-            .iter()
-            .filter(|(_, s)| s.state == SessionState::Connected)
-            .map(|(id, _)| id.as_str())
-            .collect()
     }
 
     pub fn sync_profile_name(&mut self, profile_id: &str, profile_name: &str) {

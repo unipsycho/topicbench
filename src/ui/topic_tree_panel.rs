@@ -1,25 +1,44 @@
-//! MQTT Explorer–style browsable topic hierarchy + sticky/clipboard actions.
+//! Topic hierarchy grouped per connected broker/profile.
 
 use crate::mqtt::pins::PinBoard;
-use crate::mqtt::session::Session;
+use crate::mqtt::session::{Session, SessionManager, SessionState};
 use crate::mqtt::settings::TopicTreeExpandMode;
 use crate::mqtt::topic_tree::TopicNode;
 use crate::ui::clipboard;
 use crate::ui::flash;
+use crate::ui::icons::IconSet;
 use crate::ui::search_bar::SearchFilter;
 use eframe::egui::{self, Color32, RichText};
 use std::time::Instant;
 
+/// Distinct heading colors per broker index (not used for topic rows).
+const BROKER_COLORS: [Color32; 6] = [
+    Color32::from_rgb(70, 140, 210),
+    Color32::from_rgb(200, 120, 60),
+    Color32::from_rgb(90, 170, 110),
+    Color32::from_rgb(170, 100, 190),
+    Color32::from_rgb(60, 170, 180),
+    Color32::from_rgb(210, 90, 110),
+];
+
 pub fn draw(
     ui: &mut egui::Ui,
-    session: Option<&Session>,
+    sessions: &SessionManager,
     pins: &mut PinBoard,
     expand_mode: TopicTreeExpandMode,
     expand_all_once: &mut Option<bool>,
+    icons: &IconSet,
     filter: &SearchFilter,
     status: &mut String,
 ) {
     ui.horizontal(|ui| {
+        if let Some(tex) = icons.get("hierarchy-tree") {
+            ui.add(
+                egui::Image::new(tex)
+                    .fit_to_exact_size(egui::vec2(20.0, 20.0))
+                    .sense(egui::Sense::hover()),
+            );
+        }
         ui.heading("Topic tree");
         if ui.small_button("Expand all").clicked() {
             *expand_all_once = Some(true);
@@ -28,37 +47,62 @@ pub fn draw(
             *expand_all_once = Some(false);
         }
     });
-    ui.label("Hierarchy from subscribed traffic — expand and mark topics sticky.");
+    ui.label("Per connected broker — colored heading, then that broker’s topics.");
     ui.add_space(4.0);
 
-    let Some(session) = session else {
-        ui.weak("Connect a profile and subscribe to see topics.");
-        return;
-    };
+    let connected: Vec<&Session> = sessions
+        .open
+        .values()
+        .filter(|s| s.state == SessionState::Connected || !s.topic_tree.root.children.is_empty())
+        .collect();
 
-    if session.topic_tree.root.children.is_empty() {
-        ui.weak("No traffic yet on this profile.");
+    if connected.is_empty() {
+        ui.weak("Connect a profile and subscribe to see topics.");
         return;
     }
 
     let force_open = expand_all_once.take();
     let now = Instant::now();
-    let profile_id = session.profile_id.clone();
-    let profile_name = session.profile_name.clone();
-    draw_node(
-        ui,
-        &session.topic_tree.root,
-        String::new(),
-        &profile_id,
-        &profile_name,
-        pins,
-        now,
-        expand_mode,
-        force_open,
-        0,
-        filter,
-        status,
-    );
+
+    for (idx, session) in connected.iter().enumerate() {
+        let color = BROKER_COLORS[idx % BROKER_COLORS.len()];
+        ui.add_space(6.0);
+        ui.label(
+            RichText::new(format!("▸ {}", session.profile_name))
+                .heading()
+                .color(color)
+                .strong(),
+        );
+        ui.label(
+            RichText::new(format!(
+                "{} · {}",
+                session.state.label(),
+                session.profile_id
+            ))
+            .small()
+            .color(color),
+        );
+
+        if session.topic_tree.root.children.is_empty() {
+            ui.weak("  No traffic yet on this broker.");
+            continue;
+        }
+
+        draw_node(
+            ui,
+            &session.topic_tree.root,
+            String::new(),
+            &session.profile_id,
+            &session.profile_name,
+            pins,
+            now,
+            expand_mode,
+            force_open,
+            0,
+            filter,
+            status,
+        );
+    }
 }
 
 fn node_matches(node: &TopicNode, path: &str, filter: &SearchFilter) -> bool {
