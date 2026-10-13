@@ -123,11 +123,11 @@ impl MqttMonitorApp {
     fn draw_ribbon(&mut self, ctx: &egui::Context) {
         // Full-width chrome bar, visually separated from the body (PhotoCraft options-bar pattern).
         egui::TopBottomPanel::top("ribbon")
-            .exact_height(108.0)
+            .exact_height(88.0)
             .frame(
                 egui::Frame::NONE
                     .fill(CHROME_BG)
-                    .inner_margin(egui::Margin::symmetric(10, 6))
+                    .inner_margin(egui::Margin::symmetric(10, 4))
                     .stroke(egui::Stroke::new(1.0_f32, CHROME_SEP)),
             )
             .show(ctx, |ui| {
@@ -135,14 +135,14 @@ impl MqttMonitorApp {
                     if let Some(logo) = &self.logo {
                         ui.add(
                             egui::Image::new(logo)
-                                .fit_to_exact_size(egui::vec2(120.0, 56.0))
+                                .fit_to_exact_size(egui::vec2(100.0, 48.0))
                                 .maintain_aspect_ratio(true)
                                 .sense(egui::Sense::hover()),
                         );
                         icons::ribbon_separator(ui);
                     }
 
-                    // Profiles: New / Save / Delete + show/hide side panel
+                    // Profiles: New / Save / Delete + show/hide left profiles panel
                     icons::ribbon_group(ui, "Profiles", |ui| {
                         if self
                             .icons
@@ -177,7 +177,7 @@ impl MqttMonitorApp {
                             .command(
                                 ui,
                                 "gateway",
-                                "Panel",
+                                "Profiles",
                                 self.panels.profiles,
                                 "Show or hide the profiles side panel",
                             )
@@ -189,7 +189,7 @@ impl MqttMonitorApp {
 
                     icons::ribbon_separator(ui);
 
-                    // Panels: traffic / publish / stickies / topic tree
+                    // Panels: optional views only (not profile workflow)
                     icons::ribbon_group(ui, "Panels", |ui| {
                         if self
                             .icons
@@ -249,13 +249,14 @@ impl MqttMonitorApp {
 
                     // Slot for future Format / Views groups
                     icons::ribbon_group(ui, "Views", |ui| {
-                        ui.add_space(8.0);
+                        ui.add_space(6.0);
                         ui.vertical_centered(|ui| {
                             ui.label(RichText::new("(soon)").small().weak());
                         });
-                        ui.add_space(8.0);
+                        ui.add_space(6.0);
                     });
 
+                    // Settings gear — opens the separate settings window
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         icons::ribbon_group(ui, "App", |ui| {
                             if self
@@ -265,7 +266,7 @@ impl MqttMonitorApp {
                                     "settings-checklist",
                                     "Settings",
                                     self.settings_open,
-                                    "Settings",
+                                    "Open settings window",
                                 )
                                 .clicked()
                             {
