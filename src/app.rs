@@ -9,7 +9,7 @@ use crate::mqtt::publish::PublishDraft;
 use crate::mqtt::session::SessionManager;
 use crate::mqtt::settings::AppSettings;
 use crate::mqtt::subscribe;
-use crate::ui::icons::{self, IconSet, CHROME_BG, CHROME_SEP};
+use crate::ui::icons::{self, IconSet, CHROME_BG, CHROME_SEP, CHROME_TEXT, STATUS_BG};
 use crate::ui::profiles::ProfileListFilter;
 use crate::ui::search_bar::SearchFilter;
 use crate::ui::{
@@ -121,28 +121,49 @@ impl MqttMonitorApp {
     }
 
     fn draw_ribbon(&mut self, ctx: &egui::Context) {
-        // Full-width chrome bar, visually separated from the body (PhotoCraft options-bar pattern).
+        // Dark full-width chrome; height follows content (no empty band under captions).
+        // Plain horizontal layout — NOT horizontal_centered+RTL, which clipped Panels/Settings.
         egui::TopBottomPanel::top("ribbon")
-            .exact_height(88.0)
+            .resizable(false)
+            .show_separator_line(false)
             .frame(
                 egui::Frame::NONE
                     .fill(CHROME_BG)
-                    .inner_margin(egui::Margin::symmetric(10, 4))
+                    .inner_margin(egui::Margin::symmetric(8, 4))
                     .stroke(egui::Stroke::new(1.0_f32, CHROME_SEP)),
             )
             .show(ctx, |ui| {
-                ui.horizontal_centered(|ui| {
-                    if let Some(logo) = &self.logo {
-                        ui.add(
-                            egui::Image::new(logo)
-                                .fit_to_exact_size(egui::vec2(100.0, 48.0))
-                                .maintain_aspect_ratio(true)
-                                .sense(egui::Sense::hover()),
-                        );
-                        icons::ribbon_separator(ui);
-                    }
+                ui.visuals_mut().override_text_color = Some(CHROME_TEXT);
+                ui.spacing_mut().item_spacing.y = 0.0;
 
-                    // Profiles: New / Save / Delete + show/hide left profiles panel
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 4.0;
+
+                    // Brand stack: title above AA logo, centered, high contrast
+                    ui.vertical(|ui| {
+                        ui.set_width(118.0);
+                        ui.spacing_mut().item_spacing.y = 2.0;
+                        ui.vertical_centered(|ui| {
+                            ui.label(
+                                RichText::new("MQTT Monitor")
+                                    .strong()
+                                    .size(13.0)
+                                    .color(Color32::WHITE),
+                            );
+                            if let Some(logo) = &self.logo {
+                                ui.add(
+                                    egui::Image::new(logo)
+                                        .fit_to_exact_size(egui::vec2(108.0, 40.0))
+                                        .maintain_aspect_ratio(true)
+                                        .sense(egui::Sense::hover()),
+                                );
+                            }
+                        });
+                    });
+
+                    icons::ribbon_separator(ui);
+
+                    // Profiles: New / Save / Delete + Profiles side-panel toggle
                     icons::ribbon_group(ui, "Profiles", |ui| {
                         if self
                             .icons
@@ -189,7 +210,7 @@ impl MqttMonitorApp {
 
                     icons::ribbon_separator(ui);
 
-                    // Panels: optional views only (not profile workflow)
+                    // Panels: optional content toggles (must stay visible)
                     icons::ribbon_group(ui, "Panels", |ui| {
                         if self
                             .icons
@@ -245,18 +266,7 @@ impl MqttMonitorApp {
                         }
                     });
 
-                    icons::ribbon_separator(ui);
-
-                    // Slot for future Format / Views groups
-                    icons::ribbon_group(ui, "Views", |ui| {
-                        ui.add_space(6.0);
-                        ui.vertical_centered(|ui| {
-                            ui.label(RichText::new("(soon)").small().weak());
-                        });
-                        ui.add_space(6.0);
-                    });
-
-                    // Settings gear — opens the separate settings window
+                    // Settings gear on the right — expanding RTL after left groups (not centered).
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         icons::ribbon_group(ui, "App", |ui| {
                             if self
@@ -277,20 +287,20 @@ impl MqttMonitorApp {
                 });
             });
 
-        // Thin status strip under the ribbon (clear separation from body content).
+        // Dark status strip under the ribbon.
         egui::TopBottomPanel::top("status_strip")
-            .exact_height(28.0)
+            .exact_height(24.0)
+            .show_separator_line(false)
             .frame(
                 egui::Frame::NONE
-                    .fill(Color32::from_rgb(236, 238, 242))
-                    .inner_margin(egui::Margin::symmetric(10, 4))
+                    .fill(STATUS_BG)
+                    .inner_margin(egui::Margin::symmetric(10, 3))
                     .stroke(egui::Stroke::new(1.0_f32, CHROME_SEP)),
             )
             .show(ctx, |ui| {
+                ui.visuals_mut().override_text_color = Some(CHROME_TEXT);
                 ui.horizontal_centered(|ui| {
-                    ui.label(RichText::new("MQTT Monitor").strong());
-                    ui.separator();
-                    ui.label(&self.status);
+                    ui.label(RichText::new(&self.status).color(CHROME_TEXT));
                 });
             });
     }

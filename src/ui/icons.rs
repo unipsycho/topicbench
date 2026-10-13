@@ -1,23 +1,23 @@
-//! Embedded UI icons from `assets/icons/`.
+//! Embedded UI icons from `assets/icons/` (transparent PNGs for dark chrome).
 //!
-//! Ribbon chrome borrows PhotoCraft (ui-egui) cues: solid chrome bar, quiet hover/selected
-//! fills, icon ~½ of the hit box, thin group separators — with Word-style captions under groups.
+//! Ribbon: dark PhotoCraft-style chrome, Word-style group captions, compact commands.
 
 use eframe::egui::{self, Color32, RichText, Sense, Stroke, TextureHandle, Vec2};
 use std::collections::HashMap;
 
-/// Hit box for a large ribbon command (Office-style; tighter under-icon padding).
-const CMD_BOX: f32 = 44.0;
-/// Glyph size ≈ half the box (PhotoCraft toolbar ratio ~0.52).
-const CMD_ICON: f32 = 26.0;
+/// Compact ribbon command hit box.
+const CMD_BOX: f32 = 42.0;
+const CMD_ICON: f32 = 24.0;
 
-/// Light chrome tokens (Studio Light / Breeze-adjacent, like PhotoCraft light themes).
-pub const CHROME_BG: Color32 = Color32::from_rgb(246, 246, 248);
-pub const CHROME_SEP: Color32 = Color32::from_rgb(214, 218, 222);
-pub const CHROME_HOVER: Color32 = Color32::from_rgb(232, 234, 238);
-pub const CHROME_ACCENT_SOFT: Color32 = Color32::from_rgb(210, 226, 244);
-pub const CHROME_ACCENT_BORDER: Color32 = Color32::from_rgb(120, 160, 200);
-pub const CHROME_CAPTION: Color32 = Color32::from_rgb(90, 98, 110);
+/// Dark chrome tokens (reads like PhotoCraft Pro / Studio dark toolbars).
+pub const CHROME_BG: Color32 = Color32::from_rgb(40, 42, 48);
+pub const CHROME_SEP: Color32 = Color32::from_rgb(70, 74, 84);
+pub const CHROME_HOVER: Color32 = Color32::from_rgb(58, 62, 72);
+pub const CHROME_ACCENT_SOFT: Color32 = Color32::from_rgb(48, 78, 112);
+pub const CHROME_ACCENT_BORDER: Color32 = Color32::from_rgb(100, 160, 220);
+pub const CHROME_CAPTION: Color32 = Color32::from_rgb(170, 176, 188);
+pub const CHROME_TEXT: Color32 = Color32::from_rgb(230, 232, 238);
+pub const STATUS_BG: Color32 = Color32::from_rgb(28, 30, 36);
 
 pub struct IconSet {
     textures: HashMap<&'static str, TextureHandle>,
@@ -38,7 +38,7 @@ impl IconSet {
         self.textures.get(name)
     }
 
-    /// Large ribbon command: icon + caption under; transparent until hover (PhotoCraft-style).
+    /// Compact ribbon command: icon + caption; quiet hover/selected on dark chrome.
     pub fn command(
         &self,
         ui: &mut egui::Ui,
@@ -47,15 +47,12 @@ impl IconSet {
         selected: bool,
         tip: &str,
     ) -> egui::Response {
-        // Compact cell: less empty space under the glyph.
-        let cell = Vec2::new(CMD_BOX + 2.0, CMD_BOX + 8.0);
+        let cell = Vec2::new(CMD_BOX + 4.0, CMD_BOX + 6.0);
         let (rect, response) = ui.allocate_exact_size(cell, Sense::click());
         let response = response.on_hover_text(tip);
 
-        // Quiet chrome: fill only when selected / hovered — no idle border.
         if selected {
-            ui.painter()
-                .rect_filled(rect, 3.0, CHROME_ACCENT_SOFT);
+            ui.painter().rect_filled(rect, 3.0, CHROME_ACCENT_SOFT);
             ui.painter().rect_stroke(
                 rect,
                 3.0,
@@ -66,7 +63,7 @@ impl IconSet {
             ui.painter().rect_filled(rect, 3.0, CHROME_HOVER);
         }
 
-        let icon_center = egui::pos2(rect.center().x, rect.top() + CMD_BOX * 0.40);
+        let icon_center = egui::pos2(rect.center().x, rect.top() + CMD_BOX * 0.38);
         if let Some(tex) = self.get(name) {
             let img = egui::Image::new(tex).fit_to_exact_size(Vec2::splat(CMD_ICON));
             let img_rect = egui::Rect::from_center_size(icon_center, Vec2::splat(CMD_ICON));
@@ -74,14 +71,14 @@ impl IconSet {
         }
 
         ui.painter().text(
-            egui::pos2(rect.center().x, rect.bottom() - 5.0),
+            egui::pos2(rect.center().x, rect.bottom() - 4.0),
             egui::Align2::CENTER_CENTER,
             label,
             egui::FontId::proportional(10.0),
             if selected {
-                Color32::from_rgb(40, 80, 130)
+                Color32::from_rgb(180, 210, 255)
             } else {
-                ui.visuals().text_color()
+                CHROME_TEXT
             },
         );
         response
@@ -102,12 +99,12 @@ impl IconSet {
     }
 }
 
-/// Labeled ribbon group: controls on top, caption centered underneath (Word layout).
+/// Labeled ribbon group: controls on top, caption under (Word layout).
 pub fn ribbon_group(ui: &mut egui::Ui, caption: &str, add_contents: impl FnOnce(&mut egui::Ui)) {
     ui.vertical(|ui| {
-        ui.spacing_mut().item_spacing.y = 1.0;
+        ui.spacing_mut().item_spacing.y = 0.0;
         ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = 3.0;
+            ui.spacing_mut().item_spacing.x = 2.0;
             add_contents(ui);
         });
         ui.vertical_centered(|ui| {
@@ -116,15 +113,15 @@ pub fn ribbon_group(ui: &mut egui::Ui, caption: &str, add_contents: impl FnOnce(
     });
 }
 
-/// 1px vertical rule between groups (PhotoCraft options-bar / toolbar separators).
+/// 1px vertical rule between groups.
 pub fn ribbon_separator(ui: &mut egui::Ui) {
-    ui.add_space(6.0);
-    let (rect, _) = ui.allocate_exact_size(Vec2::new(1.0, 56.0), Sense::hover());
+    ui.add_space(4.0);
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(1.0, 52.0), Sense::hover());
     ui.painter().line_segment(
         [rect.center_top(), rect.center_bottom()],
         Stroke::new(1.0_f32, CHROME_SEP),
     );
-    ui.add_space(6.0);
+    ui.add_space(4.0);
 }
 
 fn load_png(ctx: &egui::Context, id: &str, bytes: &[u8]) -> Option<TextureHandle> {
