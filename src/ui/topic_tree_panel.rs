@@ -473,10 +473,7 @@ fn leaf_row(
                     } else if topic_resp.clicked() {
                         select_topic(pins, profile_id, profile_name, full_topic);
                     }
-                    // Full path hover — stays open under wheel; scrolls when tall.
-                    scrollable_hover(ui, &topic_resp, egui::Id::new(("topic-tip", profile_id, full_topic)), |ui| {
-                        ui.label(RichText::new(full_topic).monospace());
-                    });
+                    // No topic-name hover tip — copy-topic button is enough; tip blocked selection.
 
                     if show_copy_payload {
                         ui.label(RichText::new("=").monospace().color(json_view::C_TOPIC));
