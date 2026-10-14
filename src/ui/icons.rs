@@ -17,7 +17,11 @@ use std::f32::consts::FRAC_PI_2;
 const CMD_ICON: f32 = 36.0;
 /// Slightly tighter horizontal; taller cell for caption bottom clearance.
 const CMD_W: f32 = 52.0;
-const CMD_H: f32 = 64.0;
+pub const CMD_H: f32 = 64.0;
+/// Compact (collapsed ribbon) icon-only cell — two stack in [`CMD_H`].
+const COMPACT_ICON: f32 = 20.0;
+pub const COMPACT_W: f32 = 28.0;
+const COMPACT_H: f32 = 30.0;
 /// Dense topic-tree / inline action icons.
 const TINY_ICON: f32 = 14.0;
 /// Uploaded texture edge: 2× [`CMD_ICON`] for sharp HiDPI + clean half-scale at 1×.
@@ -173,6 +177,116 @@ impl IconSet {
         response
     }
 
+    /// Collapsed ribbon: icon-only (no caption), keeps hover tip + shortcuts.
+    pub fn command_compact(
+        &self,
+        ui: &mut egui::Ui,
+        name: &str,
+        selected: bool,
+        tip: &str,
+    ) -> egui::Response {
+        self.command_compact_enabled(ui, name, selected, tip, true)
+    }
+
+    /// Collapsed ribbon command with optional disabled state.
+    pub fn command_compact_enabled(
+        &self,
+        ui: &mut egui::Ui,
+        name: &str,
+        selected: bool,
+        tip: &str,
+        enabled: bool,
+    ) -> egui::Response {
+        let cell = Vec2::new(COMPACT_W, COMPACT_H);
+        let sense = if enabled {
+            Sense::click()
+        } else {
+            Sense::hover()
+        };
+        let (rect, response) = ui.allocate_exact_size(cell, sense);
+        let response = crate::ui::hover_tip::attach(
+            response,
+            if enabled {
+                tip.to_owned()
+            } else {
+                format!("{tip} (disabled)")
+            },
+        );
+
+        if enabled && selected {
+            ui.painter().rect_filled(rect, 3.0, CHROME_ACCENT_SOFT);
+            ui.painter().rect_stroke(
+                rect,
+                3.0,
+                Stroke::new(1.0_f32, CHROME_ACCENT_BORDER),
+                egui::StrokeKind::Inside,
+            );
+        } else if enabled && response.hovered() {
+            ui.painter().rect_filled(rect, 3.0, CHROME_HOVER);
+        }
+
+        if let Some(tex) = self.get(name) {
+            let mut img = egui::Image::new(tex)
+                .fit_to_exact_size(Vec2::splat(COMPACT_ICON))
+                .maintain_aspect_ratio(true);
+            if !enabled {
+                img = img.tint(Color32::from_rgba_unmultiplied(255, 255, 255, 90));
+            }
+            img.paint_at(
+                ui,
+                egui::Rect::from_center_size(rect.center(), Vec2::splat(COMPACT_ICON)),
+            );
+        }
+        response
+    }
+}
+
+/// Estimated width of a full (icon+caption) ribbon group with `n` commands.
+pub fn estimate_group_full_w(n_cmds: usize) -> f32 {
+    // Frame pad 4×2 + rail 18 + gap 4 + n×CMD_W + (n−1)×1.
+    let n = n_cmds.max(1) as f32;
+    8.0 + SECTION_RAIL_W + 4.0 + n * CMD_W + (n - 1.0) * 1.0
+}
+
+/// Estimated width of a collapsed 2-high icon grid with `n` commands.
+pub fn estimate_group_compact_w(n_cmds: usize) -> f32 {
+    let cols = n_cmds.div_ceil(2).max(1) as f32;
+    8.0 + SECTION_RAIL_W + 4.0 + cols * COMPACT_W + (cols - 1.0) * 2.0
+}
+
+/// Ribbon separator footprint (spaces + 1px rule).
+pub fn estimate_separator_w() -> f32 {
+    4.0 + 1.0 + 4.0
+}
+
+/// Lay out `n` compact buttons in columns of two (top/bottom) inside [`CMD_H`].
+pub fn ribbon_compact_columns(ui: &mut egui::Ui, n: usize, mut add_btn: impl FnMut(usize, &mut egui::Ui)) {
+    let cols = n.div_ceil(2).max(1);
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 2.0;
+        ui.spacing_mut().item_spacing.y = 0.0;
+        for col in 0..cols {
+            let i0 = col * 2;
+            let (col_rect, _) =
+                ui.allocate_exact_size(Vec2::new(COMPACT_W, CMD_H), Sense::hover());
+            let mut col_ui = ui.new_child(
+                egui::UiBuilder::new()
+                    .max_rect(col_rect)
+                    .layout(egui::Layout::top_down(egui::Align::Center)),
+            );
+            col_ui.set_min_size(Vec2::new(COMPACT_W, CMD_H));
+            col_ui.set_max_size(Vec2::new(COMPACT_W, CMD_H));
+            col_ui.spacing_mut().item_spacing.y = CMD_H - COMPACT_H * 2.0;
+            // Top button.
+            if i0 < n {
+                add_btn(i0, &mut col_ui);
+            }
+            // Bottom button (if any).
+            if i0 + 1 < n {
+                add_btn(i0 + 1, &mut col_ui);
+            }
+        }
+    });
 }
 
 /// Content-sized ribbon group: tinted panel + 90° section label on the left rail.

@@ -17,6 +17,12 @@ const ROW_PROJ: f32 = 8.5;
 const ROW_H_MAIN: f32 = 10.0;
 const ROW_H_PROJ: f32 = 9.0;
 
+/// Approximate Stats group width for ribbon collapse planning (no UI needed).
+pub fn estimate_width() -> f32 {
+    // Rail + pad + typical "Thru 999.9 KB/s" / "9999.9 MB/day" column.
+    18.0 + 8.0 + 4.0 + 96.0 + 12.0
+}
+
 /// Draw the far-right Stats ribbon category (process-lifetime counters).
 pub fn draw_group(ui: &mut egui::Ui, stats: &TrafficStats) {
     let d = stats.display();

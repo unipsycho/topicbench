@@ -10,9 +10,11 @@ use crate::mqtt::session::SessionManager;
 use crate::mqtt::settings::AppSettings;
 use crate::mqtt::subscribe;
 use crate::ui::icons::{
-    self, IconSet, CHROME_BG, CHROME_SEP, CHROME_TEXT, TINT_APP, TINT_PANELS, TINT_PROFILES,
+    self, ribbon_compact_columns, IconSet, CHROME_BG, CHROME_SEP, CHROME_TEXT, TINT_APP,
+    TINT_PANELS, TINT_PROFILES,
 };
 use crate::ui::profiles::ProfileListFilter;
+use crate::ui::ribbon_layout::{self, SectionMode};
 use crate::ui::search_bar::SearchFilter;
 use crate::ui::shortcuts::{self, Action as ShortcutAction};
 use crate::ui::payload_panel::PayloadSearch;
@@ -378,6 +380,242 @@ impl MqttMonitorApp {
         }
     }
 
+    /// Profiles ribbon group (full captions or compact 2-high icons).
+    fn draw_ribbon_profiles(&mut self, ui: &mut egui::Ui, mode: SectionMode) {
+        icons::ribbon_group(ui, "Profiles", TINT_PROFILES, |ui| {
+            let tip_new = shortcuts::tip("New profile", "Ctrl+N");
+            let tip_save = shortcuts::tip("Save profiles", "Ctrl+S");
+            let tip_del = shortcuts::tip("Delete selected profile", "Delete / Ctrl+Backspace");
+            let tip_panel = shortcuts::tip("Show or hide the profiles side panel", "Ctrl+Shift+P");
+            if mode == SectionMode::Full {
+                if self
+                    .icons
+                    .command(ui, "profile_add", "New", false, &tip_new)
+                    .clicked()
+                {
+                    self.action_new_profile();
+                }
+                if self
+                    .icons
+                    .command(ui, "save", "Save", false, &tip_save)
+                    .clicked()
+                {
+                    self.action_save_profiles();
+                }
+                if self
+                    .icons
+                    .command_enabled(
+                        ui,
+                        "disconnect",
+                        "Delete",
+                        false,
+                        &tip_del,
+                        self.panels.profiles,
+                    )
+                    .clicked()
+                {
+                    if let Some(id) = self.profiles.delete_selected() {
+                        self.sessions.close(&id);
+                        self.status = format!("Deleted profile {id}");
+                    }
+                }
+                if self
+                    .icons
+                    .command(ui, "panel_docked", "Profiles", self.panels.profiles, &tip_panel)
+                    .clicked()
+                {
+                    self.panels.profiles = !self.panels.profiles;
+                    self.profiles_auto_opened = false;
+                    self.persist_panels();
+                }
+            } else {
+                let mut clicks = [false; 4];
+                ribbon_compact_columns(ui, 4, |i, ui| {
+                    clicks[i] = match i {
+                        0 => self
+                            .icons
+                            .command_compact(ui, "profile_add", false, &tip_new)
+                            .clicked(),
+                        1 => self
+                            .icons
+                            .command_compact(ui, "save", false, &tip_save)
+                            .clicked(),
+                        2 => self
+                            .icons
+                            .command_compact_enabled(
+                                ui,
+                                "disconnect",
+                                false,
+                                &tip_del,
+                                self.panels.profiles,
+                            )
+                            .clicked(),
+                        _ => self
+                            .icons
+                            .command_compact(
+                                ui,
+                                "panel_docked",
+                                self.panels.profiles,
+                                &tip_panel,
+                            )
+                            .clicked(),
+                    };
+                });
+                if clicks[0] {
+                    self.action_new_profile();
+                }
+                if clicks[1] {
+                    self.action_save_profiles();
+                }
+                if clicks[2] {
+                    if let Some(id) = self.profiles.delete_selected() {
+                        self.sessions.close(&id);
+                        self.status = format!("Deleted profile {id}");
+                    }
+                }
+                if clicks[3] {
+                    self.panels.profiles = !self.panels.profiles;
+                    self.profiles_auto_opened = false;
+                    self.persist_panels();
+                }
+            }
+        });
+    }
+
+    /// Panels ribbon group (full or compact).
+    fn draw_ribbon_panels(&mut self, ui: &mut egui::Ui, mode: SectionMode) {
+        icons::ribbon_group(ui, "Panels", TINT_PANELS, |ui| {
+            let tips = [
+                shortcuts::tip("Live traffic", "Ctrl+Shift+T"),
+                shortcuts::tip("Publish panel", "Ctrl+Shift+U"),
+                shortcuts::tip("Payload panel", "Ctrl+Shift+L"),
+                shortcuts::tip("Sticky topics", "Ctrl+Shift+K"),
+                shortcuts::tip("Topic tree", "Ctrl+Shift+R"),
+            ];
+            let icons_names = [
+                "incoming_messages",
+                "publish_message",
+                "panel_undock",
+                "sticky_topic",
+                "topic_tree",
+            ];
+            let labels = ["Traffic", "Publish", "Payload", "Stickies", "Tree"];
+            let selected = [
+                self.panels.live_traffic,
+                self.panels.publish,
+                self.panels.payload,
+                self.panels.stickies,
+                self.panels.topic_tree,
+            ];
+            let mut clicks = [false; 5];
+            if mode == SectionMode::Full {
+                for i in 0..5 {
+                    clicks[i] = self
+                        .icons
+                        .command(ui, icons_names[i], labels[i], selected[i], &tips[i])
+                        .clicked();
+                }
+            } else {
+                ribbon_compact_columns(ui, 5, |i, ui| {
+                    clicks[i] = self
+                        .icons
+                        .command_compact(ui, icons_names[i], selected[i], &tips[i])
+                        .clicked();
+                });
+            }
+            if clicks[0] {
+                self.panels.live_traffic = !self.panels.live_traffic;
+                self.persist_panels();
+            }
+            if clicks[1] {
+                self.panels.publish = !self.panels.publish;
+                self.persist_panels();
+            }
+            if clicks[2] {
+                self.panels.payload = !self.panels.payload;
+                self.persist_panels();
+            }
+            if clicks[3] {
+                self.panels.stickies = !self.panels.stickies;
+                self.persist_panels();
+            }
+            if clicks[4] {
+                self.panels.topic_tree = !self.panels.topic_tree;
+                self.persist_panels();
+            }
+        });
+    }
+
+    /// App ribbon group: Settings + zoom (full or compact).
+    fn draw_ribbon_app(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, mode: SectionMode) {
+        icons::ribbon_group(ui, "App", TINT_APP, |ui| {
+            let tip_set = shortcuts::tip("Open settings window", "Ctrl+,");
+            let tip_out = shortcuts::tip("Decrease font size (−4 steps from default)", "Ctrl+-");
+            let tip_in =
+                shortcuts::tip("Increase font size (+5 steps from default)", "Ctrl+= / Ctrl++");
+            let mut clicks = [false; 3];
+            if mode == SectionMode::Full {
+                clicks[0] = self
+                    .icons
+                    .command(
+                        ui,
+                        "configuration_sliders",
+                        "Settings",
+                        self.settings_open,
+                        &tip_set,
+                    )
+                    .clicked();
+                clicks[1] = self
+                    .icons
+                    .command(ui, "zoom_out", "Zoom−", false, &tip_out)
+                    .clicked();
+                clicks[2] = self
+                    .icons
+                    .command(ui, "zoom_in", "Zoom+", false, &tip_in)
+                    .clicked();
+            } else {
+                ribbon_compact_columns(ui, 3, |i, ui| {
+                    clicks[i] = match i {
+                        0 => self
+                            .icons
+                            .command_compact(
+                                ui,
+                                "configuration_sliders",
+                                self.settings_open,
+                                &tip_set,
+                            )
+                            .clicked(),
+                        1 => self
+                            .icons
+                            .command_compact(ui, "zoom_out", false, &tip_out)
+                            .clicked(),
+                        _ => self
+                            .icons
+                            .command_compact(ui, "zoom_in", false, &tip_in)
+                            .clicked(),
+                    };
+                });
+            }
+            if clicks[0] {
+                self.settings_open = true;
+            }
+            if clicks[1] {
+                if self.settings.zoom_font_out() {
+                    let _ = self.settings.save();
+                    apply_font_zoom(ctx, self.settings.font_zoom_factor());
+                    self.status = format!("Font zoom {}", self.settings.font_zoom_step);
+                }
+            }
+            if clicks[2] {
+                if self.settings.zoom_font_in() {
+                    let _ = self.settings.save();
+                    apply_font_zoom(ctx, self.settings.font_zoom_factor());
+                    self.status = format!("Font zoom {}", self.settings.font_zoom_step);
+                }
+            }
+        });
+    }
+
     fn draw_ribbon(&mut self, ctx: &egui::Context) {
         // Dark chrome. Groups shrink-wrap (see icons::ribbon_group) so Profiles cannot
         // expand across the bar and leave Panels/Settings with zero width.
@@ -400,299 +638,103 @@ impl MqttMonitorApp {
                 ui.with_layout(egui::Layout::left_to_right(egui::Align::Min), |ui| {
                     ui.spacing_mut().item_spacing.x = 4.0;
 
+                    // Brand metrics (also feed collapse width planning).
+                    let logo_size = self
+                        .logo
+                        .as_ref()
+                        .map(|l| l.size_vec2())
+                        .unwrap_or(egui::vec2(108.0, 54.0));
+                    let brand_h = 70.0; // match ribbon group / separator height
+                    let green = Color32::from_rgb(90, 190, 120); // Connected/status green
+                    let title_size = 24.0;
+                    let line_gap = -2.0_f32;
+                    let strong_family = ui
+                        .style()
+                        .text_styles
+                        .get(&TextStyle::Name("Strong".into()))
+                        .map(|f| f.family.clone())
+                        .unwrap_or(FontFamily::Proportional);
+                    let font_id = FontId::new(title_size, strong_family);
+                    let (mqtt_g, master_g) = ui.fonts(|f| {
+                        (
+                            f.layout_no_wrap("MQTT".into(), font_id.clone(), green),
+                            f.layout_no_wrap("Master".into(), font_id, green),
+                        )
+                    });
+                    let title_w = mqtt_g.size().x.max(master_g.size().x).ceil();
+                    let stack_h = mqtt_g.size().y + master_g.size().y + line_gap;
+                    let brand_w = logo_size.x + 10.0 + title_w + 10.0;
+
+                    // Progressive collapse: App → Profiles → Panels → hide Stats.
+                    let avail_w = ui.available_width();
+                    let plan = ribbon_layout::plan_for_width(
+                        avail_w,
+                        brand_w,
+                        stats_ribbon::estimate_width(),
+                    );
+
                     // Brand block: logo + two-line title, vertically centered as one unit.
-                    // Each title line is x-centered in title_w so Master sits under MQTT.
-                    {
-                        let logo_size = self
-                            .logo
-                            .as_ref()
-                            .map(|l| l.size_vec2())
-                            .unwrap_or(egui::vec2(108.0, 54.0));
-                        let brand_h = 70.0; // match ribbon group / separator height
-                        let green = Color32::from_rgb(90, 190, 120); // Connected/status green
-                        let title_size = 24.0;
-                        let line_gap = -2.0_f32;
-                        let strong_family = ui
-                            .style()
-                            .text_styles
-                            .get(&TextStyle::Name("Strong".into()))
-                            .map(|f| f.family.clone())
-                            .unwrap_or(FontFamily::Proportional);
-                        let font_id = FontId::new(title_size, strong_family);
-                        let (mqtt_g, master_g) = ui.fonts(|f| {
-                            (
-                                f.layout_no_wrap("MQTT".into(), font_id.clone(), green),
-                                f.layout_no_wrap("Master".into(), font_id, green),
-                            )
-                        });
-                        let title_w = mqtt_g.size().x.max(master_g.size().x).ceil();
-                        let stack_h = mqtt_g.size().y + master_g.size().y + line_gap;
-                        let brand_w = logo_size.x + 10.0 + title_w + 10.0;
-                        ui.allocate_ui_with_layout(
-                            egui::vec2(brand_w, brand_h),
-                            egui::Layout::left_to_right(Align::Center),
-                            |ui| {
-                                ui.spacing_mut().item_spacing.x = 0.0;
-                                if let Some(logo) = &self.logo {
-                                    ui.add(
-                                        egui::Image::new(logo)
-                                            .fit_to_exact_size(logo_size)
-                                            .maintain_aspect_ratio(true)
-                                            .sense(egui::Sense::hover()),
+                    ui.allocate_ui_with_layout(
+                        egui::vec2(brand_w, brand_h),
+                        egui::Layout::left_to_right(Align::Center),
+                        |ui| {
+                            ui.spacing_mut().item_spacing.x = 0.0;
+                            if let Some(logo) = &self.logo {
+                                ui.add(
+                                    egui::Image::new(logo)
+                                        .fit_to_exact_size(logo_size)
+                                        .maintain_aspect_ratio(true)
+                                        .sense(egui::Sense::hover()),
+                                );
+                            }
+                            ui.add_space(10.0);
+                            let (title_rect, _) = ui.allocate_exact_size(
+                                egui::vec2(title_w, brand_h),
+                                egui::Sense::hover(),
+                            );
+                            let top = title_rect.center().y - stack_h * 0.5;
+                            let mqtt_x = title_rect.left() + (title_w - mqtt_g.size().x) * 0.5;
+                            let master_x =
+                                title_rect.left() + (title_w - master_g.size().x) * 0.5;
+                            ui.painter()
+                                .galley(egui::pos2(mqtt_x, top), mqtt_g, green);
+                            ui.painter().galley(
+                                egui::pos2(master_x, top + stack_h - master_g.size().y),
+                                master_g,
+                                green,
+                            );
+                            ui.add_space(10.0);
+                        },
+                    );
+
+                    icons::ribbon_separator(ui);
+                    self.draw_ribbon_profiles(ui, plan.profiles);
+                    icons::ribbon_separator(ui);
+                    self.draw_ribbon_panels(ui, plan.panels);
+                    icons::ribbon_separator(ui);
+                    self.draw_ribbon_app(ui, ctx, plan.app);
+
+                    // Stats on the far right (hidden when the ribbon is still too tight).
+                    if plan.show_stats {
+                        let remaining = ui.available_width();
+                        if remaining > 8.0 {
+                            ui.with_layout(
+                                egui::Layout::right_to_left(egui::Align::Min),
+                                |ui| {
+                                    ui.set_max_width(remaining);
+                                    ui.with_layout(
+                                        egui::Layout::left_to_right(egui::Align::Min),
+                                        |ui| {
+                                            icons::ribbon_separator(ui);
+                                            stats_ribbon::draw_group(
+                                                ui,
+                                                &self.sessions.traffic_stats,
+                                            );
+                                        },
                                     );
-                                }
-                                ui.add_space(10.0);
-                                let (title_rect, _) = ui.allocate_exact_size(
-                                    egui::vec2(title_w, brand_h),
-                                    egui::Sense::hover(),
-                                );
-                                // True vertical center of the two-line stack in ribbon height.
-                                let top = title_rect.center().y - stack_h * 0.5;
-                                let mqtt_x =
-                                    title_rect.left() + (title_w - mqtt_g.size().x) * 0.5;
-                                let master_x =
-                                    title_rect.left() + (title_w - master_g.size().x) * 0.5;
-                                ui.painter().galley(
-                                    egui::pos2(mqtt_x, top),
-                                    mqtt_g,
-                                    green,
-                                );
-                                ui.painter().galley(
-                                    egui::pos2(master_x, top + stack_h - master_g.size().y),
-                                    master_g,
-                                    green,
-                                );
-                                ui.add_space(10.0);
-                            },
-                        );
-                    }
-
-                    icons::ribbon_separator(ui);
-
-                    // Profiles: New / Save / Delete + Profiles side-panel toggle
-                    icons::ribbon_group(ui, "Profiles", TINT_PROFILES, |ui| {
-                        if self
-                            .icons
-                            .command(
-                                ui,
-                                "profile_add",
-                                "New",
-                                false,
-                                &shortcuts::tip("New profile", "Ctrl+N"),
-                            )
-                            .clicked()
-                        {
-                            self.action_new_profile();
+                                },
+                            );
                         }
-                        if self
-                            .icons
-                            .command(
-                                ui,
-                                "save",
-                                "Save",
-                                false,
-                                &shortcuts::tip("Save profiles", "Ctrl+S"),
-                            )
-                            .clicked()
-                        {
-                            self.action_save_profiles();
-                        }
-                        // Delete disabled while Profiles panel is hidden.
-                        if self
-                            .icons
-                            .command_enabled(
-                                ui,
-                                "disconnect",
-                                "Delete",
-                                false,
-                                &shortcuts::tip(
-                                    "Delete selected profile",
-                                    "Delete / Ctrl+Backspace",
-                                ),
-                                self.panels.profiles,
-                            )
-                            .clicked()
-                        {
-                            if let Some(id) = self.profiles.delete_selected() {
-                                self.sessions.close(&id);
-                                self.status = format!("Deleted profile {id}");
-                            }
-                        }
-                        if self
-                            .icons
-                            .command(
-                                ui,
-                                "panel_docked",
-                                "Profiles",
-                                self.panels.profiles,
-                                &shortcuts::tip(
-                                    "Show or hide the profiles side panel",
-                                    "Ctrl+Shift+P",
-                                ),
-                            )
-                            .clicked()
-                        {
-                            self.panels.profiles = !self.panels.profiles;
-                            // User took control — don't auto-close on Save.
-                            self.profiles_auto_opened = false;
-                            self.persist_panels();
-                        }
-                    });
-
-                    icons::ribbon_separator(ui);
-
-                    // Panels: Traffic / Publish / Payload / Stickies / Tree
-                    icons::ribbon_group(ui, "Panels", TINT_PANELS, |ui| {
-                        if self
-                            .icons
-                            .command(
-                                ui,
-                                "incoming_messages",
-                                "Traffic",
-                                self.panels.live_traffic,
-                                &shortcuts::tip("Live traffic", "Ctrl+Shift+T"),
-                            )
-                            .clicked()
-                        {
-                            self.panels.live_traffic = !self.panels.live_traffic;
-                            self.persist_panels();
-                        }
-                        if self
-                            .icons
-                            .command(
-                                ui,
-                                "publish_message",
-                                "Publish",
-                                self.panels.publish,
-                                &shortcuts::tip("Publish panel", "Ctrl+Shift+U"),
-                            )
-                            .clicked()
-                        {
-                            self.panels.publish = !self.panels.publish;
-                            self.persist_panels();
-                        }
-                        if self
-                            .icons
-                            .command(
-                                ui,
-                                "panel_undock",
-                                "Payload",
-                                self.panels.payload,
-                                &shortcuts::tip("Payload panel", "Ctrl+Shift+L"),
-                            )
-                            .clicked()
-                        {
-                            self.panels.payload = !self.panels.payload;
-                            self.persist_panels();
-                        }
-                        if self
-                            .icons
-                            .command(
-                                ui,
-                                "sticky_topic",
-                                "Stickies",
-                                self.panels.stickies,
-                                &shortcuts::tip("Sticky topics", "Ctrl+Shift+K"),
-                            )
-                            .clicked()
-                        {
-                            self.panels.stickies = !self.panels.stickies;
-                            self.persist_panels();
-                        }
-                        if self
-                            .icons
-                            .command(
-                                ui,
-                                "topic_tree",
-                                "Tree",
-                                self.panels.topic_tree,
-                                &shortcuts::tip("Topic tree", "Ctrl+Shift+R"),
-                            )
-                            .clicked()
-                        {
-                            self.panels.topic_tree = !self.panels.topic_tree;
-                            self.persist_panels();
-                        }
-                    });
-
-                    icons::ribbon_separator(ui);
-
-                    // App: Settings + font zoom (−4…+5 steps from default).
-                    icons::ribbon_group(ui, "App", TINT_APP, |ui| {
-                        if self
-                            .icons
-                            .command(
-                                ui,
-                                "configuration_sliders",
-                                "Settings",
-                                self.settings_open,
-                                &shortcuts::tip("Open settings window", "Ctrl+,"),
-                            )
-                            .clicked()
-                        {
-                            self.settings_open = true;
-                        }
-                        if self
-                            .icons
-                            .command(
-                                ui,
-                                "zoom_out",
-                                "Zoom−",
-                                false,
-                                &shortcuts::tip(
-                                    "Decrease font size (−4 steps from default)",
-                                    "Ctrl+-",
-                                ),
-                            )
-                            .clicked()
-                        {
-                            if self.settings.zoom_font_out() {
-                                let _ = self.settings.save();
-                                apply_font_zoom(ctx, self.settings.font_zoom_factor());
-                                self.status = format!(
-                                    "Font zoom {}",
-                                    self.settings.font_zoom_step
-                                );
-                            }
-                        }
-                        if self
-                            .icons
-                            .command(
-                                ui,
-                                "zoom_in",
-                                "Zoom+",
-                                false,
-                                &shortcuts::tip(
-                                    "Increase font size (+5 steps from default)",
-                                    "Ctrl+= / Ctrl++",
-                                ),
-                            )
-                            .clicked()
-                        {
-                            if self.settings.zoom_font_in() {
-                                let _ = self.settings.save();
-                                apply_font_zoom(ctx, self.settings.font_zoom_factor());
-                                self.status = format!(
-                                    "Font zoom {}",
-                                    self.settings.font_zoom_step
-                                );
-                            }
-                        }
-                    });
-
-                    // Push Stats to the far right of remaining ribbon space without
-                    // expanding the tinted group to the full leftover width (that made
-                    // centered text look jumbled inside a wide empty cell).
-                    let remaining = ui.available_width();
-                    if remaining > 8.0 {
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
-                            ui.set_max_width(remaining);
-                            // LTR: separator then Stats (same rule as Profiles/Panels/App).
-                            ui.with_layout(egui::Layout::left_to_right(egui::Align::Min), |ui| {
-                                icons::ribbon_separator(ui);
-                                stats_ribbon::draw_group(ui, &self.sessions.traffic_stats);
-                            });
-                        });
                     }
                 });
             });
