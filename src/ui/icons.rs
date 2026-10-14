@@ -259,34 +259,44 @@ pub fn estimate_separator_w() -> f32 {
     4.0 + 1.0 + 4.0
 }
 
-/// Lay out `n` compact buttons in columns of two (top/bottom) inside [`CMD_H`].
+/// Lay out `n` compact buttons in columns of two inside a **full [`CMD_H`]** band.
+///
+/// The allocated block is always `CMD_H` tall (same as expanded ribbon groups).
+/// Icons sit at the top and bottom of that band — the tinted panel does not shrink.
 pub fn ribbon_compact_columns(ui: &mut egui::Ui, n: usize, mut add_btn: impl FnMut(usize, &mut egui::Ui)) {
     let cols = n.div_ceil(2).max(1);
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 2.0;
-        ui.spacing_mut().item_spacing.y = 0.0;
-        for col in 0..cols {
-            let i0 = col * 2;
-            let (col_rect, _) =
-                ui.allocate_exact_size(Vec2::new(COMPACT_W, CMD_H), Sense::hover());
-            let mut col_ui = ui.new_child(
+    let gap_x = 2.0;
+    let block_w = cols as f32 * COMPACT_W + (cols.saturating_sub(1) as f32) * gap_x;
+    // Exact full ribbon body height — matches Profiles/Panels/App when expanded.
+    let (block, _) = ui.allocate_exact_size(Vec2::new(block_w, CMD_H), Sense::hover());
+
+    for col in 0..cols {
+        let i0 = col * 2;
+        let x = block.left() + col as f32 * (COMPACT_W + gap_x);
+        // Top row — pinned to the top of the shared band.
+        if i0 < n {
+            let top = egui::Rect::from_min_size(egui::pos2(x, block.top()), Vec2::new(COMPACT_W, COMPACT_H));
+            let mut child = ui.new_child(
                 egui::UiBuilder::new()
-                    .max_rect(col_rect)
+                    .max_rect(top)
                     .layout(egui::Layout::top_down(egui::Align::Center)),
             );
-            col_ui.set_min_size(Vec2::new(COMPACT_W, CMD_H));
-            col_ui.set_max_size(Vec2::new(COMPACT_W, CMD_H));
-            col_ui.spacing_mut().item_spacing.y = CMD_H - COMPACT_H * 2.0;
-            // Top button.
-            if i0 < n {
-                add_btn(i0, &mut col_ui);
-            }
-            // Bottom button (if any).
-            if i0 + 1 < n {
-                add_btn(i0 + 1, &mut col_ui);
-            }
+            add_btn(i0, &mut child);
         }
-    });
+        // Bottom row — pinned to the bottom of the same CMD_H band.
+        if i0 + 1 < n {
+            let bot = egui::Rect::from_min_size(
+                egui::pos2(x, block.bottom() - COMPACT_H),
+                Vec2::new(COMPACT_W, COMPACT_H),
+            );
+            let mut child = ui.new_child(
+                egui::UiBuilder::new()
+                    .max_rect(bot)
+                    .layout(egui::Layout::top_down(egui::Align::Center)),
+            );
+            add_btn(i0 + 1, &mut child);
+        }
+    }
 }
 
 /// Content-sized ribbon group: tinted panel + 90° section label on the left rail.
@@ -302,8 +312,12 @@ pub fn ribbon_group(
         .corner_radius(3.0)
         .inner_margin(egui::Margin::symmetric(4, 3))
         .show(ui, |ui| {
+            // Pin shared body height so compact sections cannot shrink the tint.
+            ui.set_min_height(CMD_H);
+            ui.set_max_height(CMD_H);
             // Single LTR row of exact-size cells — no nested vertical expanders.
             ui.horizontal(|ui| {
+                ui.set_min_height(CMD_H);
                 ui.spacing_mut().item_spacing.x = 4.0;
                 // Left rail: rotated section name
                 let rail = Vec2::new(SECTION_RAIL_W, CMD_H);
