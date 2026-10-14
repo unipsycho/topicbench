@@ -27,15 +27,18 @@ const SECTION_RAIL_W: f32 = 18.0;
 /// Pull rotated section text left so it clears the first command on hover.
 const SECTION_LABEL_NUDGE_X: f32 = 14.0;
 
-/// Dark chrome tokens.
-pub const CHROME_BG: Color32 = Color32::from_rgb(40, 42, 48);
+/// Dark chrome tokens (cool charcoal — ribbon + panels share `CHROME_BG`).
+pub const CHROME_BG: Color32 = Color32::from_rgb(34, 36, 42);
 pub const CHROME_SEP: Color32 = Color32::from_rgb(70, 74, 84);
 pub const CHROME_HOVER: Color32 = Color32::from_rgb(58, 62, 72);
 pub const CHROME_ACCENT_SOFT: Color32 = Color32::from_rgb(48, 78, 112);
 pub const CHROME_ACCENT_BORDER: Color32 = Color32::from_rgb(100, 160, 220);
-pub const CHROME_CAPTION: Color32 = Color32::from_rgb(170, 176, 188);
+/// Ribbon captions + topic-path gray (readable on CHROME_BG).
+pub const CHROME_CAPTION: Color32 = Color32::from_rgb(190, 196, 208);
+/// Secondary chrome labels / counts (`#n`, hints) — brighter than egui default `.weak()`.
+pub const CHROME_MUTED: Color32 = Color32::from_rgb(175, 182, 196);
 pub const CHROME_TEXT: Color32 = Color32::from_rgb(230, 232, 238);
-pub const STATUS_BG: Color32 = Color32::from_rgb(28, 30, 36);
+pub const STATUS_BG: Color32 = Color32::from_rgb(26, 28, 34);
 /// Subtle per-section ribbon tints (solid, slightly lifted from chrome bg).
 pub const TINT_PROFILES: Color32 = Color32::from_rgb(48, 56, 70);
 pub const TINT_PANELS: Color32 = Color32::from_rgb(46, 60, 52);

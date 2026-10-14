@@ -12,8 +12,8 @@ const C_BOOL: Color32 = Color32::from_rgb(120, 200, 230);
 const C_NULL: Color32 = Color32::from_rgb(150, 150, 160);
 const C_PUNCT: Color32 = Color32::from_rgb(170, 176, 188);
 const C_DEFAULT: Color32 = Color32::from_rgb(220, 222, 228);
-/// Topic-name gray (matches ribbon caption / weak chrome).
-pub const C_TOPIC: Color32 = Color32::from_rgb(170, 176, 188);
+/// Topic-name gray (matches ribbon `CHROME_CAPTION`).
+pub const C_TOPIC: Color32 = Color32::from_rgb(190, 196, 208);
 
 /// Topic path typography matching the topic-tree leaf list (mono, normal weight, gray).
 pub fn topic_path_text(topic: &str) -> egui::RichText {

@@ -12,6 +12,7 @@ use crate::ui::icons::IconSet;
 use crate::ui::json_view;
 use crate::ui::search_bar::SearchFilter;
 use crate::ui::shortcuts;
+use crate::ui::icons::CHROME_MUTED;
 use eframe::egui::{self, Color32, RichText};
 use std::time::Instant;
 
@@ -277,7 +278,9 @@ fn draw_node(
                 if !was_open && subtree > 0 {
                     ui.add(
                         egui::Label::new(
-                            RichText::new(format!("#{subtree}")).small().weak(),
+                            RichText::new(format!("#{subtree}"))
+                                .small()
+                                .color(CHROME_MUTED),
                         )
                         .sense(egui::Sense::click())
                         .selectable(false),
@@ -527,7 +530,11 @@ fn leaf_row(
             );
 
             if node.message_count > 0 {
-                ui.label(RichText::new(format!("#{}", node.message_count)).small().weak());
+                ui.label(
+                    RichText::new(format!("#{}", node.message_count))
+                        .small()
+                        .color(CHROME_MUTED),
+                );
             }
         });
     });
