@@ -27,6 +27,8 @@ Settings save to `~/.config/mqtt-monitor/settings.json`.
 Release build: `cargo build --release`  
 Unit tests: `cargo test`.
 
+Builds are **local only** — there is no GitLab CI / pipeline config in this repo.
+
 ## Package (optional)
 
 [cargo-packager](https://crates.io/crates/cargo-packager) metadata lives in `Cargo.toml` (`[package.metadata.packager]`).
