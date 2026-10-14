@@ -419,6 +419,8 @@ impl eframe::App for MqttMonitorApp {
                         &mut self.pins,
                         &mut self.profiles,
                         &self.sessions,
+                        &self.settings,
+                        &self.icons,
                         &self.search,
                         &mut self.status,
                     );

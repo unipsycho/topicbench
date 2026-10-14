@@ -39,6 +39,24 @@ impl Default for TopicTreeExpandMode {
     }
 }
 
+/// How sticky topic cards are arranged.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum StickyLayoutMode {
+    #[default]
+    Rows,
+    Columns,
+}
+
+impl StickyLayoutMode {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Rows => "Rows",
+            Self::Columns => "Columns",
+        }
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct AppSettings {
     /// On startup, reconnect profiles listed in `last_connected`.
@@ -52,10 +70,20 @@ pub struct AppSettings {
     /// Max MQTT packet size in bytes (incoming + outgoing). Clamped 2KB–256KB.
     #[serde(default = "default_max_packet_bytes")]
     pub max_packet_bytes: usize,
+    /// Sticky board: stack as rows or as a column grid.
+    #[serde(default)]
+    pub sticky_layout: StickyLayoutMode,
+    /// Column count when `sticky_layout` is Columns (clamped 2–4).
+    #[serde(default = "default_sticky_columns")]
+    pub sticky_columns: u8,
 }
 
 fn default_max_packet_bytes() -> usize {
     MAX_PACKET_DEFAULT
+}
+
+fn default_sticky_columns() -> u8 {
+    2
 }
 
 impl Default for AppSettings {
@@ -65,6 +93,8 @@ impl Default for AppSettings {
             topic_tree_expand: TopicTreeExpandMode::ExpandRoot,
             last_connected: Vec::new(),
             max_packet_bytes: MAX_PACKET_DEFAULT,
+            sticky_layout: StickyLayoutMode::Rows,
+            sticky_columns: 2,
         }
     }
 }
@@ -91,6 +121,14 @@ impl AppSettings {
         self.max_packet_bytes = Self::clamp_max_packet(kb.saturating_mul(1024));
     }
 
+    pub fn clamp_sticky_columns(n: u8) -> u8 {
+        n.clamp(2, 4)
+    }
+
+    pub fn sticky_column_count(&self) -> usize {
+        Self::clamp_sticky_columns(self.sticky_columns) as usize
+    }
+
     pub fn load() -> Self {
         let path = Self::path();
         let mut s = match fs::read_to_string(&path) {
@@ -98,6 +136,7 @@ impl AppSettings {
             Err(_) => Self::default(),
         };
         s.max_packet_bytes = Self::clamp_max_packet(s.max_packet_bytes);
+        s.sticky_columns = Self::clamp_sticky_columns(s.sticky_columns);
         s
     }
 
@@ -108,6 +147,7 @@ impl AppSettings {
         }
         let mut clone = self.clone();
         clone.max_packet_bytes = Self::clamp_max_packet(clone.max_packet_bytes);
+        clone.sticky_columns = Self::clamp_sticky_columns(clone.sticky_columns);
         let text = serde_json::to_string_pretty(&clone).map_err(|e| e.to_string())?;
         fs::write(&path, text).map_err(|e| format!("write {}: {e}", path.display()))
     }
