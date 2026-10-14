@@ -1,7 +1,7 @@
 //! Sticky strip — Raw / Value / Graph; rows or column grid from Settings.
 //! Only stickies for currently **connected** profiles are shown.
 
-use crate::mqtt::pins::{DetectedValue, PinBoard, StickyTopic, StickyViewMode};
+use crate::mqtt::pins::{DetectedValue, HistorySample, PinBoard, StickyTopic, StickyViewMode};
 use crate::mqtt::profile::ProfileStore;
 use crate::mqtt::session::{SessionManager, SessionState};
 use crate::mqtt::settings::{AppSettings, StickyLayoutMode};
@@ -282,14 +282,22 @@ fn draw_raw(ui: &mut egui::Ui, pin: &StickyTopic, sticky_key: &str) {
 
 fn draw_value(ui: &mut egui::Ui, pin: &StickyTopic, sticky_key: &str) {
     // Sticky cards cap JSON height; Payload panel passes None for full height.
-    draw_value_payload(ui, &pin.last_payload, ("sticky-json", sticky_key), Some(220.0));
+    draw_value_payload(
+        ui,
+        &pin.last_payload,
+        Some(&pin.history),
+        ("sticky-json", sticky_key),
+        Some(220.0),
+    );
 }
 
 /// Shared sticky **Value** view (pretty JSON / bool / number / string).
+/// `history`: numeric samples for Value gauge auto-range (sticky cards).
 /// `max_json_height`: `None` fills remaining panel height.
 pub fn draw_value_payload(
     ui: &mut egui::Ui,
     payload: &str,
+    history: Option<&std::collections::VecDeque<HistorySample>>,
     id_salt: impl std::hash::Hash,
     max_json_height: Option<f32>,
 ) {
@@ -312,7 +320,7 @@ pub fn draw_value_payload(
         DetectedValue::Number(n) => {
             ui.label(RichText::new("Number").small().weak());
             ui.label(RichText::new(format!("{n}")).heading().strong());
-            draw_gauge(ui, n);
+            draw_gauge(ui, n, history);
         }
         DetectedValue::Text(s) => {
             ui.label(RichText::new("String").small().weak());
@@ -321,14 +329,113 @@ pub fn draw_value_payload(
     }
 }
 
-fn draw_gauge(ui: &mut egui::Ui, value: f64) {
-    let (rect, _) = ui.allocate_exact_size(egui::vec2(160.0, 14.0), egui::Sense::hover());
+/// Auto-range from sticky history min/max; pad flat/single-sample so the thumb moves.
+fn gauge_range(value: f64, history: Option<&std::collections::VecDeque<HistorySample>>) -> (f64, f64) {
+    let mut low = value;
+    let mut high = value;
+    if let Some(hist) = history {
+        for s in hist {
+            if let Some(v) = s.numeric {
+                if v.is_finite() {
+                    low = low.min(v);
+                    high = high.max(v);
+                }
+            }
+        }
+    }
+    if !value.is_finite() {
+        return (-1.0, 1.0);
+    }
+    let span = high - low;
+    if !span.is_finite() || span < 1e-12 {
+        // Single sample or flat history — small pad so the thumb isn't stuck mid-track.
+        let pad = (value.abs() * 0.05).max(1.0);
+        (value - pad, value + pad)
+    } else {
+        // Tiny outer pad so extreme samples aren't flush with the track ends.
+        let pad = (span * 0.02).max(span * 1e-6);
+        (low - pad, high + pad)
+    }
+}
+
+fn fmt_scale(v: f64) -> String {
+    if !v.is_finite() {
+        return "—".into();
+    }
+    let a = v.abs();
+    if a >= 1000.0 || (v.fract().abs() < 1e-9 && a < 1e12) {
+        format!("{v:.0}")
+    } else if a >= 10.0 {
+        format!("{v:.1}")
+    } else if a >= 1.0 {
+        format!("{v:.2}")
+    } else {
+        format!("{v:.3}")
+    }
+}
+
+/// Read-only numeric meter: low/high labels + thumb from history auto-range.
+fn draw_gauge(
+    ui: &mut egui::Ui,
+    value: f64,
+    history: Option<&std::collections::VecDeque<HistorySample>>,
+) {
+    let (low, high) = gauge_range(value, history);
+    let span = (high - low).abs().max(1e-12);
+    let frac = ((value - low) / span).clamp(0.0, 1.0) as f32;
+
+    let width = ui.available_width().min(220.0).max(140.0);
+    let track_h = 10.0_f32;
+    let label_h = ui.text_style_height(&egui::TextStyle::Small);
+    let total_h = track_h + 4.0 + label_h;
+
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(width, total_h), egui::Sense::hover());
+    let track = egui::Rect::from_min_size(
+        egui::pos2(rect.left(), rect.top() + 2.0),
+        egui::vec2(rect.width(), track_h),
+    );
     let painter = ui.painter_at(rect);
-    painter.rect_filled(rect, 3.0, ui.visuals().extreme_bg_color);
-    let frac = ((value.abs() % 100.0) / 100.0).clamp(0.05, 1.0) as f32;
-    let mut fill = rect;
-    fill.set_width(rect.width() * frac);
+    painter.rect_filled(track, 3.0, ui.visuals().extreme_bg_color);
+
+    // Fill up to value.
+    let mut fill = track;
+    fill.set_width((track.width() * frac).max(2.0));
     painter.rect_filled(fill, 3.0, Color32::from_rgb(80, 160, 200));
+
+    // Thumb (read-only).
+    let cx = track.left() + track.width() * frac;
+    let cy = track.center().y;
+    painter.circle_filled(egui::pos2(cx, cy), 5.0, Color32::from_rgb(200, 220, 240));
+    painter.circle_stroke(
+        egui::pos2(cx, cy),
+        5.0,
+        Stroke::new(1.0, Color32::from_rgb(60, 120, 160)),
+    );
+
+    // Low / high scale labels under the track.
+    let low_s = fmt_scale(low);
+    let high_s = fmt_scale(high);
+    let galley_l = painter.layout_no_wrap(
+        low_s,
+        egui::FontId::proportional(label_h * 0.85),
+        ui.visuals().weak_text_color(),
+    );
+    let galley_h = painter.layout_no_wrap(
+        high_s,
+        egui::FontId::proportional(label_h * 0.85),
+        ui.visuals().weak_text_color(),
+    );
+    let label_y = track.bottom() + 2.0;
+    painter.galley(
+        egui::pos2(track.left(), label_y),
+        galley_l,
+        ui.visuals().weak_text_color(),
+    );
+    painter.galley(
+        egui::pos2(track.right() - galley_h.size().x, label_y),
+        galley_h,
+        ui.visuals().weak_text_color(),
+    );
 }
 
 fn draw_graph(ui: &mut egui::Ui, pin: &StickyTopic) {
@@ -387,5 +494,47 @@ fn draw_graph(ui: &mut egui::Ui, pin: &StickyTopic) {
                 .small()
                 .weak(),
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::VecDeque;
+    use std::time::Instant;
+
+    fn sample(n: f64) -> HistorySample {
+        HistorySample {
+            at: Instant::now(),
+            payload: n.to_string(),
+            numeric: Some(n),
+        }
+    }
+
+    #[test]
+    fn gauge_pads_flat_history() {
+        let mut h = VecDeque::new();
+        h.push_back(sample(42.0));
+        h.push_back(sample(42.0));
+        let (low, high) = gauge_range(42.0, Some(&h));
+        assert!(low < 42.0 && high > 42.0);
+        assert!((high - low) >= 2.0 - 1e-9);
+    }
+
+    #[test]
+    fn gauge_uses_history_minmax() {
+        let mut h = VecDeque::new();
+        h.push_back(sample(10.0));
+        h.push_back(sample(30.0));
+        h.push_back(sample(20.0));
+        let (low, high) = gauge_range(20.0, Some(&h));
+        assert!(low < 10.0);
+        assert!(high > 30.0);
+    }
+
+    #[test]
+    fn gauge_single_sample_no_history() {
+        let (low, high) = gauge_range(5.0, None);
+        assert!(low < 5.0 && high > 5.0);
     }
 }
