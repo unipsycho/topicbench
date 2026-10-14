@@ -49,10 +49,11 @@ pub fn draw(
     ui.weak("Double-click a parent to expand/collapse its whole subtree. Single-click selects for Payload.");
     ui.add_space(4.0);
 
+    // Only currently connected brokers — disconnected sessions are cleared on Disconnect.
     let connected: Vec<&Session> = sessions
         .open
         .values()
-        .filter(|s| s.state == SessionState::Connected || !s.topic_tree.root.children.is_empty())
+        .filter(|s| s.state == SessionState::Connected)
         .collect();
 
     if connected.is_empty() {

@@ -4,6 +4,7 @@ use crate::mqtt::pins::PinBoard;
 use crate::mqtt::profile::ProfileStore;
 use crate::mqtt::session::{SessionManager, SessionState};
 use crate::mqtt::settings::AppSettings;
+use crate::ui::hover_tip;
 use crate::ui::shortcuts;
 use crate::mqtt::subscribe;
 use crate::ui::clipboard;
@@ -164,13 +165,16 @@ pub fn draw(
             ui.heading("Edit");
             if let Some(profile) = profiles.profiles.get_mut(&id) {
                 ui.horizontal(|ui| {
-                    ui.label("Name")
-                        .on_hover_text(shortcuts::tip("Focus profile editor", "Ctrl+E / F2"));
-                    let resp = ui
-                        .add(
+                    hover_tip::attach(
+                        ui.label("Name"),
+                        shortcuts::tip("Focus profile editor", "Ctrl+E / F2"),
+                    );
+                    let resp = hover_tip::attach(
+                        ui.add(
                             egui::TextEdit::singleline(&mut profile.name).id_salt(PROFILE_NAME_ID),
-                        )
-                        .on_hover_text(shortcuts::tip("Focus profile editor", "Ctrl+E / F2"));
+                        ),
+                        shortcuts::tip("Focus profile editor", "Ctrl+E / F2"),
+                    );
                     if *request_editor_focus {
                         resp.request_focus();
                         *request_editor_focus = false;
@@ -317,19 +321,23 @@ pub fn draw(
                 "Ctrl+Enter",
             );
             let connect_clicked = if let Some(tex) = icons.get(icon_name) {
-                ui.add(
-                    egui::Button::image_and_text(
-                        egui::Image::new(tex).fit_to_exact_size(egui::vec2(18.0, 18.0)),
-                        label,
-                    )
-                    .min_size(egui::vec2(120.0, 28.0)),
+                hover_tip::attach(
+                    ui.add(
+                        egui::Button::image_and_text(
+                            egui::Image::new(tex).fit_to_exact_size(egui::vec2(18.0, 18.0)),
+                            label,
+                        )
+                        .min_size(egui::vec2(120.0, 28.0)),
+                    ),
+                    connect_tip,
                 )
-                .on_hover_text(connect_tip)
                 .clicked()
             } else {
-                ui.add(egui::Button::new(label).min_size(egui::vec2(120.0, 28.0)))
-                    .on_hover_text(connect_tip)
-                    .clicked()
+                hover_tip::attach(
+                    ui.add(egui::Button::new(label).min_size(egui::vec2(120.0, 28.0))),
+                    connect_tip,
+                )
+                .clicked()
             };
             if connect_clicked {
                 let profile = profiles.profiles.get(&id).cloned();
@@ -340,7 +348,7 @@ pub fn draw(
                     };
                     let max_pkt =
                         AppSettings::clamp_max_packet(settings.max_packet_bytes);
-                    match sessions.toggle(&profile, max_pkt, ctx) {
+                    match sessions.toggle(&profile, max_pkt, ctx, pins) {
                         Ok(msg) => {
                             settings.remember_connected(&id, connecting);
                             if connecting {

@@ -295,7 +295,7 @@ impl MqttMonitorApp {
             _ => true,
         };
         let max_pkt = AppSettings::clamp_max_packet(self.settings.max_packet_bytes);
-        match self.sessions.toggle(&profile, max_pkt, ctx) {
+        match self.sessions.toggle(&profile, max_pkt, ctx, &mut self.pins) {
             Ok(msg) => {
                 self.settings.remember_connected(&id, connecting);
                 if connecting {
@@ -355,27 +355,20 @@ impl MqttMonitorApp {
                 ui.with_layout(egui::Layout::left_to_right(egui::Align::Min), |ui| {
                     ui.spacing_mut().item_spacing.x = 4.0;
 
-                    // Brand stack: fixed column width — nested vertical otherwise expands
-                    // and steals the rest of the ribbon row (hiding Profiles/Panels/App).
-                    ui.vertical(|ui| {
+                    // Brand block: logo + two-line title, vertically centered; groups sit to the right.
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = 0.0;
                         let logo_w = self
                             .logo
                             .as_ref()
                             .map(|l| l.size_vec2().x)
                             .unwrap_or(108.0);
-                        let brand_w = logo_w.max(118.0);
+                        // Breathing room: logo | title | ribbon.
+                        let title_w = 72.0;
+                        let brand_w = logo_w + 10.0 + title_w + 12.0;
                         ui.set_width(brand_w);
-                        ui.spacing_mut().item_spacing.y = 0.0;
-                        ui.vertical_centered(|ui| {
-                            ui.label(
-                                RichText::new("MQTT Master")
-                                    .strong()
-                                    .size(17.0)
-                                    // Same green as Connected status.
-                                    .color(Color32::from_rgb(90, 190, 120)),
-                            );
-                            // Padding under title before logo
-                            ui.add_space(6.0);
+                        ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                            ui.spacing_mut().item_spacing.x = 0.0;
                             if let Some(logo) = &self.logo {
                                 let size = logo.size_vec2();
                                 ui.add(
@@ -385,6 +378,27 @@ impl MqttMonitorApp {
                                         .sense(egui::Sense::hover()),
                                 );
                             }
+                            // Margin between logo and title.
+                            ui.add_space(10.0);
+                            let green = Color32::from_rgb(90, 190, 120); // Connected/status green
+                            ui.vertical(|ui| {
+                                ui.spacing_mut().item_spacing.y = 0.0;
+                                ui.set_width(title_w);
+                                ui.label(
+                                    RichText::new("MQTT")
+                                        .strong()
+                                        .size(16.0)
+                                        .color(green),
+                                );
+                                ui.label(
+                                    RichText::new("Master")
+                                        .strong()
+                                        .size(16.0)
+                                        .color(green),
+                                );
+                            });
+                            // Margin before ribbon groups.
+                            ui.add_space(12.0);
                         });
                     });
 
@@ -724,58 +738,12 @@ impl eframe::App for MqttMonitorApp {
         }
 
         self.handle_shortcuts(ctx);
+        // Suppress tips from panels under Settings / Keyboard Shortcuts overlays.
+        crate::ui::hover_tip::set_block_hover_tips(
+            ctx,
+            self.settings_open || self.shortcuts_open,
+        );
         self.draw_ribbon(ctx);
-
-        // Keyboard shortcuts help popup (F1 / ? / Settings button).
-        if self.shortcuts_open {
-            egui::Window::new("Keyboard shortcuts")
-                .open(&mut self.shortcuts_open)
-                .default_width(520.0)
-                .default_height(480.0)
-                .resizable(true)
-                .collapsible(false)
-                .show(ctx, |ui| {
-                    shortcuts::draw_help(ui);
-                });
-        }
-
-        // Settings — centered modal overlay (same family as shortcuts Window; Escape / outside closes).
-        if self.settings_open {
-            let mut status = self.status.clone();
-            let mut open_shortcuts = false;
-            let mut close_clicked = false;
-            let modal = egui::Modal::new(egui::Id::new("mqtt_master_settings")).show(ctx, |ui| {
-                ui.set_min_width(420.0);
-                ui.set_max_width(480.0);
-                egui::ScrollArea::vertical()
-                    .max_height(520.0)
-                    .show(ui, |ui| {
-                        settings_panel::draw(
-                            ui,
-                            &mut self.settings,
-                            &self.icons,
-                            &mut status,
-                            &mut open_shortcuts,
-                        );
-                    });
-                ui.add_space(8.0);
-                ui.separator();
-                ui.horizontal(|ui| {
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui.button("Close").clicked() {
-                            close_clicked = true;
-                        }
-                    });
-                });
-            });
-            self.status = status;
-            if open_shortcuts {
-                self.shortcuts_open = true;
-            }
-            if close_clicked || modal.should_close() {
-                self.settings_open = false;
-            }
-        }
 
         if self.panels.profiles {
             // Hard min width — resize handle cannot drag past this (avoids see-through gap).
@@ -890,5 +858,69 @@ impl eframe::App for MqttMonitorApp {
                 }
             });
         });
+
+        // Overlays last so they own pointer/hover above Payload and other panels.
+        if self.shortcuts_open {
+            let mut close_shortcuts = false;
+            let modal = egui::Modal::new(egui::Id::new("mqtt_master_shortcuts")).show(ctx, |ui| {
+                ui.set_min_width(480.0);
+                ui.set_max_width(560.0);
+                egui::ScrollArea::vertical()
+                    .max_height(520.0)
+                    .show(ui, |ui| {
+                        shortcuts::draw_help(ui);
+                    });
+                ui.add_space(8.0);
+                ui.separator();
+                ui.horizontal(|ui| {
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui.button("Close").clicked() {
+                            close_shortcuts = true;
+                        }
+                    });
+                });
+            });
+            if close_shortcuts || modal.should_close() {
+                self.shortcuts_open = false;
+            }
+        }
+
+        // Settings — centered modal (Escape / outside closes). Tips under it are blocked.
+        if self.settings_open {
+            let mut status = self.status.clone();
+            let mut open_shortcuts = false;
+            let mut close_clicked = false;
+            let modal = egui::Modal::new(egui::Id::new("mqtt_master_settings")).show(ctx, |ui| {
+                ui.set_min_width(420.0);
+                ui.set_max_width(480.0);
+                egui::ScrollArea::vertical()
+                    .max_height(520.0)
+                    .show(ui, |ui| {
+                        settings_panel::draw(
+                            ui,
+                            &mut self.settings,
+                            &self.icons,
+                            &mut status,
+                            &mut open_shortcuts,
+                        );
+                    });
+                ui.add_space(8.0);
+                ui.separator();
+                ui.horizontal(|ui| {
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui.button("Close").clicked() {
+                            close_clicked = true;
+                        }
+                    });
+                });
+            });
+            self.status = status;
+            if open_shortcuts {
+                self.shortcuts_open = true;
+            }
+            if close_clicked || modal.should_close() {
+                self.settings_open = false;
+            }
+        }
     }
 }

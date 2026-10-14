@@ -129,16 +129,6 @@ pub fn draw(
     );
 
     ui.add_space(12.0);
-    ui.weak(format!(
-        "Remembered connections: {}",
-        if settings.last_connected.is_empty() {
-            "(none)".into()
-        } else {
-            settings.last_connected.join(", ")
-        }
-    ));
-
-    ui.add_space(12.0);
     ui.strong("Keyboard");
     if ui
         .button("Keyboard shortcuts…")
@@ -148,10 +138,6 @@ pub fn draw(
         *open_shortcuts = true;
     }
     ui.weak("Also F1 or ? (when not typing). Lists every binding.");
-
-    ui.add_space(16.0);
-    ui.separator();
-    ui.weak("Branding: logo is in the top ribbon. Splash screen on startup is planned later.");
 
     if dirty {
         match settings.save() {

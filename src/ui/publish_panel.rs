@@ -3,6 +3,7 @@
 use crate::mqtt::profile::ProfileStore;
 use crate::mqtt::publish::{PublishDraft, PublishHistory, RecentPublish, Qos};
 use crate::mqtt::session::{SessionManager, SessionState};
+use crate::ui::hover_tip;
 use crate::ui::icons::IconSet;
 use eframe::egui::text::LayoutJob;
 use eframe::egui::{self, Color32, TextFormat};
@@ -130,17 +131,18 @@ pub fn draw(
                     .map(|p| p.color())
                     .unwrap_or(Color32::from_rgb(90, 190, 120));
                 let job = recent_row_job(ui, entry, accent);
-                if ui
-                    .selectable_label(false, job)
-                    .on_hover_text(format!(
+                if hover_tip::attach(
+                    ui.selectable_label(false, job),
+                    format!(
                         "broker={} topic={} qos={} retain={}\n{}",
                         entry.profile_name,
                         entry.topic,
                         entry.qos.as_u8(),
                         entry.retain,
                         entry.payload
-                    ))
-                    .clicked()
+                    ),
+                )
+                .clicked()
                 {
                     draft.apply_recent(entry);
                     *status = format!(

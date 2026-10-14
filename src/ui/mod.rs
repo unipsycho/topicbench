@@ -2,6 +2,7 @@
 
 pub mod clipboard;
 pub mod flash;
+pub mod hover_tip;
 pub mod icons;
 pub mod json_view;
 pub mod payload_panel;

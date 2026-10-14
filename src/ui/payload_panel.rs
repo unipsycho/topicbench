@@ -3,6 +3,7 @@
 use crate::mqtt::pins::{DetectedValue, PinBoard};
 use crate::mqtt::profile::ProfileStore;
 use crate::mqtt::session::SessionManager;
+use crate::ui::hover_tip;
 use crate::ui::icons::IconSet;
 use crate::ui::json_view;
 use eframe::egui::{self, Align, Color32, Key, RichText};
@@ -98,23 +99,18 @@ pub fn draw(
 
     match node {
         Some(n) if n.last_payload.as_deref().is_some_and(|p| !p.is_empty()) => {
-            if n.message_count > 0 {
-                ui.label(
-                    RichText::new(format!("#{}", n.message_count))
-                        .small()
-                        .weak(),
-                );
-            }
             let payload = n.last_payload.as_deref().unwrap_or("");
             let display = display_text(payload);
             draw_search_bar(ui, icons, search, &display);
             ui.add_space(4.0);
+            // Message count sits on the JSON/Value intro row (not its own line above).
             draw_searchable_body(
                 ui,
                 &display,
                 json_view::try_pretty_json(payload).is_some(),
                 ("payload-panel", profile_id.as_str(), topic.as_str()),
                 search,
+                n.message_count,
             );
         }
         _ => {
@@ -188,17 +184,19 @@ fn draw_search_bar(
             format!("{}/{}", search.current + 1, n)
         };
         ui.label(RichText::new(label).small().monospace().weak());
-        if ui
-            .add_enabled(n > 0, egui::Button::new("Prev").small())
-            .on_hover_text("Previous match (Shift+Enter)")
-            .clicked()
+        if hover_tip::attach(
+            ui.add_enabled(n > 0, egui::Button::new("Prev").small()),
+            "Previous match (Shift+Enter)",
+        )
+        .clicked()
         {
             search.goto_prev(n);
         }
-        if ui
-            .add_enabled(n > 0, egui::Button::new("Next").small())
-            .on_hover_text("Next match (Enter)")
-            .clicked()
+        if hover_tip::attach(
+            ui.add_enabled(n > 0, egui::Button::new("Next").small()),
+            "Next match (Enter)",
+        )
+        .clicked()
         {
             search.goto_next(n);
         }
@@ -211,6 +209,7 @@ fn draw_searchable_body(
     is_json: bool,
     id_salt: impl std::hash::Hash,
     search: &mut PayloadSearch,
+    message_count: u64,
 ) {
     let matches = find_matches(display, &search.query);
     let n = matches.len();
@@ -220,11 +219,22 @@ fn draw_searchable_body(
     let current_line = matches.get(search.current).map(|m| m.line);
     let do_scroll = search.scroll_to_current && current_line.is_some();
 
-    if is_json {
-        ui.label(RichText::new("JSON").small().weak());
-    } else {
-        ui.label(RichText::new("Value").small().weak());
-    }
+    // Kind label + message count on one row.
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 8.0;
+        if is_json {
+            ui.label(RichText::new("JSON").small().weak());
+        } else {
+            ui.label(RichText::new("Value").small().weak());
+        }
+        if message_count > 0 {
+            ui.label(
+                RichText::new(format!("#{message_count}"))
+                    .small()
+                    .weak(),
+            );
+        }
+    });
 
     let height = ui.available_height().max(80.0);
     let font_size = ui.text_style_height(&egui::TextStyle::Monospace);
