@@ -18,7 +18,7 @@ pub fn flash_stroke(until: Option<Instant>, now: Instant) -> Option<Stroke> {
     // t=1 at pulse start (full on), t→0 over 0.5s
     let a = (255.0 * t) as u8;
     Some(Stroke::new(
-        1.0,
+        1.0_f32,
         Color32::from_rgba_unmultiplied(80, 200, 120, a),
     ))
 }
