@@ -322,12 +322,16 @@ fn leaf_row(
             egui::vec2(width, ui.spacing().interact_size.y),
             egui::Layout::left_to_right(egui::Align::Center),
             |ui| {
-                let resp = if is_json {
-                    let job = json_view::highlight_layout(&preview);
-                    ui.add(egui::Label::new(job).truncate())
+                // Plain truncated label in the row (avoid LayoutJob+truncate UTF-8 panic);
+                // pretty + syntax colors live in the hover tooltip for JSON.
+                let color = if is_json {
+                    Color32::from_rgb(140, 190, 255)
                 } else {
-                    ui.add(egui::Label::new(RichText::new(preview).monospace()).truncate())
+                    ui.visuals().text_color()
                 };
+                let resp = ui.add(
+                    egui::Label::new(RichText::new(preview).monospace().color(color)).truncate(),
+                );
                 if !payload.is_empty() {
                     resp.on_hover_ui(|ui| {
                         ui.set_max_width(420.0);
