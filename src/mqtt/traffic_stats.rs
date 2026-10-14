@@ -2,20 +2,49 @@
 //!
 //! Counts publish **payload** sizes only (not MQTT headers / topic strings).
 //! Scope: app process lifetime (not reset on connect/disconnect).
+//!
+//! Ribbon labels refresh at **1 Hz** via [`TrafficStats::refresh_display_if_due`];
+//! the throughput window itself stays ~2s.
 
 use std::collections::VecDeque;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 /// Sliding window for throughput (~2s of samples).
 const WINDOW_SECS: f64 = 2.0;
 /// Cap samples so idle ticks cannot grow unboundedly.
 const WINDOW_CAP: usize = 240;
+/// How often ribbon Recv/Sent/Thru / projections reformat.
+const DISPLAY_INTERVAL: Duration = Duration::from_secs(1);
 
 /// Seconds used for ribbon projections from the current rate.
 pub const SECS_PER_HOUR: f64 = 3_600.0;
 pub const SECS_PER_DAY: f64 = 86_400.0;
 /// Calendar-agnostic month ≈ 30 days.
 pub const SECS_PER_MONTH: f64 = 2_592_000.0;
+
+/// Frozen ribbon strings (updated at most once per second).
+#[derive(Debug, Clone)]
+pub struct StatsDisplay {
+    pub recv: String,
+    pub sent: String,
+    pub thru: String,
+    pub per_h: String,
+    pub per_d: String,
+    pub per_mo: String,
+}
+
+impl Default for StatsDisplay {
+    fn default() -> Self {
+        Self {
+            recv: "0 B".into(),
+            sent: "0 B".into(),
+            thru: "0 B/s".into(),
+            per_h: "0 B".into(),
+            per_d: "0 B".into(),
+            per_mo: "0 B".into(),
+        }
+    }
+}
 
 /// Live traffic totals + rate for the Stats ribbon.
 #[derive(Debug)]
@@ -24,14 +53,23 @@ pub struct TrafficStats {
     pub bytes_sent: u64,
     /// `(Instant, cumulative recv+sent)` samples for the sliding window.
     samples: VecDeque<(Instant, u64)>,
+    /// Last time [`Self::display`] was rebuilt.
+    last_display: Instant,
+    display: StatsDisplay,
 }
 
 impl Default for TrafficStats {
     fn default() -> Self {
+        // Force an immediate first snapshot on the first UI tick.
+        let last_display = Instant::now()
+            .checked_sub(DISPLAY_INTERVAL)
+            .unwrap_or_else(Instant::now);
         Self {
             bytes_recv: 0,
             bytes_sent: 0,
             samples: VecDeque::new(),
+            last_display,
+            display: StatsDisplay::default(),
         }
     }
 }
@@ -49,14 +87,42 @@ impl TrafficStats {
         self.push_sample();
     }
 
-    /// Append a sample + prune (call each UI frame so idle throughput decays to 0).
-    pub fn tick(&mut self) {
-        self.push_sample();
+    /// Frozen ribbon labels (Recv / Sent / Thru / projections).
+    pub fn display(&self) -> &StatsDisplay {
+        &self.display
     }
 
-    /// True while throughput is non-zero (light repaint so Thru / projections move).
-    pub fn needs_repaint(&self) -> bool {
-        self.throughput_bps() > 0.0
+    /// Rebuild ribbon strings at most once per second. Returns true when updated.
+    pub fn refresh_display_if_due(&mut self) -> bool {
+        if self.last_display.elapsed() < DISPLAY_INTERVAL {
+            return false;
+        }
+        // Sample at display cadence so idle throughput decays without per-frame ticks.
+        self.push_sample();
+        let rate = self.throughput_bps();
+        self.display = StatsDisplay {
+            recv: format_bytes(self.bytes_recv),
+            sent: format_bytes(self.bytes_sent),
+            thru: format_rate(rate),
+            per_h: format_bytes(project_from_rate(rate, SECS_PER_HOUR)),
+            per_d: format_bytes(project_from_rate(rate, SECS_PER_DAY)),
+            per_mo: format_bytes(project_from_rate(rate, SECS_PER_MONTH)),
+        };
+        self.last_display = Instant::now();
+        true
+    }
+
+    /// Schedule the next 1 Hz Stats refresh (even while idle, so Thru → 0).
+    pub fn wants_periodic_refresh(&self) -> bool {
+        self.bytes_recv > 0
+            || self.bytes_sent > 0
+            || self.samples.len() >= 2
+            || self.throughput_bps() > 0.0
+    }
+
+    /// Delay until the next display refresh is due (for `request_repaint_after`).
+    pub fn time_until_display_refresh(&self) -> Duration {
+        DISPLAY_INTERVAL.saturating_sub(self.last_display.elapsed())
     }
 
     fn total_bytes(&self) -> u64 {
@@ -93,12 +159,15 @@ impl TrafficStats {
 
     /// Project volume if the current rate held for `seconds` (hour/day/month).
     pub fn project_bytes(&self, seconds: f64) -> u64 {
-        let rate = self.throughput_bps();
-        if !rate.is_finite() || rate <= 0.0 || seconds <= 0.0 {
-            return 0;
-        }
-        (rate * seconds).round() as u64
+        project_from_rate(self.throughput_bps(), seconds)
     }
+}
+
+fn project_from_rate(rate: f64, seconds: f64) -> u64 {
+    if !rate.is_finite() || rate <= 0.0 || seconds <= 0.0 {
+        return 0;
+    }
+    (rate * seconds).round() as u64
 }
 
 /// Human units: B → KB → MB; GB only once ≥ 10 GB.
@@ -150,9 +219,8 @@ mod tests {
     }
 
     #[test]
-    fn project_from_rate() {
+    fn project_from_rate_window() {
         let mut s = TrafficStats::default();
-        // Simulate ~1000 B/s by recording and faking window ends.
         s.bytes_recv = 2000;
         s.samples.clear();
         let t0 = Instant::now() - std::time::Duration::from_secs(2);
@@ -161,5 +229,21 @@ mod tests {
         let rate = s.throughput_bps();
         assert!((rate - 1000.0).abs() < 50.0, "rate={rate}");
         assert_eq!(s.project_bytes(SECS_PER_HOUR), (rate * SECS_PER_HOUR).round() as u64);
+    }
+
+    #[test]
+    fn display_refreshes_at_most_once_per_second() {
+        let mut s = TrafficStats::default();
+        assert!(s.refresh_display_if_due());
+        s.record_recv(100);
+        // Immediate second call must not reformat yet.
+        assert!(!s.refresh_display_if_due());
+        assert_eq!(s.display().recv, "0 B");
+        // Force due by rewinding the clock.
+        s.last_display = Instant::now()
+            .checked_sub(DISPLAY_INTERVAL)
+            .unwrap_or_else(Instant::now);
+        assert!(s.refresh_display_if_due());
+        assert_eq!(s.display().recv, "100 B");
     }
 }
