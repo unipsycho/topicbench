@@ -9,7 +9,7 @@ use crate::ui::shortcuts;
 use crate::mqtt::subscribe;
 use crate::ui::clipboard;
 use crate::ui::flash;
-use crate::ui::icons::IconSet;
+use crate::ui::icons::{IconSet, CHROME_CAPTION};
 use eframe::egui::{self, Color32, RichText};
 use std::time::Instant;
 
@@ -94,7 +94,7 @@ pub fn draw(
         .inner_margin(egui::Margin::symmetric(8, 5))
         .show(ui, |ui| {
             ui.horizontal(|ui| {
-                ui.label(RichText::new("Show").small().color(Color32::from_rgb(170, 176, 188)));
+                ui.label(RichText::new("Show").small().color(CHROME_CAPTION));
                 ui.selectable_value(list_filter, ProfileListFilter::All, "All");
                 ui.selectable_value(list_filter, ProfileListFilter::ConnectedOnly, "Connected");
             });

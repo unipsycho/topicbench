@@ -7,7 +7,7 @@ mod app;
 mod mqtt;
 mod ui;
 
-use eframe::egui::{self, IconData, Visuals};
+use eframe::egui::{self, Color32, IconData, Visuals};
 use ui::icons::{CHROME_BG, STATUS_BG};
 
 fn main() -> eframe::Result<()> {
@@ -58,5 +58,8 @@ fn apply_dark_chrome(ctx: &egui::Context) {
     // TextEdit / extreme wells stay cool charcoal, same family as chrome.
     visuals.extreme_bg_color = STATUS_BG;
     visuals.code_bg_color = STATUS_BG;
+    // `.weak()` fades toward this — keep it mid-charcoal so muted labels stay readable
+    // (default gray(27) made counts / chrome hints too dark on the panel).
+    visuals.widgets.noninteractive.weak_bg_fill = Color32::from_rgb(88, 92, 104);
     ctx.set_visuals(visuals);
 }

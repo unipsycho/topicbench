@@ -6,7 +6,7 @@ use crate::mqtt::profile::ProfileStore;
 use crate::mqtt::session::{SessionManager, SessionState};
 use crate::mqtt::settings::{AppSettings, StickyLayoutMode};
 use crate::ui::flash;
-use crate::ui::icons::IconSet;
+use crate::ui::icons::{IconSet, CHROME_MUTED};
 use crate::ui::json_view;
 use crate::ui::shortcuts;
 use crate::ui::search_bar::SearchFilter;
@@ -149,7 +149,11 @@ fn draw_card(
                 ui.label(RichText::new(&pin.profile_name).color(accent));
                 ui.label(json_view::topic_path_text(&pin.topic));
                 if pin.message_count > 0 {
-                    ui.label(RichText::new(format!("#{}", pin.message_count)).small().weak());
+                    ui.label(
+                        RichText::new(format!("#{}", pin.message_count))
+                            .small()
+                            .color(CHROME_MUTED),
+                    );
                 }
 
                 // Whole icon bar is one wrap atom — snaps below when it won't fit.
