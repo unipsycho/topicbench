@@ -6,11 +6,12 @@
 use eframe::egui::{self, Color32, RichText, Sense, Stroke, TextureHandle, Vec2};
 use std::collections::HashMap;
 
-/// Large ribbon glyph (restored — only margins stay tight).
+/// Large ribbon glyph (margins stay tight).
 const CMD_ICON: f32 = 36.0;
-/// Hit box: big icon, little padding under the caption.
 const CMD_W: f32 = 56.0;
 const CMD_H: f32 = 58.0;
+/// Dense topic-tree / inline action icons.
+const TINY_ICON: f32 = 14.0;
 
 /// Dark chrome tokens.
 pub const CHROME_BG: Color32 = Color32::from_rgb(40, 42, 48);
@@ -66,7 +67,6 @@ impl IconSet {
             ui.painter().rect_filled(rect, 3.0, CHROME_HOVER);
         }
 
-        // Icon upper, caption tight underneath (minimal empty band).
         let icon_center = egui::pos2(rect.center().x, rect.top() + 22.0);
         if let Some(tex) = self.get(name) {
             let img = egui::Image::new(tex).fit_to_exact_size(Vec2::splat(CMD_ICON));
@@ -85,6 +85,30 @@ impl IconSet {
                 CHROME_TEXT
             },
         );
+        response
+    }
+
+    /// Small dense-row icon button (topic tree copy / sticky).
+    pub fn tiny(
+        &self,
+        ui: &mut egui::Ui,
+        name: &str,
+        selected: bool,
+        tip: &str,
+    ) -> egui::Response {
+        let pad = 2.0;
+        let size = Vec2::splat(TINY_ICON + pad * 2.0);
+        let (rect, response) = ui.allocate_exact_size(size, Sense::click());
+        let response = response.on_hover_text(tip);
+        if selected {
+            ui.painter().rect_filled(rect, 2.0, CHROME_ACCENT_SOFT);
+        } else if response.hovered() {
+            ui.painter().rect_filled(rect, 2.0, CHROME_HOVER);
+        }
+        if let Some(tex) = self.get(name) {
+            let img = egui::Image::new(tex).fit_to_exact_size(Vec2::splat(TINY_ICON));
+            img.paint_at(ui, egui::Rect::from_center_size(rect.center(), Vec2::splat(TINY_ICON)));
+        }
         response
     }
 
@@ -112,7 +136,6 @@ pub fn ribbon_group(ui: &mut egui::Ui, caption: &str, add_contents: impl FnOnce(
             add_contents(ui);
         });
         ui.label(RichText::new(caption).small().color(CHROME_CAPTION));
-        // Without this, vertical() expands across the whole remaining ribbon width.
         ui.shrink_width_to_current();
     });
 }
@@ -136,29 +159,77 @@ fn load_png(ctx: &egui::Context, id: &str, bytes: &[u8]) -> Option<TextureHandle
 }
 
 const ICONS: &[(&str, &[u8])] = &[
+    ("access_key", include_bytes!("../../assets/icons/access_key.png")),
+    ("alerts", include_bytes!("../../assets/icons/alerts.png")),
     ("api-docs", include_bytes!("../../assets/icons/api-docs.png")),
     ("api-methods", include_bytes!("../../assets/icons/api-methods.png")),
     ("auth-user", include_bytes!("../../assets/icons/auth-user.png")),
+    ("broker_server", include_bytes!("../../assets/icons/broker_server.png")),
     ("certification", include_bytes!("../../assets/icons/certification.png")),
+    ("clipboard_checklist", include_bytes!("../../assets/icons/clipboard_checklist.png")),
     ("cloud-database", include_bytes!("../../assets/icons/cloud-database.png")),
+    ("cloud_broker", include_bytes!("../../assets/icons/cloud_broker.png")),
+    ("configuration_sliders", include_bytes!("../../assets/icons/configuration_sliders.png")),
+    ("connect", include_bytes!("../../assets/icons/connect.png")),
+    ("connection_status", include_bytes!("../../assets/icons/connection_status.png")),
+    ("dashboard", include_bytes!("../../assets/icons/dashboard.png")),
     ("data-bridge", include_bytes!("../../assets/icons/data-bridge.png")),
     ("data-exchange", include_bytes!("../../assets/icons/data-exchange.png")),
     ("data-sync", include_bytes!("../../assets/icons/data-sync.png")),
+    ("data_table", include_bytes!("../../assets/icons/data_table.png")),
+    ("disconnect", include_bytes!("../../assets/icons/disconnect.png")),
     ("edge-cloud", include_bytes!("../../assets/icons/edge-cloud.png")),
     ("encrypted-keys", include_bytes!("../../assets/icons/encrypted-keys.png")),
+    ("event_log", include_bytes!("../../assets/icons/event_log.png")),
+    ("event_logs", include_bytes!("../../assets/icons/event_logs.png")),
+    ("export_download", include_bytes!("../../assets/icons/export_download.png")),
     ("gateway", include_bytes!("../../assets/icons/gateway.png")),
     ("global-wireless", include_bytes!("../../assets/icons/global-wireless.png")),
     ("hierarchy-tree", include_bytes!("../../assets/icons/hierarchy-tree.png")),
     ("idea-bidirectional", include_bytes!("../../assets/icons/idea-bidirectional.png")),
+    ("incoming_messages", include_bytes!("../../assets/icons/incoming_messages.png")),
     ("iot-hub", include_bytes!("../../assets/icons/iot-hub.png")),
+    ("json_payload", include_bytes!("../../assets/icons/json_payload.png")),
+    ("last_will_security", include_bytes!("../../assets/icons/last_will_security.png")),
+    ("line_graph", include_bytes!("../../assets/icons/line_graph.png")),
     ("mesh-network", include_bytes!("../../assets/icons/mesh-network.png")),
+    ("message_history", include_bytes!("../../assets/icons/message_history.png")),
+    ("metric_gauge", include_bytes!("../../assets/icons/metric_gauge.png")),
     ("mobile-connect", include_bytes!("../../assets/icons/mobile-connect.png")),
     ("mqtt-cloud", include_bytes!("../../assets/icons/mqtt-cloud.png")),
+    ("node_graph", include_bytes!("../../assets/icons/node_graph.png")),
+    ("panel_docked", include_bytes!("../../assets/icons/panel_docked.png")),
+    ("panel_undock", include_bytes!("../../assets/icons/panel_undock.png")),
+    ("profile", include_bytes!("../../assets/icons/profile.png")),
+    ("profile_add", include_bytes!("../../assets/icons/profile_add.png")),
+    ("profile_duplicate", include_bytes!("../../assets/icons/profile_duplicate.png")),
+    ("profile_edit", include_bytes!("../../assets/icons/profile_edit.png")),
+    ("publish_message", include_bytes!("../../assets/icons/publish_message.png")),
+    ("qos_levels", include_bytes!("../../assets/icons/qos_levels.png")),
+    ("reconnect", include_bytes!("../../assets/icons/reconnect.png")),
+    ("refresh", include_bytes!("../../assets/icons/refresh.png")),
+    ("retained_message", include_bytes!("../../assets/icons/retained_message.png")),
+    ("save", include_bytes!("../../assets/icons/save.png")),
+    ("search", include_bytes!("../../assets/icons/search.png")),
     ("security-lock", include_bytes!("../../assets/icons/security-lock.png")),
     ("security-std", include_bytes!("../../assets/icons/security-std.png")),
+    ("server_settings", include_bytes!("../../assets/icons/server_settings.png")),
     ("settings-checklist", include_bytes!("../../assets/icons/settings-checklist.png")),
     ("smart-home", include_bytes!("../../assets/icons/smart-home.png")),
+    ("split_view", include_bytes!("../../assets/icons/split_view.png")),
+    ("sticky_topic", include_bytes!("../../assets/icons/sticky_topic.png")),
+    ("subscribe_topic", include_bytes!("../../assets/icons/subscribe_topic.png")),
+    ("terminal", include_bytes!("../../assets/icons/terminal.png")),
+    ("tls_security", include_bytes!("../../assets/icons/tls_security.png")),
+    ("topic_filter", include_bytes!("../../assets/icons/topic_filter.png")),
+    ("topic_tags", include_bytes!("../../assets/icons/topic_tags.png")),
+    ("topic_tree", include_bytes!("../../assets/icons/topic_tree.png")),
+    ("topic_wildcards", include_bytes!("../../assets/icons/topic_wildcards.png")),
+    ("unsubscribe_topic", include_bytes!("../../assets/icons/unsubscribe_topic.png")),
+    ("user_credentials", include_bytes!("../../assets/icons/user_credentials.png")),
     ("verified-network", include_bytes!("../../assets/icons/verified-network.png")),
     ("workflow-loop", include_bytes!("../../assets/icons/workflow-loop.png")),
     ("xml-structure", include_bytes!("../../assets/icons/xml-structure.png")),
+    ("zoom_in", include_bytes!("../../assets/icons/zoom_in.png")),
+    ("zoom_out", include_bytes!("../../assets/icons/zoom_out.png")),
 ];

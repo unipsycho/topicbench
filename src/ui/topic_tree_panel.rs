@@ -5,7 +5,6 @@ use crate::mqtt::profile::ProfileStore;
 use crate::mqtt::session::{Session, SessionManager, SessionState};
 use crate::mqtt::settings::TopicTreeExpandMode;
 use crate::mqtt::topic_tree::TopicNode;
-use crate::ui::clipboard;
 use crate::ui::flash;
 use crate::ui::icons::IconSet;
 use crate::ui::search_bar::SearchFilter;
@@ -34,7 +33,7 @@ pub fn draw(
     status: &mut String,
 ) {
     ui.horizontal(|ui| {
-        if let Some(tex) = icons.get("hierarchy-tree") {
+        if let Some(tex) = icons.get("topic_tree") {
             ui.add(
                 egui::Image::new(tex)
                     .fit_to_exact_size(egui::vec2(20.0, 20.0))
@@ -102,6 +101,7 @@ pub fn draw(
             expand_mode,
             force_open,
             0,
+            icons,
             filter,
             status,
         );
@@ -141,6 +141,7 @@ fn draw_node(
     expand_mode: TopicTreeExpandMode,
     force_open: Option<bool>,
     depth: usize,
+    icons: &IconSet,
     filter: &SearchFilter,
     status: &mut String,
 ) {
@@ -200,6 +201,7 @@ fn draw_node(
                                 profile_name,
                                 profiles,
                                 pins,
+                                icons,
                                 status,
                             );
                         }
@@ -215,6 +217,7 @@ fn draw_node(
                             expand_mode,
                             force_open,
                             depth + 1,
+                            icons,
                             filter,
                             status,
                         );
@@ -229,6 +232,7 @@ fn draw_node(
                     profile_name,
                     profiles,
                     pins,
+                    icons,
                     status,
                 );
             }
@@ -236,7 +240,7 @@ fn draw_node(
     }
 }
 
-/// `label` = last path segment; `full_topic` used for sticky/clipboard.
+/// Dense row: `[copy topic] topic = payload… [copy payload] [sticky] #n`
 fn leaf_row(
     ui: &mut egui::Ui,
     label: &str,
@@ -246,26 +250,69 @@ fn leaf_row(
     profile_name: &str,
     profiles: &mut ProfileStore,
     pins: &mut PinBoard,
+    icons: &IconSet,
     status: &mut String,
 ) {
     ui.horizontal(|ui| {
-        // Show relative segment; click still copies the full MQTT topic.
-        let response = ui
-            .add(egui::Label::new(RichText::new(label).monospace()).sense(egui::Sense::click()))
-            .on_hover_text(format!("Click to copy topic: {full_topic}"));
-        if response.clicked() {
+        ui.spacing_mut().item_spacing.x = 4.0;
+
+        // Left: copy topic
+        if icons
+            .tiny(ui, "clipboard_checklist", false, "Copy topic")
+            .clicked()
+        {
             ui.ctx().copy_text(full_topic.to_string());
             *status = format!("Copied topic: {full_topic}");
         }
-        if let Some(payload) = &node.last_payload {
-            clipboard::payload_with_copy(ui, payload, 48, status);
+
+        let payload = node.last_payload.as_deref().unwrap_or("");
+        let line = if payload.is_empty() {
+            label.to_string()
+        } else {
+            format!("{label} = {payload}")
+        };
+        let tip = if payload.is_empty() {
+            full_topic.to_string()
+        } else {
+            payload.to_string()
+        };
+
+        // Middle: topic = payload fills remaining width (truncated); tooltip = full payload.
+        let right_reserve = 56.0;
+        let width = (ui.available_width() - right_reserve).max(48.0);
+        ui.allocate_ui_with_layout(
+            egui::vec2(width, ui.spacing().interact_size.y),
+            egui::Layout::left_to_right(egui::Align::Center),
+            |ui| {
+                ui.add(egui::Label::new(RichText::new(line).monospace()).truncate())
+                    .on_hover_text(tip);
+            },
+        );
+
+        // Right: copy payload + sticky
+        if !payload.is_empty()
+            && icons
+                .tiny(ui, "clipboard_checklist", false, "Copy payload")
+                .clicked()
+        {
+            ui.ctx().copy_text(payload.to_string());
+            *status = "Copied payload".into();
         }
-        if node.message_count > 0 {
-            ui.label(RichText::new(format!("#{}", node.message_count)).small());
-        }
+
         let sticky = pins.is_sticky(profile_id, full_topic);
-        let btn = if sticky { "Unstick" } else { "Sticky" };
-        if ui.small_button(btn).clicked() {
+        if icons
+            .tiny(
+                ui,
+                "sticky_topic",
+                sticky,
+                if sticky {
+                    "Remove sticky"
+                } else {
+                    "Pin sticky"
+                },
+            )
+            .clicked()
+        {
             if sticky {
                 pins.unpin(profile_id, full_topic);
                 profiles.set_sticky_and_save(profile_id, full_topic, false);
@@ -279,6 +326,10 @@ fn leaf_row(
                     }
                 }
             }
+        }
+
+        if node.message_count > 0 {
+            ui.label(RichText::new(format!("#{}", node.message_count)).small().weak());
         }
     });
 }

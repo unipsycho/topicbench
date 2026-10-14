@@ -109,7 +109,8 @@ impl MqttMonitorApp {
                     }
                     let _ = self.profiles.save();
                 }
-                if self.sessions.connect(&profile, ctx).is_ok() {
+                let max_pkt = AppSettings::clamp_max_packet(self.settings.max_packet_bytes);
+                if self.sessions.connect(&profile, max_pkt, ctx).is_ok() {
                     self.pins.restore_from_profile(&profile);
                     n += 1;
                 }
@@ -169,7 +170,7 @@ impl MqttMonitorApp {
                     icons::ribbon_group(ui, "Profiles", |ui| {
                         if self
                             .icons
-                            .command(ui, "api-methods", "New", false, "New profile")
+                            .command(ui, "profile_add", "New", false, "New profile")
                             .clicked()
                         {
                             let id = self.profiles.add_new();
@@ -177,7 +178,7 @@ impl MqttMonitorApp {
                         }
                         if self
                             .icons
-                            .command(ui, "cloud-database", "Save", false, "Save profiles")
+                            .command(ui, "save", "Save", false, "Save profiles")
                             .clicked()
                         {
                             match self.profiles.save() {
@@ -199,7 +200,7 @@ impl MqttMonitorApp {
                             .icons
                             .command(
                                 ui,
-                                "gateway",
+                                "panel_docked",
                                 "Profiles",
                                 self.panels.profiles,
                                 "Show or hide the profiles side panel",
@@ -218,7 +219,7 @@ impl MqttMonitorApp {
                             .icons
                             .command(
                                 ui,
-                                "data-sync",
+                                "incoming_messages",
                                 "Traffic",
                                 self.panels.live_traffic,
                                 "Live traffic",
@@ -231,7 +232,7 @@ impl MqttMonitorApp {
                             .icons
                             .command(
                                 ui,
-                                "data-exchange",
+                                "publish_message",
                                 "Publish",
                                 self.panels.publish,
                                 "Publish panel",
@@ -244,7 +245,7 @@ impl MqttMonitorApp {
                             .icons
                             .command(
                                 ui,
-                                "iot-hub",
+                                "sticky_topic",
                                 "Stickies",
                                 self.panels.stickies,
                                 "Sticky topics",
@@ -257,7 +258,7 @@ impl MqttMonitorApp {
                             .icons
                             .command(
                                 ui,
-                                "hierarchy-tree",
+                                "topic_tree",
                                 "Tree",
                                 self.panels.topic_tree,
                                 "Topic tree",
@@ -276,7 +277,7 @@ impl MqttMonitorApp {
                             .icons
                             .command(
                                 ui,
-                                "settings-checklist",
+                                "server_settings",
                                 "Settings",
                                 self.settings_open,
                                 "Open settings window",

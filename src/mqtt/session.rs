@@ -75,10 +75,20 @@ impl Default for SessionManager {
 }
 
 impl SessionManager {
-    pub fn connect(&mut self, profile: &ConnectionProfile, ctx: &Context) -> Result<(), String> {
+    pub fn connect(
+        &mut self,
+        profile: &ConnectionProfile,
+        max_packet_bytes: usize,
+        ctx: &Context,
+    ) -> Result<(), String> {
         self.disconnect(&profile.id);
 
-        let handle = live::spawn(profile, self.event_tx.clone(), ctx.clone())?;
+        let handle = live::spawn(
+            profile,
+            max_packet_bytes,
+            self.event_tx.clone(),
+            ctx.clone(),
+        )?;
         let mut subscriptions = if profile.subscriptions.is_empty() {
             self.open
                 .get(&profile.id)
@@ -160,14 +170,19 @@ impl SessionManager {
         }
     }
 
-    pub fn toggle(&mut self, profile: &ConnectionProfile, ctx: &Context) -> Result<String, String> {
+    pub fn toggle(
+        &mut self,
+        profile: &ConnectionProfile,
+        max_packet_bytes: usize,
+        ctx: &Context,
+    ) -> Result<String, String> {
         let id = profile.id.as_str();
         let should_connect = match self.open.get(id) {
             None => true,
             Some(s) => s.state == SessionState::Disconnected || s.client.is_none() || s.user_stopped,
         };
         if should_connect {
-            self.connect(profile, ctx)?;
+            self.connect(profile, max_packet_bytes, ctx)?;
             Ok(format!("Connecting {}", profile.name))
         } else {
             self.disconnect(id);

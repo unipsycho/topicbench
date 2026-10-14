@@ -39,8 +39,12 @@ const MAX_BACKOFF: Duration = Duration::from_secs(15);
 const STATUS_MIN_INTERVAL: Duration = Duration::from_millis(400);
 
 /// Build options + spawn event-loop thread.
+///
+/// `max_packet_bytes` raises rumqttc’s decode limit (default ~10 KB) so large
+/// retained/live payloads are accepted. Applied at connect time only.
 pub fn spawn(
     profile: &ConnectionProfile,
+    max_packet_bytes: usize,
     event_tx: Sender<BrokerEvent>,
     ctx: Context,
 ) -> Result<LiveHandle, String> {
@@ -48,6 +52,8 @@ pub fn spawn(
     opts.set_keep_alive(Duration::from_secs(30));
     opts.set_clean_session(true);
     opts.set_pending_throttle(Duration::from_secs(1));
+    // Both directions — incoming decode is what hits “payload size limit exceeded”.
+    opts.set_max_packet_size(max_packet_bytes, max_packet_bytes);
     if !profile.username.is_empty() {
         opts.set_credentials(&profile.username, &profile.password);
     }
@@ -61,6 +67,7 @@ pub fn spawn(
     let profile_id = profile.id.clone();
     let host = profile.host.clone();
     let port = profile.port;
+    let max_kb = (max_packet_bytes / 1024).max(1);
     let tx = event_tx;
 
     emit_state(
@@ -162,12 +169,29 @@ pub fn spawn(
                         if stop_w.load(Ordering::SeqCst) {
                             break;
                         }
+                        let err = e.to_string();
+                        // Over-limit decode: do not reconnect-thrash; clear status once, stop session.
+                        if err.contains("payload size limit") {
+                            emit_state(
+                                &tx,
+                                &ctx,
+                                &profile_id,
+                                SessionState::Disconnected,
+                                format!(
+                                    "Payload exceeds Max MQTT packet size ({max_kb} KB). Raise in Settings, then reconnect."
+                                ),
+                                &mut last_key,
+                                &mut last_emit,
+                                true,
+                            );
+                            break;
+                        }
                         emit_state(
                             &tx,
                             &ctx,
                             &profile_id,
                             SessionState::Connecting,
-                            format!("Reconnecting in {}s… ({e})", backoff.as_secs().max(1)),
+                            format!("Reconnecting in {}s… ({err})", backoff.as_secs().max(1)),
                             &mut last_key,
                             &mut last_emit,
                             false,

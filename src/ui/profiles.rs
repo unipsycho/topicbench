@@ -198,7 +198,9 @@ pub fn draw(
                         Some(SessionState::Connected) | Some(SessionState::Connecting) => false,
                         _ => true,
                     };
-                    match sessions.toggle(&profile, ctx) {
+                    let max_pkt =
+                        AppSettings::clamp_max_packet(settings.max_packet_bytes);
+                    match sessions.toggle(&profile, max_pkt, ctx) {
                         Ok(msg) => {
                             settings.remember_connected(&id, connecting);
                             if connecting {
