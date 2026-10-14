@@ -2,6 +2,7 @@
 
 use crate::mqtt::pins::PinBoard;
 use crate::mqtt::profile::ProfileStore;
+use crate::mqtt::publish::TopicPublishDrop;
 use crate::mqtt::session::{Session, SessionManager, SessionState};
 use crate::mqtt::settings::TopicTreeExpandMode;
 use crate::mqtt::topic_tree::TopicNode;
@@ -59,7 +60,7 @@ pub fn draw(
         }
     });
     ui.label("Per connected broker — colored heading, then that broker’s topics.");
-    ui.weak("Double-click a parent to expand/collapse its whole subtree. Single-click selects for Payload.");
+    ui.weak("Double-click a parent to expand/collapse its whole subtree. Single-click selects for Payload. Drag a row onto Publish to fill the form.");
     ui.add_space(4.0);
 
     // Only currently connected brokers — disconnected sessions are cleared on Disconnect.
@@ -547,6 +548,21 @@ fn leaf_row(
     });
     // Inset flash — same row size with or without pulse.
     flash::paint_inset(ui, row.response.rect, flash_stroke);
+
+    // Drag row → Publish (broker + topic + current payload). Clicks still work; drag after threshold.
+    let dnd_id = egui::Id::new(("tree-publish-dnd", profile_id, full_topic));
+    let dnd = ui.interact(row.response.rect, dnd_id, egui::Sense::drag());
+    if dnd.dragged() {
+        dnd.dnd_set_drag_payload(TopicPublishDrop {
+            profile_id: profile_id.to_string(),
+            profile_name: profile_name.to_string(),
+            topic: full_topic.to_string(),
+            payload: node.last_payload.clone().unwrap_or_default(),
+        });
+        ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
+    } else if dnd.hovered() {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
+    }
 
     // Double-click payload row of a branch node → same expand/collapse as its header.
     if dbl {
