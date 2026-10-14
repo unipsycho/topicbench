@@ -114,16 +114,17 @@ fn draw_card(
     let Some(pin) = pins.items.get(key).cloned() else {
         return;
     };
-    let fill = flash::flash_fill(pin.flash_until, now).unwrap_or(Color32::TRANSPARENT);
+    // Flash = border only (keep card fill clear so JSON/text stay readable).
+    let stroke = flash::flash_stroke(pin.flash_until, now).unwrap_or(Stroke::new(
+        1.0_f32,
+        ui.visuals().widgets.noninteractive.bg_stroke.color,
+    ));
     egui::Frame::NONE
-        .fill(fill)
-        .stroke(Stroke::new(
-            1.0_f32,
-            ui.visuals().widgets.noninteractive.bg_stroke.color,
-        ))
+        .stroke(stroke)
         .inner_margin(egui::Margin::same(6))
         .show(ui, |ui| {
-            // Chrome: copy topic · identity · copy payload · unstick icon
+            // One header line: copy topic · identity · #n · Raw/Value/Graph · copy payload · unstick
+            let mut mode_changed: Option<StickyViewMode> = None;
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 4.0;
                 if icons
@@ -143,6 +144,36 @@ fn draw_card(
                 if pin.message_count > 0 {
                     ui.label(RichText::new(format!("#{}", pin.message_count)).small().weak());
                 }
+
+                // Segmented Raw / Value / Graph — inline after topic + count.
+                if let Some(live) = pins.items.get_mut(key) {
+                    let before = live.view_mode;
+                    egui::Frame::NONE
+                        .fill(Color32::from_rgb(32, 34, 40))
+                        .corner_radius(3.0)
+                        .inner_margin(egui::Margin::symmetric(3, 2))
+                        .show(ui, |ui| {
+                            ui.horizontal(|ui| {
+                                ui.spacing_mut().item_spacing.x = 2.0;
+                                for (mode, icon, tip) in [
+                                    (StickyViewMode::Raw, "terminal", "Raw"),
+                                    (StickyViewMode::Value, "json_payload", "Value"),
+                                    (StickyViewMode::Graph, "line_graph", "Graph"),
+                                ] {
+                                    if icons
+                                        .tiny(ui, icon, live.view_mode == mode, tip)
+                                        .clicked()
+                                    {
+                                        live.view_mode = mode;
+                                    }
+                                }
+                            });
+                        });
+                    if live.view_mode != before {
+                        mode_changed = Some(live.view_mode);
+                    }
+                }
+
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if icons
                         .tiny(ui, "sticky_topic", true, "Unstick")
@@ -162,37 +193,8 @@ fn draw_card(
                     }
                 });
             });
-
-            // Compact segmented Raw / Value / Graph toggle (icons, one selected).
-            if let Some(live) = pins.items.get_mut(key) {
-                let before = live.view_mode;
-                egui::Frame::NONE
-                    .fill(Color32::from_rgb(32, 34, 40))
-                    .corner_radius(3.0)
-                    .inner_margin(egui::Margin::symmetric(3, 2))
-                    .show(ui, |ui| {
-                        ui.horizontal(|ui| {
-                            ui.spacing_mut().item_spacing.x = 2.0;
-                            for (mode, icon, tip) in [
-                                (StickyViewMode::Raw, "terminal", "Raw"),
-                                (StickyViewMode::Value, "json_payload", "Value"),
-                                (StickyViewMode::Graph, "line_graph", "Graph"),
-                            ] {
-                                if icons
-                                    .tiny(ui, icon, live.view_mode == mode, tip)
-                                    .clicked()
-                                {
-                                    live.view_mode = mode;
-                                }
-                            }
-                        });
-                    });
-                if live.view_mode != before {
-                    let mode = live.view_mode;
-                    let profile_id = live.profile_id.clone();
-                    let topic = live.topic.clone();
-                    profiles.set_sticky_view_mode_and_save(&profile_id, &topic, mode);
-                }
+            if let Some(mode) = mode_changed {
+                profiles.set_sticky_view_mode_and_save(&pin.profile_id, &pin.topic, mode);
             }
 
             ui.add_space(2.0);

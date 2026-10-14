@@ -328,6 +328,7 @@ const ICONS: &[(&str, &[u8])] = &[
     ("qos_levels", include_bytes!("../../assets/icons/qos_levels.png")),
     ("reconnect", include_bytes!("../../assets/icons/reconnect.png")),
     ("refresh", include_bytes!("../../assets/icons/refresh.png")),
+    ("remove_x", include_bytes!("../../assets/icons/remove_x.png")),
     ("retained_message", include_bytes!("../../assets/icons/retained_message.png")),
     ("save", include_bytes!("../../assets/icons/save.png")),
     ("search", include_bytes!("../../assets/icons/search.png")),

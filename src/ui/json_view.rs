@@ -12,6 +12,8 @@ const C_BOOL: Color32 = Color32::from_rgb(120, 200, 230);
 const C_NULL: Color32 = Color32::from_rgb(150, 150, 160);
 const C_PUNCT: Color32 = Color32::from_rgb(170, 176, 188);
 const C_DEFAULT: Color32 = Color32::from_rgb(220, 222, 228);
+/// Topic-name gray (matches ribbon caption / weak chrome).
+pub const C_TOPIC: Color32 = Color32::from_rgb(170, 176, 188);
 
 /// If `payload` is a JSON object or array, return pretty-printed text.
 pub fn try_pretty_json(payload: &str) -> Option<String> {
@@ -48,7 +50,7 @@ fn truncate_chars(s: &str, max_chars: usize) -> String {
     format!("{trunc}...")
 }
 
-/// `topic = {…}` LayoutJob with syntax colors on the JSON side (pre-truncated, no widget truncate).
+/// `topic = {…}` LayoutJob: gray topic name, syntax colors on the payload side.
 pub fn row_preview_job(label: &str, payload: &str, max_json_chars: usize, font_size: f32) -> LayoutJob {
     let font = FontId::monospace(font_size);
     let json = preview_line(payload, max_json_chars);
@@ -60,9 +62,23 @@ pub fn row_preview_job(label: &str, payload: &str, max_json_chars: usize, font_s
         halign: Align::LEFT,
         ..Default::default()
     };
-    // Topic segment stays key-blue; JSON payload gets full highlighter.
-    push(&mut job, 0, prefix.len(), C_KEY, font.clone());
+    // Topic segment in chrome gray so highlighted payload stands out.
+    push(&mut job, 0, prefix.len(), C_TOPIC, font.clone());
     highlight_range(&mut job, &text, prefix.len(), text.len(), &font);
+    job
+}
+
+/// Payload-only LayoutJob (syntax highlight) for tree rows when copy sits at `topic =`.
+pub fn payload_preview_job(payload: &str, max_chars: usize, font_size: f32) -> LayoutJob {
+    let font = FontId::monospace(font_size);
+    let text = preview_line(payload, max_chars);
+    let mut job = LayoutJob {
+        text: text.clone(),
+        break_on_newline: false,
+        halign: Align::LEFT,
+        ..Default::default()
+    };
+    highlight_range(&mut job, &text, 0, text.len(), &font);
     job
 }
 
@@ -249,5 +265,14 @@ mod tests {
         let covered: usize = job.sections.iter().map(|s| s.byte_range.len()).sum();
         assert_eq!(covered, job.text.len());
         assert!(job.text.starts_with("definition = "));
+        assert_eq!(job.sections[0].format.color, C_TOPIC);
+    }
+
+    #[test]
+    fn payload_preview_job_covers_bytes() {
+        let job = payload_preview_job(r#"{"a":1}"#, 80, 12.0);
+        let covered: usize = job.sections.iter().map(|s| s.byte_range.len()).sum();
+        assert_eq!(covered, job.text.len());
+        assert!(!job.text.contains('='));
     }
 }
