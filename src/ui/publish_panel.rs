@@ -18,7 +18,7 @@ pub fn draw(
     ui: &mut egui::Ui,
     draft: &mut PublishDraft,
     history: &mut PublishHistory,
-    sessions: &SessionManager,
+    sessions: &mut SessionManager,
     profiles: &ProfileStore,
     icons: &IconSet,
     status: &mut String,

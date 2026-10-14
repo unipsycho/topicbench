@@ -5,6 +5,7 @@ use crate::mqtt::pins::PinBoard;
 use crate::mqtt::profile::ConnectionProfile;
 use crate::mqtt::subscribe;
 use crate::mqtt::topic_tree::TopicTree;
+use crate::mqtt::traffic_stats::TrafficStats;
 use eframe::egui::Context;
 use rumqttc::{Client, QoS};
 use std::collections::{BTreeMap, HashSet, VecDeque};
@@ -59,6 +60,8 @@ const TRAFFIC_CAP: usize = 80;
 
 pub struct SessionManager {
     pub open: BTreeMap<String, Session>,
+    /// Process-lifetime MQTT payload byte counters (Stats ribbon).
+    pub traffic_stats: TrafficStats,
     event_tx: Sender<BrokerEvent>,
     event_rx: Receiver<BrokerEvent>,
 }
@@ -68,6 +71,7 @@ impl Default for SessionManager {
         let (event_tx, event_rx) = mpsc::channel();
         Self {
             open: BTreeMap::new(),
+            traffic_stats: TrafficStats::default(),
             event_tx,
             event_rx,
         }
@@ -200,27 +204,34 @@ impl SessionManager {
     }
 
     pub fn publish_live(
-        &self,
+        &mut self,
         profile_id: &str,
         topic: &str,
         payload: &str,
         qos: crate::mqtt::publish::Qos,
         retain: bool,
     ) -> Result<(), String> {
-        let session = self
-            .open
-            .get(profile_id)
-            .ok_or_else(|| "No open session".to_string())?;
-        if session.state != SessionState::Connected {
-            return Err("Profile is not connected".into());
+        let bytes = payload.as_bytes();
+        let n = bytes.len() as u64;
+        {
+            let session = self
+                .open
+                .get(profile_id)
+                .ok_or_else(|| "No open session".to_string())?;
+            if session.state != SessionState::Connected {
+                return Err("Profile is not connected".into());
+            }
+            let client = session
+                .client
+                .as_ref()
+                .ok_or_else(|| "No MQTT client".to_string())?;
+            client
+                .publish(topic, live::to_qos(qos), retain, bytes)
+                .map_err(|e| format!("publish: {e}"))?;
         }
-        let client = session
-            .client
-            .as_ref()
-            .ok_or_else(|| "No MQTT client".to_string())?;
-        client
-            .publish(topic, live::to_qos(qos), retain, payload.as_bytes())
-            .map_err(|e| format!("publish: {e}"))
+        // Count after a successful enqueue (session borrow released).
+        self.traffic_stats.record_sent(n);
+        Ok(())
     }
 
     pub fn poll_events(&mut self, pins: &mut PinBoard) -> Option<String> {
@@ -266,10 +277,12 @@ impl SessionManager {
                     topic,
                     payload,
                     retain,
+                    payload_bytes,
                 } => {
                     if !seen_msgs.insert((profile_id.clone(), topic.clone(), payload.clone())) {
                         continue;
                     }
+                    let mut count_recv = false;
                     if let Some(session) = self.open.get_mut(&profile_id) {
                         if session.user_stopped {
                             continue;
@@ -286,6 +299,11 @@ impl SessionManager {
                         }
                         let name = session.profile_name.clone();
                         pins.on_message(&profile_id, &name, &topic, &payload, now);
+                        count_recv = true;
+                    }
+                    // Deduped once — raw payload size (process-lifetime Stats).
+                    if count_recv {
+                        self.traffic_stats.record_recv(payload_bytes as u64);
                     }
                 }
                 BrokerEvent::Notice { profile_id, detail } => {
