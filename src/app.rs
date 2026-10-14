@@ -813,8 +813,8 @@ impl eframe::App for MqttMonitorApp {
         if let Some(msg) = self.sessions.poll_events(&mut self.pins) {
             self.status = msg;
         }
-        // Slide the Stats throughput window forward (idle rate → 0).
-        self.sessions.traffic_stats.tick();
+        // Stats ribbon labels: rebuild frozen snapshot at most once per second.
+        let _ = self.sessions.traffic_stats.refresh_display_if_due();
 
         // egui idles without input — keep frames flowing while any fade is live.
         let now = Instant::now();
@@ -828,9 +828,9 @@ impl eframe::App for MqttMonitorApp {
             .any(|p| flash::flash_active(p.flash_until, now));
         if flashing {
             ctx.request_repaint();
-        } else if self.sessions.traffic_stats.needs_repaint() {
-            // Light refresh so Thru / projections update without input.
-            ctx.request_repaint_after(std::time::Duration::from_millis(250));
+        } else if self.sessions.traffic_stats.wants_periodic_refresh() {
+            // 1 Hz Stats refresh (Thru decay + frozen labels) — not every frame.
+            ctx.request_repaint_after(self.sessions.traffic_stats.time_until_display_refresh());
         }
 
         self.handle_shortcuts(ctx);
