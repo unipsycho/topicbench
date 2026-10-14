@@ -119,13 +119,16 @@ pub fn draw(
         let msg_count = session.map(|s| s.message_count).unwrap_or(0);
         let flash_until = session.and_then(|s| s.flash_until);
 
-        let fill = flash::flash_fill(flash_until, now)
-            .unwrap_or(if selected { row_bg_sel } else { row_bg });
+        let fill = if selected { row_bg_sel } else { row_bg };
         // Full-width selectable row (click anywhere on the strip).
         let row_h = 28.0;
         let (rect, response) =
             ui.allocate_exact_size(egui::vec2(ui.available_width(), row_h), egui::Sense::click());
         ui.painter().rect_filled(rect, 2.0, fill);
+        // Update pulse: border only (no fill wash over the name/status text).
+        if let Some(stroke) = flash::flash_stroke(flash_until, now) {
+            ui.painter().rect_stroke(rect, 2.0, stroke, egui::StrokeKind::Inside);
+        }
         ui.allocate_new_ui(egui::UiBuilder::new().max_rect(rect.shrink2(egui::vec2(8.0, 4.0))), |ui| {
             ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
                 ui.spacing_mut().item_spacing.x = 6.0;
@@ -220,18 +223,44 @@ pub fn draw(
             });
             ui.weak("Topic filters for this profile (`+` / `#` OK). Saved with the profile.");
 
+            // Topic filters as a Profiles-style list (row strip + red X remove).
             let mut remove_at: Option<usize> = None;
+            let sub_row_bg = Color32::from_rgb(36, 38, 44);
             if let Some(profile) = profiles.profiles.get(&id) {
                 if profile.subscriptions.is_empty() {
                     ui.weak("No filters yet.");
                 } else {
                     for (i, sub) in profile.subscriptions.iter().enumerate() {
-                        ui.horizontal(|ui| {
-                            clipboard::topic_label(ui, sub, status);
-                            if ui.small_button("Remove").clicked() {
-                                remove_at = Some(i);
-                            }
-                        });
+                        let row_h = 28.0;
+                        let (rect, _response) = ui.allocate_exact_size(
+                            egui::vec2(ui.available_width(), row_h),
+                            egui::Sense::hover(),
+                        );
+                        ui.painter().rect_filled(rect, 2.0, sub_row_bg);
+                        ui.allocate_new_ui(
+                            egui::UiBuilder::new().max_rect(rect.shrink2(egui::vec2(8.0, 4.0))),
+                            |ui| {
+                                ui.with_layout(
+                                    egui::Layout::left_to_right(egui::Align::Center),
+                                    |ui| {
+                                        ui.spacing_mut().item_spacing.x = 6.0;
+                                        clipboard::topic_label(ui, sub, status);
+                                        ui.with_layout(
+                                            egui::Layout::right_to_left(egui::Align::Center),
+                                            |ui| {
+                                                if icons
+                                                    .tiny(ui, "remove_x", false, "Remove filter")
+                                                    .clicked()
+                                                {
+                                                    remove_at = Some(i);
+                                                }
+                                            },
+                                        );
+                                    },
+                                );
+                            },
+                        );
+                        ui.add_space(2.0);
                     }
                 }
             }

@@ -24,6 +24,9 @@ use image::RgbaImage;
 use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
 
+/// Profiles left panel: resize handle cannot drag narrower than this (no see-through gap).
+const PROFILES_PANEL_MIN_W: f32 = 240.0;
+
 /// Which optional panels are visible (ribbon toggles).
 #[derive(Clone, Debug)]
 struct PanelVisibility {
@@ -646,6 +649,12 @@ fn integer_box_downscale(src: &RgbaImage, factor: u32) -> RgbaImage {
 }
 
 impl eframe::App for MqttMonitorApp {
+    /// Opaque clear — default eframe clear is semi-transparent and shows the desktop
+    /// through any uncovered strip (e.g. SidePanel dragged past its content).
+    fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
+        Color32::from_rgb(27, 27, 27).to_normalized_gamma_f32()
+    }
+
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.run_auto_reconnect(ctx);
 
@@ -718,8 +727,12 @@ impl eframe::App for MqttMonitorApp {
         }
 
         if self.panels.profiles {
+            // Hard min width — resize handle cannot drag past this (avoids see-through gap).
             egui::SidePanel::left("profiles")
                 .default_width(320.0)
+                .min_width(PROFILES_PANEL_MIN_W)
+                .width_range(PROFILES_PANEL_MIN_W..=560.0)
+                .resizable(true)
                 .show(ctx, |ui| {
                     egui::ScrollArea::vertical().show(ui, |ui| {
                         profiles::draw(
@@ -742,6 +755,9 @@ impl eframe::App for MqttMonitorApp {
         if self.panels.publish {
             egui::SidePanel::right("publish")
                 .default_width(280.0)
+                .min_width(200.0)
+                .width_range(200.0..=480.0)
+                .resizable(true)
                 .show(ctx, |ui| {
                     publish_panel::draw(
                         ui,
