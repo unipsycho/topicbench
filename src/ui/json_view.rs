@@ -37,8 +37,9 @@ pub fn preview_line(payload: &str, max_chars: usize) -> String {
         .collect::<Vec<_>>()
         .join(" ");
     if flat.chars().count() > max_chars {
-        let trunc: String = flat.chars().take(max_chars.saturating_sub(1)).collect();
-        format!("{trunc}…")
+        // ASCII ellipsis — LayoutJob + Label::truncate panics on mid-char UTF-8 cuts.
+        let trunc: String = flat.chars().take(max_chars.saturating_sub(3)).collect();
+        format!("{trunc}...")
     } else {
         flat
     }
