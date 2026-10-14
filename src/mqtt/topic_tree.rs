@@ -17,6 +17,15 @@ pub struct TopicNode {
 }
 
 impl TopicNode {
+    /// Walk `topic` path and return the node at that path, if it exists.
+    pub fn node_at(&self, topic: &str) -> Option<&TopicNode> {
+        let mut node = self;
+        for part in topic.split('/').filter(|p| !p.is_empty()) {
+            node = node.children.get(part)?;
+        }
+        Some(node)
+    }
+
     /// Insert/update `topic` with `payload`.
     pub fn observe(&mut self, topic: &str, payload: &str, now: Instant) {
         let flash = now + Duration::from_millis(FLASH_MS);
@@ -70,5 +79,10 @@ mod tests {
         assert_eq!(lab.children["humidity"].message_count, 1);
         assert_eq!(lab.subtree_message_count(), 2);
         assert_eq!(tree.root.children["sensors"].subtree_message_count(), 2);
+        assert_eq!(
+            tree.root.node_at("sensors/lab/temp").and_then(|n| n.last_payload.as_deref()),
+            Some("21.5")
+        );
+        assert!(tree.root.node_at("missing").is_none());
     }
 }

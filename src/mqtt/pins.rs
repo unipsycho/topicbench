@@ -60,7 +60,8 @@ pub struct StickyTopic {
 pub struct PinBoard {
     /// Key: `profile_id\0topic`.
     pub items: BTreeMap<String, StickyTopic>,
-    /// Last topic row the user interacted with in the tree (Ctrl+Shift+S).
+    /// Selected tree topic: `(profile_id, profile_name, topic path)`.
+    /// Set on row click; used by Ctrl+Shift+S and the Payload panel.
     pub last_tree_focus: Option<(String, String, String)>,
 }
 
