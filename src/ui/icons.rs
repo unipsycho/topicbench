@@ -162,16 +162,15 @@ pub fn ribbon_group(
         .corner_radius(3.0)
         .inner_margin(egui::Margin::symmetric(4, 3))
         .show(ui, |ui| {
+            // Single LTR row of exact-size cells — no nested vertical expanders.
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 4.0;
                 // Left rail: rotated section name
                 let rail = Vec2::new(SECTION_RAIL_W, CMD_H);
                 let (rail_rect, _) = ui.allocate_exact_size(rail, Sense::hover());
                 paint_rotated_section_label(ui, rail_rect, caption);
-                ui.horizontal(|ui| {
-                    ui.spacing_mut().item_spacing.x = 1.0;
-                    add_contents(ui);
-                });
+                ui.spacing_mut().item_spacing.x = 1.0;
+                add_contents(ui);
             });
             ui.shrink_width_to_current();
         });

@@ -149,8 +149,16 @@ impl MqttMonitorApp {
                 ui.with_layout(egui::Layout::left_to_right(egui::Align::Min), |ui| {
                     ui.spacing_mut().item_spacing.x = 4.0;
 
-                    // Brand stack: title above AA logo (integer-scale texture, 1:1 paint)
+                    // Brand stack: fixed column width — nested vertical otherwise expands
+                    // and steals the rest of the ribbon row (hiding Profiles/Panels/App).
                     ui.vertical(|ui| {
+                        let logo_w = self
+                            .logo
+                            .as_ref()
+                            .map(|l| l.size_vec2().x)
+                            .unwrap_or(108.0);
+                        let brand_w = logo_w.max(118.0);
+                        ui.set_width(brand_w);
                         ui.spacing_mut().item_spacing.y = 0.0;
                         ui.vertical_centered(|ui| {
                             ui.label(
@@ -171,7 +179,6 @@ impl MqttMonitorApp {
                                 );
                             }
                         });
-                        ui.shrink_width_to_current();
                     });
 
                     icons::ribbon_separator(ui);
