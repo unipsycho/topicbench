@@ -1,7 +1,7 @@
-//! Publish panel: rumqttc publish + Recent history restore + tree drop target.
+//! Publish panel: rumqttc publish + Recent history restore.
 
 use crate::mqtt::profile::ProfileStore;
-use crate::mqtt::publish::{PublishDraft, PublishHistory, RecentPublish, TopicPublishDrop, Qos};
+use crate::mqtt::publish::{PublishDraft, PublishHistory, RecentPublish, Qos};
 use crate::mqtt::session::{SessionManager, SessionState};
 use crate::ui::hover_tip;
 use crate::ui::icons::IconSet;
@@ -9,29 +9,6 @@ use eframe::egui::text::LayoutJob;
 use eframe::egui::{self, Color32, TextFormat};
 
 pub fn draw(
-    ui: &mut egui::Ui,
-    draft: &mut PublishDraft,
-    history: &mut PublishHistory,
-    sessions: &SessionManager,
-    profiles: &ProfileStore,
-    icons: &IconSet,
-    status: &mut String,
-) {
-    // Whole panel accepts topic-tree drops (fill broker / topic / payload).
-    let frame = egui::Frame::NONE.inner_margin(egui::Margin::ZERO);
-    let (_, dropped) = ui.dnd_drop_zone::<TopicPublishDrop, _>(frame, |ui| {
-        draw_inner(ui, draft, history, sessions, profiles, icons, status);
-    });
-    if let Some(drop) = dropped {
-        draft.apply_tree_drop(&drop);
-        *status = format!(
-            "Publish filled from tree: {} · {}",
-            drop.profile_name, drop.topic
-        );
-    }
-}
-
-fn draw_inner(
     ui: &mut egui::Ui,
     draft: &mut PublishDraft,
     history: &mut PublishHistory,
@@ -51,7 +28,7 @@ fn draw_inner(
         ui.heading("Publish");
     });
     ui.label("Send to a topic on a connected broker.");
-    ui.weak("Drop a topic from the tree here to fill profile, topic, and payload.");
+    ui.weak("Double-click a topic in the tree to fill profile, topic, and payload.");
     ui.add_space(4.0);
 
     let connected: Vec<(String, String)> = sessions

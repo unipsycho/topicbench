@@ -52,17 +52,17 @@ impl PublishDraft {
         self.retain = entry.retain;
     }
 
-    /// Fill form from a topic-tree drag (broker + topic + current payload).
-    pub fn apply_tree_drop(&mut self, drop: &TopicPublishDrop) {
-        self.profile_id = Some(drop.profile_id.clone());
-        self.topic = drop.topic.clone();
-        self.payload = drop.payload.clone();
+    /// Fill form from a topic-tree double-click (broker + topic + current payload).
+    pub fn apply_from_tree(&mut self, fill: &PublishFromTree) {
+        self.profile_id = Some(fill.profile_id.clone());
+        self.topic = fill.topic.clone();
+        self.payload = fill.payload.clone();
     }
 }
 
-/// Drag payload: topic tree → Publish panel.
+/// Topic-tree leaf double-click → Publish panel fill request.
 #[derive(Clone, Debug)]
-pub struct TopicPublishDrop {
+pub struct PublishFromTree {
     pub profile_id: String,
     pub profile_name: String,
     pub topic: String,
