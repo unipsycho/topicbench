@@ -124,16 +124,22 @@ fn draw_card(
         .stroke(stroke)
         .inner_margin(egui::Margin::same(6))
         .show(ui, |ui| {
-            // One header line: copy topic · identity · #n · Raw/Value/Graph · copy payload · unstick
+            // Identity on first row when possible; icon chrome wraps as one group.
             let mut mode_changed: Option<StickyViewMode> = None;
-            ui.horizontal(|ui| {
+            let mut unstick = false;
+            let mut copy_payload = false;
+            let mut copy_topic = false;
+            // Tiny icons ~14px + gaps + Raw/Value/Graph frame padding.
+            const ICON_GROUP_W: f32 = 118.0;
+            let row_h = ui.spacing().interact_size.y.max(18.0);
+
+            ui.horizontal_wrapped(|ui| {
                 ui.spacing_mut().item_spacing.x = 4.0;
                 if icons
                     .tiny(ui, "topic_tags", false, "Copy topic")
                     .clicked()
                 {
-                    ui.ctx().copy_text(pin.topic.clone());
-                    *status = format!("Copied topic: {}", pin.topic);
+                    copy_topic = true;
                 }
                 let accent = profiles
                     .profiles
@@ -146,59 +152,73 @@ fn draw_card(
                     ui.label(RichText::new(format!("#{}", pin.message_count)).small().weak());
                 }
 
-                // Segmented Raw / Value / Graph — inline after topic + count.
-                if let Some(live) = pins.items.get_mut(key) {
-                    let before = live.view_mode;
-                    egui::Frame::NONE
-                        .fill(Color32::from_rgb(32, 34, 40))
-                        .corner_radius(3.0)
-                        .inner_margin(egui::Margin::symmetric(3, 2))
-                        .show(ui, |ui| {
-                            ui.horizontal(|ui| {
-                                ui.spacing_mut().item_spacing.x = 2.0;
-                                for (mode, icon, tip) in [
-                                    (StickyViewMode::Raw, "terminal", "Raw"),
-                                    (StickyViewMode::Value, "json_payload", "Value"),
-                                    (StickyViewMode::Graph, "line_graph", "Graph"),
-                                ] {
-                                    if icons
-                                        .tiny(ui, icon, live.view_mode == mode, tip)
-                                        .clicked()
-                                    {
-                                        live.view_mode = mode;
-                                    }
-                                }
-                            });
-                        });
-                    if live.view_mode != before {
-                        mode_changed = Some(live.view_mode);
-                    }
-                }
-
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if icons
-                        .tiny(
-                            ui,
-                            "sticky_topic",
-                            true,
-                            &shortcuts::tip("Unstick", "Ctrl+Shift+S"),
-                        )
-                        .clicked()
-                    {
-                        pins.unpin(&pin.profile_id, &pin.topic);
-                        profiles.set_sticky_and_save(&pin.profile_id, &pin.topic, false);
-                    }
-                    if icons
-                        .tiny(ui, "clipboard_checklist", false, "Copy payload")
-                        .clicked()
-                    {
-                        let copy = json_view::try_pretty_json(&pin.last_payload)
-                            .unwrap_or_else(|| pin.last_payload.clone());
-                        ui.ctx().copy_text(copy);
-                        *status = "Copied payload".into();
-                    }
-                });
+                // Whole icon bar is one wrap atom — snaps below when it won't fit.
+                ui.allocate_ui_with_layout(
+                    egui::vec2(ICON_GROUP_W, row_h),
+                    egui::Layout::left_to_right(egui::Align::Center),
+                    |ui| {
+                        ui.spacing_mut().item_spacing.x = 4.0;
+                        if let Some(live) = pins.items.get_mut(key) {
+                            let before = live.view_mode;
+                            egui::Frame::NONE
+                                .fill(Color32::from_rgb(32, 34, 40))
+                                .corner_radius(3.0)
+                                .inner_margin(egui::Margin::symmetric(3, 2))
+                                .show(ui, |ui| {
+                                    ui.horizontal(|ui| {
+                                        ui.spacing_mut().item_spacing.x = 2.0;
+                                        for (mode, icon, tip) in [
+                                            (StickyViewMode::Raw, "terminal", "Raw"),
+                                            (StickyViewMode::Value, "json_payload", "Value"),
+                                            (StickyViewMode::Graph, "line_graph", "Graph"),
+                                        ] {
+                                            if icons
+                                                .tiny(ui, icon, live.view_mode == mode, tip)
+                                                .clicked()
+                                            {
+                                                live.view_mode = mode;
+                                            }
+                                        }
+                                    });
+                                });
+                            if live.view_mode != before {
+                                mode_changed = Some(live.view_mode);
+                            }
+                        }
+                        if icons
+                            .tiny(ui, "clipboard_checklist", false, "Copy payload")
+                            .clicked()
+                        {
+                            copy_payload = true;
+                        }
+                        if icons
+                            .tiny(
+                                ui,
+                                "sticky_topic",
+                                true,
+                                &shortcuts::tip("Unstick", "Ctrl+Shift+S"),
+                            )
+                            .clicked()
+                        {
+                            unstick = true;
+                        }
+                    },
+                );
             });
+            if copy_topic {
+                ui.ctx().copy_text(pin.topic.clone());
+                *status = format!("Copied topic: {}", pin.topic);
+            }
+            if copy_payload {
+                let copy = json_view::try_pretty_json(&pin.last_payload)
+                    .unwrap_or_else(|| pin.last_payload.clone());
+                ui.ctx().copy_text(copy);
+                *status = "Copied payload".into();
+            }
+            if unstick {
+                pins.unpin(&pin.profile_id, &pin.topic);
+                profiles.set_sticky_and_save(&pin.profile_id, &pin.topic, false);
+            }
             if let Some(mode) = mode_changed {
                 profiles.set_sticky_view_mode_and_save(&pin.profile_id, &pin.topic, mode);
             }

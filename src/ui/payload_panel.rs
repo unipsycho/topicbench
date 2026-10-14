@@ -15,7 +15,7 @@ pub fn draw(
     icons: &IconSet,
 ) {
     ui.horizontal(|ui| {
-        if let Some(tex) = icons.get("panel_docked") {
+        if let Some(tex) = icons.get("panel_undock") {
             ui.add(
                 egui::Image::new(tex)
                     .fit_to_exact_size(egui::vec2(20.0, 20.0))
