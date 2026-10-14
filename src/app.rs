@@ -188,7 +188,7 @@ impl MqttMonitorApp {
                         }
                         if self
                             .icons
-                            .command(ui, "security-lock", "Delete", false, "Delete selected profile")
+                            .command(ui, "disconnect", "Delete", false, "Delete selected profile")
                             .clicked()
                         {
                             if let Some(id) = self.profiles.delete_selected() {
@@ -277,7 +277,7 @@ impl MqttMonitorApp {
                             .icons
                             .command(
                                 ui,
-                                "server_settings",
+                                "configuration_sliders",
                                 "Settings",
                                 self.settings_open,
                                 "Open settings window",

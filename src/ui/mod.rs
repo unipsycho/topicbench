@@ -3,6 +3,7 @@
 pub mod clipboard;
 pub mod flash;
 pub mod icons;
+pub mod json_view;
 pub mod pin_board;
 pub mod profiles;
 pub mod publish_panel;

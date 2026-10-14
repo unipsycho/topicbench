@@ -30,7 +30,7 @@ pub fn draw(
     ctx: &egui::Context,
 ) {
     ui.horizontal(|ui| {
-        if let Some(tex) = icons.get("gateway") {
+        if let Some(tex) = icons.get("profile") {
             ui.add(
                 egui::Image::new(tex)
                     .fit_to_exact_size(egui::vec2(20.0, 20.0))
@@ -129,7 +129,7 @@ pub fn draw(
             ui.add_space(8.0);
             ui.separator();
             ui.horizontal(|ui| {
-                if let Some(tex) = icons.get("mqtt-cloud") {
+                if let Some(tex) = icons.get("subscribe_topic") {
                     ui.add(
                         egui::Image::new(tex)
                             .fit_to_exact_size(egui::vec2(18.0, 18.0))
@@ -191,7 +191,7 @@ pub fn draw(
                 Some(SessionState::Connected) | Some(SessionState::Connecting) => "Disconnect",
                 _ => "Connect",
             };
-            if icons.labeled_button(ui, "mqtt-cloud", label).clicked() {
+            if icons.labeled_button(ui, "connect", label).clicked() {
                 let profile = profiles.profiles.get(&id).cloned();
                 if let Some(profile) = profile {
                     let connecting = match sessions.open.get(&id).map(|s| s.state) {
