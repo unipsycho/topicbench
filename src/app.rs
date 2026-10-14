@@ -663,17 +663,23 @@ impl MqttMonitorApp {
                     });
                     let title_w = mqtt_g.size().x.max(master_g.size().x).ceil();
                     let stack_h = mqtt_g.size().y + master_g.size().y + line_gap;
-                    let brand_w = logo_size.x + 10.0 + title_w + 10.0;
+                    let logo_w = logo_size.x;
 
-                    // Progressive collapse: App → Profiles → Panels → hide Stats.
+                    // Collapse: App → Profiles → Panels → hide title → hide Stats.
                     let avail_w = ui.available_width();
                     let plan = ribbon_layout::plan_for_width(
                         avail_w,
-                        brand_w,
+                        logo_w,
+                        title_w,
                         stats_ribbon::estimate_width(),
                     );
+                    let brand_w = if plan.show_title {
+                        logo_w + 10.0 + title_w + 10.0
+                    } else {
+                        logo_w + 10.0
+                    };
 
-                    // Brand block: logo + two-line title, vertically centered as one unit.
+                    // Brand: logo always; MQTT/Master title when width allows.
                     ui.allocate_ui_with_layout(
                         egui::vec2(brand_w, brand_h),
                         egui::Layout::left_to_right(Align::Center),
@@ -687,23 +693,26 @@ impl MqttMonitorApp {
                                         .sense(egui::Sense::hover()),
                                 );
                             }
-                            ui.add_space(10.0);
-                            let (title_rect, _) = ui.allocate_exact_size(
-                                egui::vec2(title_w, brand_h),
-                                egui::Sense::hover(),
-                            );
-                            let top = title_rect.center().y - stack_h * 0.5;
-                            let mqtt_x = title_rect.left() + (title_w - mqtt_g.size().x) * 0.5;
-                            let master_x =
-                                title_rect.left() + (title_w - master_g.size().x) * 0.5;
-                            ui.painter()
-                                .galley(egui::pos2(mqtt_x, top), mqtt_g, green);
-                            ui.painter().galley(
-                                egui::pos2(master_x, top + stack_h - master_g.size().y),
-                                master_g,
-                                green,
-                            );
-                            ui.add_space(10.0);
+                            if plan.show_title {
+                                ui.add_space(10.0);
+                                let (title_rect, _) = ui.allocate_exact_size(
+                                    egui::vec2(title_w, brand_h),
+                                    egui::Sense::hover(),
+                                );
+                                let top = title_rect.center().y - stack_h * 0.5;
+                                let mqtt_x =
+                                    title_rect.left() + (title_w - mqtt_g.size().x) * 0.5;
+                                let master_x =
+                                    title_rect.left() + (title_w - master_g.size().x) * 0.5;
+                                ui.painter()
+                                    .galley(egui::pos2(mqtt_x, top), mqtt_g, green);
+                                ui.painter().galley(
+                                    egui::pos2(master_x, top + stack_h - master_g.size().y),
+                                    master_g,
+                                    green,
+                                );
+                                ui.add_space(10.0);
+                            }
                         },
                     );
 
@@ -714,7 +723,7 @@ impl MqttMonitorApp {
                     icons::ribbon_separator(ui);
                     self.draw_ribbon_app(ui, ctx, plan.app);
 
-                    // Stats on the far right (hidden when the ribbon is still too tight).
+                    // Stats far-right (RTL: group then sep → App | Stats).
                     if plan.show_stats {
                         let remaining = ui.available_width();
                         if remaining > 8.0 {
@@ -722,16 +731,11 @@ impl MqttMonitorApp {
                                 egui::Layout::right_to_left(egui::Align::Min),
                                 |ui| {
                                     ui.set_max_width(remaining);
-                                    ui.with_layout(
-                                        egui::Layout::left_to_right(egui::Align::Min),
-                                        |ui| {
-                                            icons::ribbon_separator(ui);
-                                            stats_ribbon::draw_group(
-                                                ui,
-                                                &self.sessions.traffic_stats,
-                                            );
-                                        },
+                                    stats_ribbon::draw_group(
+                                        ui,
+                                        &self.sessions.traffic_stats,
                                     );
+                                    icons::ribbon_separator(ui);
                                 },
                             );
                         }
