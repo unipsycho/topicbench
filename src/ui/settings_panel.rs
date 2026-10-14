@@ -1,6 +1,8 @@
 //! Settings content (shown in its own viewport window).
 
-use crate::mqtt::settings::{AppSettings, TopicTreeExpandMode, MAX_PACKET_MAX, MAX_PACKET_MIN};
+use crate::mqtt::settings::{
+    AppSettings, StickyLayoutMode, TopicTreeExpandMode, MAX_PACKET_MAX, MAX_PACKET_MIN,
+};
 use crate::ui::icons::IconSet;
 use eframe::egui;
 
@@ -53,6 +55,41 @@ pub fn draw(ui: &mut egui::Ui, settings: &mut AppSettings, icons: &IconSet, stat
             });
     });
     ui.weak("Controls how new topic-tree branches open.");
+
+    ui.add_space(12.0);
+    ui.strong("Sticky topics");
+    ui.horizontal(|ui| {
+        ui.label("Layout");
+        egui::ComboBox::from_id_salt("sticky_layout_mode")
+            .selected_text(settings.sticky_layout.label())
+            .show_ui(ui, |ui| {
+                for mode in [StickyLayoutMode::Rows, StickyLayoutMode::Columns] {
+                    if ui
+                        .selectable_value(&mut settings.sticky_layout, mode, mode.label())
+                        .changed()
+                    {
+                        dirty = true;
+                    }
+                }
+            });
+    });
+    if settings.sticky_layout == StickyLayoutMode::Columns {
+        ui.horizontal(|ui| {
+            ui.label("Columns");
+            for n in [2_u8, 3, 4] {
+                if ui
+                    .selectable_value(&mut settings.sticky_columns, n, n.to_string())
+                    .changed()
+                {
+                    settings.sticky_columns = AppSettings::clamp_sticky_columns(n);
+                    dirty = true;
+                }
+            }
+        });
+        ui.weak("More columns give each sticky less width — better for comparing several JSON payloads.");
+    } else {
+        ui.weak("Rows stack stickies full-width (best for long JSON).");
+    }
 
     ui.add_space(12.0);
     ui.strong("MQTT");

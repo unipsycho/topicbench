@@ -1,11 +1,12 @@
-//! Sticky strip — Raw / Value / Graph; presentation on the right.
+//! Sticky strip — Raw / Value / Graph; rows or column grid from Settings.
 //! Only stickies for currently **connected** profiles are shown.
 
 use crate::mqtt::pins::{DetectedValue, PinBoard, StickyTopic, StickyViewMode};
 use crate::mqtt::profile::ProfileStore;
 use crate::mqtt::session::{SessionManager, SessionState};
-use crate::ui::clipboard;
+use crate::mqtt::settings::{AppSettings, StickyLayoutMode};
 use crate::ui::flash;
+use crate::ui::icons::IconSet;
 use crate::ui::json_view;
 use crate::ui::search_bar::SearchFilter;
 use eframe::egui::{self, Color32, Pos2, RichText, Stroke};
@@ -17,11 +18,32 @@ pub fn draw(
     pins: &mut PinBoard,
     profiles: &mut ProfileStore,
     sessions: &SessionManager,
+    settings: &AppSettings,
+    icons: &IconSet,
     filter: &SearchFilter,
     status: &mut String,
 ) {
-    ui.heading("Sticky topics");
-    ui.label("Value/graph on the right — Raw · Value · Graph. Shown for connected profiles only.");
+    ui.horizontal(|ui| {
+        if let Some(tex) = icons.get("sticky_topic") {
+            ui.add(
+                egui::Image::new(tex)
+                    .fit_to_exact_size(egui::vec2(20.0, 20.0))
+                    .sense(egui::Sense::hover()),
+            );
+        }
+        ui.heading("Sticky topics");
+        ui.label(
+            RichText::new(match settings.sticky_layout {
+                StickyLayoutMode::Rows => "· rows".into(),
+                StickyLayoutMode::Columns => {
+                    format!("· {} columns", settings.sticky_column_count())
+                }
+            })
+            .small()
+            .weak(),
+        );
+    });
+    ui.weak("Layout (rows / columns) is in Settings. Shown for connected profiles only.");
     ui.add_space(4.0);
 
     let connected: HashSet<&str> = sessions
@@ -44,116 +66,166 @@ pub fn draw(
     }
 
     let now = Instant::now();
-    let mut any = false;
-    for key in keys {
-        let Some(pin) = pins.items.get(&key).cloned() else {
-            continue;
-        };
-        if !filter.matches(&pin.topic, Some(&pin.last_payload)) {
-            continue;
+    let visible: Vec<String> = keys
+        .into_iter()
+        .filter(|key| {
+            pins.items
+                .get(key)
+                .is_some_and(|p| filter.matches(&p.topic, Some(&p.last_payload)))
+        })
+        .collect();
+
+    if visible.is_empty() {
+        ui.weak("No stickies match the current search.");
+        return;
+    }
+
+    match settings.sticky_layout {
+        StickyLayoutMode::Rows => {
+            for key in &visible {
+                draw_card(ui, pins, profiles, key, icons, now, false, status);
+                ui.add_space(4.0);
+            }
         }
-        any = true;
-        let fill = flash::flash_fill(pin.flash_until, now).unwrap_or(Color32::TRANSPARENT);
-        egui::Frame::NONE
-            .fill(fill)
-            .stroke(Stroke::new(
-                1.0_f32,
-                ui.visuals().widgets.noninteractive.bg_stroke.color,
-            ))
-            .inner_margin(egui::Margin::same(6))
-            .show(ui, |ui| {
-                ui.horizontal(|ui| {
-                    // Left: identity + mode controls
-                    ui.vertical(|ui| {
-                        ui.set_min_width(200.0);
-                        ui.horizontal(|ui| {
-                            ui.strong(&pin.profile_name);
-                            clipboard::topic_label(ui, &pin.topic, status);
-                            if pin.message_count > 0 {
-                                ui.label(RichText::new(format!("#{}", pin.message_count)).small());
-                            }
-                        });
-                        ui.horizontal(|ui| {
-                            if let Some(live) = pins.items.get_mut(&key) {
-                                egui::ComboBox::from_id_salt(format!("sticky-view-{key}"))
-                                    .selected_text(live.view_mode.label())
-                                    .width(90.0)
-                                    .show_ui(ui, |ui| {
-                                        ui.selectable_value(
-                                            &mut live.view_mode,
-                                            StickyViewMode::Raw,
-                                            "Raw",
-                                        );
-                                        ui.selectable_value(
-                                            &mut live.view_mode,
-                                            StickyViewMode::Value,
-                                            "Value",
-                                        );
-                                        ui.selectable_value(
-                                            &mut live.view_mode,
-                                            StickyViewMode::Graph,
-                                            "Graph",
-                                        );
-                                    });
-                            }
-                            if ui.small_button("Unstick").clicked() {
-                                pins.unpin(&pin.profile_id, &pin.topic);
-                                profiles.set_sticky_and_save(&pin.profile_id, &pin.topic, false);
-                            }
-                        });
-                    });
+        StickyLayoutMode::Columns => {
+            let cols = settings.sticky_column_count();
+            ui.columns(cols, |columns| {
+                for (i, key) in visible.iter().enumerate() {
+                    let col = &mut columns[i % cols];
+                    draw_card(col, pins, profiles, key, icons, now, true, status);
+                    col.add_space(6.0);
+                }
+            });
+        }
+    }
+}
 
-                    ui.separator();
-
-                    // Presentation pane — always left-aligned (never right_to_left).
-                    let mode = pins
-                        .items
-                        .get(&key)
-                        .map(|p| p.view_mode)
-                        .unwrap_or(StickyViewMode::Raw);
-                    let is_json = matches!(mode, StickyViewMode::Value)
-                        && pins
-                            .items
-                            .get(&key)
-                            .is_some_and(|p| json_view::try_pretty_json(&p.last_payload).is_some());
-                    let height = if is_json { 240.0 } else { 72.0 };
-                    ui.allocate_ui_with_layout(
-                        egui::vec2(ui.available_width().max(180.0), height),
-                        egui::Layout::top_down(egui::Align::LEFT),
-                        |ui| {
-                            if let Some(p) = pins.items.get(&key) {
-                                match mode {
-                                    StickyViewMode::Raw => draw_raw(ui, p, status),
-                                    StickyViewMode::Value => draw_value(ui, p, &key, status),
-                                    StickyViewMode::Graph => draw_graph(ui, p),
-                                }
-                            }
-                        },
-                    );
+#[allow(clippy::too_many_arguments)]
+fn draw_card(
+    ui: &mut egui::Ui,
+    pins: &mut PinBoard,
+    profiles: &mut ProfileStore,
+    key: &str,
+    icons: &IconSet,
+    now: Instant,
+    compact: bool,
+    status: &mut String,
+) {
+    let Some(pin) = pins.items.get(key).cloned() else {
+        return;
+    };
+    let fill = flash::flash_fill(pin.flash_until, now).unwrap_or(Color32::TRANSPARENT);
+    egui::Frame::NONE
+        .fill(fill)
+        .stroke(Stroke::new(
+            1.0_f32,
+            ui.visuals().widgets.noninteractive.bg_stroke.color,
+        ))
+        .inner_margin(egui::Margin::same(6))
+        .show(ui, |ui| {
+            // Chrome: copy topic · identity · copy payload · unstick icon
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 4.0;
+                if icons
+                    .tiny(ui, "clipboard_checklist", false, "Copy topic")
+                    .clicked()
+                {
+                    ui.ctx().copy_text(pin.topic.clone());
+                    *status = format!("Copied topic: {}", pin.topic);
+                }
+                ui.strong(&pin.profile_name);
+                ui.label(RichText::new(&pin.topic).monospace().small());
+                if pin.message_count > 0 {
+                    ui.label(RichText::new(format!("#{}", pin.message_count)).small().weak());
+                }
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if icons
+                        .tiny(ui, "sticky_topic", true, "Unstick")
+                        .clicked()
+                    {
+                        pins.unpin(&pin.profile_id, &pin.topic);
+                        profiles.set_sticky_and_save(&pin.profile_id, &pin.topic, false);
+                    }
+                    if icons
+                        .tiny(ui, "clipboard_checklist", false, "Copy payload")
+                        .clicked()
+                    {
+                        let copy = json_view::try_pretty_json(&pin.last_payload)
+                            .unwrap_or_else(|| pin.last_payload.clone());
+                        ui.ctx().copy_text(copy);
+                        *status = "Copied payload".into();
+                    }
                 });
             });
-        ui.add_space(4.0);
-    }
-    if !any {
-        ui.weak("No stickies match the current search.");
-    }
+
+            // Mode dropdown (keep)
+            ui.horizontal(|ui| {
+                if let Some(live) = pins.items.get_mut(key) {
+                    egui::ComboBox::from_id_salt(format!("sticky-view-{key}"))
+                        .selected_text(live.view_mode.label())
+                        .width(90.0)
+                        .show_ui(ui, |ui| {
+                            ui.selectable_value(&mut live.view_mode, StickyViewMode::Raw, "Raw");
+                            ui.selectable_value(
+                                &mut live.view_mode,
+                                StickyViewMode::Value,
+                                "Value",
+                            );
+                            ui.selectable_value(
+                                &mut live.view_mode,
+                                StickyViewMode::Graph,
+                                "Graph",
+                            );
+                        });
+                }
+            });
+
+            ui.add_space(2.0);
+
+            let mode = pins
+                .items
+                .get(key)
+                .map(|p| p.view_mode)
+                .unwrap_or(StickyViewMode::Raw);
+            let is_json = matches!(mode, StickyViewMode::Value)
+                && pins
+                    .items
+                    .get(key)
+                    .is_some_and(|p| json_view::try_pretty_json(&p.last_payload).is_some());
+            let height = if is_json {
+                if compact {
+                    180.0
+                } else {
+                    240.0
+                }
+            } else {
+                72.0
+            };
+
+            ui.allocate_ui_with_layout(
+                egui::vec2(ui.available_width().max(120.0), height),
+                egui::Layout::top_down(egui::Align::LEFT),
+                |ui| {
+                    if let Some(p) = pins.items.get(key) {
+                        match mode {
+                            StickyViewMode::Raw => draw_raw(ui, p),
+                            StickyViewMode::Value => draw_value(ui, p, key),
+                            StickyViewMode::Graph => draw_graph(ui, p),
+                        }
+                    }
+                },
+            );
+        });
 }
 
-fn draw_raw(ui: &mut egui::Ui, pin: &StickyTopic, status: &mut String) {
+fn draw_raw(ui: &mut egui::Ui, pin: &StickyTopic) {
     ui.label(RichText::new("Raw").small().weak());
-    clipboard::payload_with_copy(ui, &pin.last_payload, 96, status);
+    ui.label(RichText::new(&pin.last_payload).monospace().small());
 }
 
-fn draw_value(ui: &mut egui::Ui, pin: &StickyTopic, sticky_key: &str, status: &mut String) {
-    // Always beautify JSON objects/arrays in Value mode (no settings toggle yet).
+fn draw_value(ui: &mut egui::Ui, pin: &StickyTopic, sticky_key: &str) {
     if let Some(pretty) = json_view::try_pretty_json(&pin.last_payload) {
         json_view::draw_pretty(ui, &pretty, ("sticky-json", sticky_key));
-        ui.push_id(("copy-json", sticky_key), |ui| {
-            if ui.small_button("Copy JSON").clicked() {
-                ui.ctx().copy_text(pretty.clone());
-                *status = "Copied pretty JSON".into();
-            }
-        });
         return;
     }
 
@@ -175,13 +247,12 @@ fn draw_value(ui: &mut egui::Ui, pin: &StickyTopic, sticky_key: &str, status: &m
         }
         DetectedValue::Text(s) => {
             ui.label(RichText::new("String").small().weak());
-            clipboard::payload_with_copy(ui, &s, 64, status);
+            ui.label(RichText::new(s).monospace().small());
         }
     }
 }
 
 fn draw_gauge(ui: &mut egui::Ui, value: f64) {
-    // Simple meter: map value into 0..100-ish for display width; show bar relative to |value|.
     let (rect, _) = ui.allocate_exact_size(egui::vec2(160.0, 14.0), egui::Sense::hover());
     let painter = ui.painter_at(rect);
     painter.rect_filled(rect, 3.0, ui.visuals().extreme_bg_color);
@@ -204,7 +275,7 @@ fn draw_graph(ui: &mut egui::Ui, pin: &StickyTopic) {
         .filter_map(|(i, s)| s.numeric.map(|v| (i as f32, v)))
         .collect();
 
-    let (rect, _) = ui.allocate_exact_size(egui::vec2(200.0, 64.0), egui::Sense::hover());
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(ui.available_width().min(200.0).max(120.0), 64.0), egui::Sense::hover());
     let painter = ui.painter_at(rect);
     painter.rect_filled(rect, 2.0, ui.visuals().extreme_bg_color);
 
