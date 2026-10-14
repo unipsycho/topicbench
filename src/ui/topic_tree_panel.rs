@@ -292,9 +292,9 @@ fn leaf_row(
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 4.0;
 
-        // Left: copy-topic + sticky toggle (always visible).
+        // Left: copy-topic (topic_tags) + sticky toggle (always visible).
         if icons
-            .tiny(ui, "clipboard_checklist", false, "Copy topic")
+            .tiny(ui, "topic_tags", false, "Copy topic")
             .clicked()
         {
             ui.ctx().copy_text(full_topic.to_string());

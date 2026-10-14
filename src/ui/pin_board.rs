@@ -127,7 +127,7 @@ fn draw_card(
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 4.0;
                 if icons
-                    .tiny(ui, "clipboard_checklist", false, "Copy topic")
+                    .tiny(ui, "topic_tags", false, "Copy topic")
                     .clicked()
                 {
                     ui.ctx().copy_text(pin.topic.clone());
