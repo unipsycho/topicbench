@@ -24,6 +24,8 @@ const TINY_ICON: f32 = 14.0;
 const ICON_TEX_PX: u32 = 72;
 /// Left rail width for rotated section labels.
 const SECTION_RAIL_W: f32 = 18.0;
+/// Pull rotated section text left so it clears the first command on hover.
+const SECTION_LABEL_NUDGE_X: f32 = 7.0;
 
 /// Dark chrome tokens.
 pub const CHROME_BG: Color32 = Color32::from_rgb(40, 42, 48);
@@ -185,9 +187,10 @@ fn paint_rotated_section_label(ui: &mut egui::Ui, rect: egui::Rect, caption: &st
             CHROME_CAPTION,
         )
     });
-    // Pivot at bottom-center of rail; rotate CCW so text runs bottom→top along the edge.
+    // Pivot near rail center; rotate CCW so text runs bottom→top. Nudge left so
+    // the glyph clears the first command cell on hover.
     let pos = egui::pos2(
-        rect.center().x + galley.size().y * 0.5,
+        rect.center().x + galley.size().y * 0.5 - SECTION_LABEL_NUDGE_X,
         rect.center().y + galley.size().x * 0.5,
     );
     ui.painter().add(
