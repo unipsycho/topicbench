@@ -800,10 +800,12 @@ impl eframe::App for MqttMonitorApp {
                     payload_panel::draw(
                         ui,
                         &self.sessions,
-                        &self.profiles,
-                        &self.pins,
+                        &mut self.profiles,
+                        &mut self.pins,
                         &self.icons,
                         &mut self.payload_search,
+                        &mut self.panels.stickies,
+                        &mut self.status,
                     );
                 });
         }
