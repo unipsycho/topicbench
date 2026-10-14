@@ -43,14 +43,15 @@ pub fn draw(
     ui.add_space(12.0);
     ui.strong("Topic tree");
     ui.horizontal(|ui| {
-        ui.label("Default expand");
+        ui.label("Expand on startup");
         egui::ComboBox::from_id_salt("tt_expand_mode")
             .selected_text(settings.topic_tree_expand.label())
             .show_ui(ui, |ui| {
                 for mode in [
-                    TopicTreeExpandMode::ExpandRoot,
+                    TopicTreeExpandMode::Expand1,
+                    TopicTreeExpandMode::Expand2,
+                    TopicTreeExpandMode::Expand3,
                     TopicTreeExpandMode::ExpandAll,
-                    TopicTreeExpandMode::CollapseAll,
                 ] {
                     if ui
                         .selectable_value(&mut settings.topic_tree_expand, mode, mode.label())
@@ -61,7 +62,9 @@ pub fn draw(
                 }
             });
     });
-    ui.weak("Controls how new topic-tree branches open.");
+    ui.weak(
+        "Opens the tree to this depth when topics first appear (connect / startup). Expand all / Collapse all in the tree panel still override manually.",
+    );
 
     ui.add_space(12.0);
     ui.strong("Sticky topics");
@@ -99,14 +102,6 @@ pub fn draw(
     }
 
     ui.add_space(12.0);
-    ui.strong("Font zoom");
-    ui.label(format!(
-        "Step {} (range −4…+5). Change with Zoom− / Zoom+ on the ribbon.",
-        settings.font_zoom_step
-    ));
-    ui.weak("Scales egui text styles app-wide; persisted with other settings.");
-
-    ui.add_space(12.0);
     ui.strong("MQTT");
     ui.horizontal(|ui| {
         ui.label("Max packet size");
@@ -125,7 +120,7 @@ pub fn draw(
         }
     });
     ui.weak(
-        "Caps rumqttc decode size (2 KB–1 MB). Applied on the next Connect — reconnect after changing. A `#` flood with a larger retained/live packet will end the session until this is raised.",
+        "Soft UI limit (2 KB–1 MB): larger payloads are skipped (placeholder in the tree) and the connection stays up. Applied on the next Connect. Wire decode allows up to 16 MB so oversize never kills the session.",
     );
 
     ui.add_space(12.0);

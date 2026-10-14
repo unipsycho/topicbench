@@ -794,11 +794,13 @@ impl eframe::App for MqttMonitorApp {
         }
 
         self.handle_shortcuts(ctx);
-        // Suppress tips from panels under Settings / Keyboard Shortcuts overlays.
-        crate::ui::hover_tip::set_block_hover_tips(
-            ctx,
-            self.settings_open || self.shortcuts_open,
-        );
+        // Suppress tips from panels under Settings / Keyboard Shortcuts overlays
+        // (including custom tree payload/topic popups — not only egui on_hover_text).
+        let block_tips = self.settings_open || self.shortcuts_open;
+        crate::ui::hover_tip::set_block_hover_tips(ctx, block_tips);
+        if block_tips {
+            topic_tree_panel::dismiss_hover_tips(ctx);
+        }
         self.draw_ribbon(ctx);
 
         if self.panels.profiles {

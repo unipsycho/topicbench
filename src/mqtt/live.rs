@@ -5,6 +5,7 @@
 
 use crate::mqtt::profile::ConnectionProfile;
 use crate::mqtt::session::SessionState;
+use crate::mqtt::settings::WIRE_MAX_PACKET;
 use eframe::egui::Context;
 use rumqttc::{Client, Event, MqttOptions, Packet, QoS, Transport};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -26,6 +27,11 @@ pub enum BrokerEvent {
         topic: String,
         payload: String,
     },
+    /// Non-fatal note (e.g. skipped oversized payload) — does not change connection state.
+    Notice {
+        profile_id: String,
+        detail: String,
+    },
 }
 
 /// Handle returned to the UI: client for pub/sub + stop flag for Disconnect.
@@ -40,11 +46,12 @@ const STATUS_MIN_INTERVAL: Duration = Duration::from_millis(400);
 
 /// Build options + spawn event-loop thread.
 ///
-/// `max_packet_bytes` raises rumqttc’s decode limit (default ~10 KB) so large
-/// retained/live payloads are accepted. Applied at connect time only.
+/// `soft_max_bytes` is the Settings UI limit: payloads larger than this are replaced
+/// with a placeholder and the session stays connected. rumqttc’s wire decode limit
+/// is always [`WIRE_MAX_PACKET`] so oversize frames do not kill the connection.
 pub fn spawn(
     profile: &ConnectionProfile,
-    max_packet_bytes: usize,
+    soft_max_bytes: usize,
     event_tx: Sender<BrokerEvent>,
     ctx: Context,
 ) -> Result<LiveHandle, String> {
@@ -52,8 +59,8 @@ pub fn spawn(
     opts.set_keep_alive(Duration::from_secs(30));
     opts.set_clean_session(true);
     opts.set_pending_throttle(Duration::from_secs(1));
-    // Both directions — incoming decode is what hits “payload size limit exceeded”.
-    opts.set_max_packet_size(max_packet_bytes, max_packet_bytes);
+    // Wire limit stays high — Settings soft limit is enforced after decode.
+    opts.set_max_packet_size(WIRE_MAX_PACKET, WIRE_MAX_PACKET);
     if !profile.username.is_empty() {
         opts.set_credentials(&profile.username, &profile.password);
     }
@@ -68,7 +75,8 @@ pub fn spawn(
     let profile_id = profile.id.clone();
     let host = profile.host.clone();
     let port = profile.port;
-    let max_kb = (max_packet_bytes / 1024).max(1);
+    let soft_max = soft_max_bytes.max(1);
+    let soft_kb = (soft_max / 1024).max(1);
     let tx = event_tx;
 
     emit_state(
@@ -144,12 +152,32 @@ pub fn spawn(
                         if stop_w.load(Ordering::SeqCst) {
                             break;
                         }
-                        let payload = String::from_utf8_lossy(&p.payload).into_owned();
+                        let raw_len = p.payload.len();
+                        let topic = p.topic;
+                        // Soft Settings limit: keep the session; show a placeholder in the tree.
+                        let (payload, skipped) = if raw_len > soft_max {
+                            let size_kb = (raw_len + 1023) / 1024;
+                            let placeholder = format!(
+                                "[skipped oversized payload: {size_kb} KB > {soft_kb} KB limit]"
+                            );
+                            (placeholder, true)
+                        } else {
+                            (String::from_utf8_lossy(&p.payload).into_owned(), false)
+                        };
                         let _ = tx.send(BrokerEvent::Message {
                             profile_id: profile_id.clone(),
-                            topic: p.topic,
+                            topic: topic.clone(),
                             payload,
                         });
+                        if skipped {
+                            let size_kb = (raw_len + 1023) / 1024;
+                            let _ = tx.send(BrokerEvent::Notice {
+                                profile_id: profile_id.clone(),
+                                detail: format!(
+                                    "Skipped oversized topic {topic} ({size_kb} KB > {soft_kb} KB limit) — still connected"
+                                ),
+                            });
+                        }
                         ctx.request_repaint();
                     }
                     Ok(Event::Incoming(Packet::Disconnect)) => {
@@ -175,27 +203,8 @@ pub fn spawn(
                             break;
                         }
                         let err = e.to_string();
-                        // Over-limit decode kills the rumqttc connection — stop cleanly with a clear tip.
-                        if err.to_lowercase().contains("payload size")
-                            || err.to_lowercase().contains("packet size")
-                            || err.to_lowercase().contains("too large")
-                        {
-                            let detail = format!(
-                                "Incoming MQTT packet exceeds Max packet size ({max_kb} KB). Raise it in Settings (up to 1 MB), then reconnect. ({err})"
-                            );
-                            fatal_detail = Some(detail.clone());
-                            emit_state(
-                                &tx,
-                                &ctx,
-                                &profile_id,
-                                SessionState::Disconnected,
-                                detail,
-                                &mut last_key,
-                                &mut last_emit,
-                                true,
-                            );
-                            break;
-                        }
+                        // Even wire-limit / decode errors: reconnect, do not treat as fatal stop.
+                        // Soft oversize is handled above; this path is rare (e.g. > WIRE_MAX_PACKET).
                         emit_state(
                             &tx,
                             &ctx,

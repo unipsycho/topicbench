@@ -17,6 +17,10 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 image = { version = "0.25", default-features = false, features = ["png"] }
 
+[build-dependencies]
+# Embed mqtt-monitor.exe icon on Windows (and cross-compile via MinGW windres).
+winres = "0.1"
+
 [package.metadata.packager]
 product-name = "MQTT Master"
 identifier = "com.agileautomation.mqtt-master"

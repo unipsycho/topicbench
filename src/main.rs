@@ -7,14 +7,20 @@ mod app;
 mod mqtt;
 mod ui;
 
-use eframe::egui::{self, Visuals};
+use eframe::egui::{self, IconData, Visuals};
 use ui::icons::{CHROME_BG, STATUS_BG};
 
 fn main() -> eframe::Result<()> {
+    let icon = load_window_icon();
+    let mut viewport = egui::ViewportBuilder::default()
+        .with_inner_size([1200.0, 760.0])
+        .with_title("MQTT Master");
+    if let Some(icon) = icon {
+        viewport = viewport.with_icon(icon);
+    }
+
     let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default()
-            .with_inner_size([1200.0, 760.0])
-            .with_title("MQTT Master"),
+        viewport,
         ..Default::default()
     };
 
@@ -26,6 +32,18 @@ fn main() -> eframe::Result<()> {
             Ok(Box::new(app::MqttMonitorApp::new(cc)))
         }),
     )
+}
+
+/// Window/taskbar icon from the broker_server mark (same art as Windows .ico).
+fn load_window_icon() -> Option<IconData> {
+    let bytes = include_bytes!("../assets/icons/broker_server.png");
+    let img = image::load_from_memory(bytes).ok()?.into_rgba8();
+    let (width, height) = img.dimensions();
+    Some(IconData {
+        rgba: img.into_raw(),
+        width,
+        height,
+    })
 }
 
 /// Lock dark mode (ignore OS light theme) and paint every panel with ribbon chrome.

@@ -6,12 +6,25 @@ use crate::mqtt::session::{Session, SessionManager, SessionState};
 use crate::mqtt::settings::TopicTreeExpandMode;
 use crate::mqtt::topic_tree::TopicNode;
 use crate::ui::flash;
+use crate::ui::hover_tip;
 use crate::ui::icons::IconSet;
 use crate::ui::json_view;
 use crate::ui::search_bar::SearchFilter;
 use crate::ui::shortcuts;
 use eframe::egui::{self, Color32, RichText};
 use std::time::Instant;
+
+/// Exclusive temp key for the one open tree payload/topic tip.
+fn hover_active_key() -> egui::Id {
+    egui::Id::new("topic_tree_hover_active")
+}
+
+/// Drop any open tree tip (call when Settings / Shortcuts modal opens).
+pub fn dismiss_hover_tips(ctx: &egui::Context) {
+    ctx.data_mut(|d| {
+        d.remove::<egui::Id>(hover_active_key());
+    });
+}
 
 /// Soft fill behind the selected tree row (Payload panel target).
 fn select_fill() -> Color32 {
@@ -201,12 +214,12 @@ fn draw_node(
         // Flash = inset border only (never expands row height when pulsing).
         let flash_stroke = flash::flash_stroke(child.flash_until, now);
 
+        // depth 0 = first segment under broker; Expand N opens depths 0..N-1.
         let default_open = match force_open {
             Some(v) => v,
-            None => match expand_mode {
-                TopicTreeExpandMode::ExpandAll => true,
-                TopicTreeExpandMode::CollapseAll => false,
-                TopicTreeExpandMode::ExpandRoot => depth == 0,
+            None => match expand_mode.levels() {
+                None => true,
+                Some(n) => depth < n,
             },
         };
 
@@ -546,6 +559,7 @@ fn leaf_row(
 /// One exclusive hover popup for the topic tree.
 /// Stays open under wheel; wheel scrolls popup content; moving a few pixels onto
 /// the popup (or the gap) does not open tips for rows underneath.
+/// Silent while Settings / Keyboard Shortcuts modal is open (underlay must not tip).
 fn scrollable_hover(
     ui: &mut egui::Ui,
     resp: &egui::Response,
@@ -554,8 +568,20 @@ fn scrollable_hover(
 ) {
     let ctx = ui.ctx();
     let popup_id = id.with("scroll_hover");
-    let active_key = egui::Id::new("topic_tree_hover_active");
+    let active_key = hover_active_key();
     let scroll_key = popup_id.with("scroll_y");
+
+    // Modal owns the pointer — never open or keep a tree tip underneath.
+    if hover_tip::is_blocked(ctx) {
+        let active: Option<egui::Id> = ctx.data(|d| d.get_temp(active_key));
+        if active == Some(popup_id) {
+            ctx.data_mut(|d| {
+                d.remove::<egui::Id>(active_key);
+                d.remove_temp::<f32>(scroll_key);
+            });
+        }
+        return;
+    }
 
     let pointer = ctx
         .pointer_interact_pos()
