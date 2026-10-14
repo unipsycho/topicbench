@@ -30,29 +30,78 @@ pub struct SearchFilter {
 
 impl SearchFilter {
     pub fn is_active(&self) -> bool {
-        !self.query.trim().is_empty()
+        !self.terms().is_empty()
     }
 
+    /// Non-empty search terms split on `|` (trimmed). Empty segments ignored.
+    pub fn terms(&self) -> Vec<String> {
+        self.query
+            .split('|')
+            .map(|t| t.trim().to_lowercase())
+            .filter(|t| !t.is_empty())
+            .collect()
+    }
+
+    /// OR match: any term hits topic and/or payload per scope.
     pub fn matches(&self, topic: &str, payload: Option<&str>) -> bool {
-        let q = self.query.trim();
-        if q.is_empty() {
+        let terms = self.terms();
+        if terms.is_empty() {
             return true;
         }
-        let q = q.to_lowercase();
-        let topic_hit = topic.to_lowercase().contains(&q);
-        let payload_hit = payload
-            .map(|p| p.to_lowercase().contains(&q))
-            .unwrap_or(false);
-        match self.scope {
-            SearchScope::All => topic_hit || payload_hit,
-            SearchScope::Topics => topic_hit,
-            SearchScope::Payloads => payload_hit,
-        }
+        let topic_l = topic.to_lowercase();
+        let payload_l = payload.map(|p| p.to_lowercase());
+        terms.iter().any(|q| {
+            let topic_hit = topic_l.contains(q);
+            let payload_hit = payload_l.as_ref().is_some_and(|p| p.contains(q));
+            match self.scope {
+                SearchScope::All => topic_hit || payload_hit,
+                SearchScope::Topics => topic_hit,
+                SearchScope::Payloads => payload_hit,
+            }
+        })
     }
 }
 
 /// Id salt for the search query field (Ctrl+F focus).
 pub const SEARCH_QUERY_ID: &str = "mqtt_search_query";
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn empty_and_blank_terms_pass() {
+        let f = SearchFilter::default();
+        assert!(f.matches("a/b", Some("x")));
+        let f = SearchFilter {
+            query: "  |  | ".into(),
+            scope: SearchScope::All,
+        };
+        assert!(!f.is_active());
+        assert!(f.matches("a/b", Some("x")));
+    }
+
+    #[test]
+    fn or_terms_any_match() {
+        let f = SearchFilter {
+            query: "temp | humidity".into(),
+            scope: SearchScope::Topics,
+        };
+        assert!(f.matches("sensors/temp", None));
+        assert!(f.matches("lab/humidity", None));
+        assert!(!f.matches("sensors/pressure", None));
+    }
+
+    #[test]
+    fn or_terms_payload_scope() {
+        let f = SearchFilter {
+            query: "acid | base".into(),
+            scope: SearchScope::Payloads,
+        };
+        assert!(f.matches("chem/x", Some(r#"{"name":"Citric Acid"}"#)));
+        assert!(!f.matches("chem/x", Some(r#"{"name":"water"}"#)));
+    }
+}
 
 pub fn draw(ui: &mut egui::Ui, filter: &mut SearchFilter, request_focus: &mut bool) {
     ui.horizontal(|ui| {
@@ -65,7 +114,7 @@ pub fn draw(ui: &mut egui::Ui, filter: &mut SearchFilter, request_focus: &mut bo
                 egui::TextEdit::singleline(&mut filter.query)
                     .id_salt(SEARCH_QUERY_ID)
                     .desired_width(220.0)
-                    .hint_text("filter topics / payloads…"),
+                    .hint_text("terms | separated…"),
             ),
             shortcuts::tip("Focus search", "Ctrl+F"),
         );

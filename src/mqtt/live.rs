@@ -26,6 +26,8 @@ pub enum BrokerEvent {
         profile_id: String,
         topic: String,
         payload: String,
+        /// MQTT RETAIN flag from the Publish packet.
+        retain: bool,
     },
     /// Non-fatal note (e.g. skipped oversized payload) — does not change connection state.
     Notice {
@@ -152,6 +154,7 @@ pub fn spawn(
                         if stop_w.load(Ordering::SeqCst) {
                             break;
                         }
+                        let retain = p.retain;
                         let raw_len = p.payload.len();
                         let topic = p.topic;
                         // Soft Settings limit: keep the session; show a placeholder in the tree.
@@ -168,6 +171,7 @@ pub fn spawn(
                             profile_id: profile_id.clone(),
                             topic: topic.clone(),
                             payload,
+                            retain,
                         });
                         if skipped {
                             let size_kb = (raw_len + 1023) / 1024;

@@ -549,6 +549,7 @@ fn leaf_row(
             profile_name: profile_name.to_string(),
             topic: full_topic.to_string(),
             payload: node.last_payload.clone().unwrap_or_default(),
+            retain: node.last_retain,
         });
     }
 }

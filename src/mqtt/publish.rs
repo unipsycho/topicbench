@@ -34,7 +34,7 @@ impl Default for PublishDraft {
         Self {
             profile_id: None,
             topic: "sensors/demo".into(),
-            payload: r#"{"ok":true}"#.into(),
+            payload: "{\n  \"ok\": true\n}".into(),
             qos: Qos::AtMostOnce,
             retain: false,
         }
@@ -47,16 +47,31 @@ impl PublishDraft {
             self.profile_id = Some(entry.profile_id.clone());
         }
         self.topic = entry.topic.clone();
-        self.payload = entry.payload.clone();
+        self.payload = beautify_if_json(&entry.payload);
         self.qos = entry.qos;
         self.retain = entry.retain;
     }
 
-    /// Fill form from a topic-tree double-click (broker + topic + current payload).
+    /// Fill form from a topic-tree double-click (broker + topic + payload + retain).
     pub fn apply_from_tree(&mut self, fill: &PublishFromTree) {
         self.profile_id = Some(fill.profile_id.clone());
         self.topic = fill.topic.clone();
-        self.payload = fill.payload.clone();
+        self.payload = beautify_if_json(&fill.payload);
+        self.retain = fill.retain;
+    }
+}
+
+/// Pretty-print JSON objects/arrays when filling the Publish payload editor.
+fn beautify_if_json(payload: &str) -> String {
+    let t = payload.trim();
+    if !(t.starts_with('{') || t.starts_with('[')) {
+        return payload.to_string();
+    }
+    match serde_json::from_str::<serde_json::Value>(t) {
+        Ok(v) if v.is_object() || v.is_array() => {
+            serde_json::to_string_pretty(&v).unwrap_or_else(|_| payload.to_string())
+        }
+        _ => payload.to_string(),
     }
 }
 
@@ -67,6 +82,8 @@ pub struct PublishFromTree {
     pub profile_name: String,
     pub topic: String,
     pub payload: String,
+    /// MQTT RETAIN from the last message on this topic.
+    pub retain: bool,
 }
 
 /// One published message recalled into the form.

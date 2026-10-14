@@ -5,8 +5,14 @@ use crate::mqtt::publish::{PublishDraft, PublishHistory, RecentPublish, Qos};
 use crate::mqtt::session::{SessionManager, SessionState};
 use crate::ui::hover_tip;
 use crate::ui::icons::IconSet;
+use crate::ui::json_view;
 use eframe::egui::text::LayoutJob;
-use eframe::egui::{self, Color32, TextFormat};
+use eframe::egui::{self, Color32, Stroke, TextFormat};
+use std::sync::Arc;
+
+/// Warning chrome when intended JSON is invalid.
+const WARN_BORDER: Color32 = Color32::from_rgb(210, 140, 50);
+const WARN_BG: Color32 = Color32::from_rgb(55, 42, 28);
 
 pub fn draw(
     ui: &mut egui::Ui,
@@ -61,8 +67,17 @@ pub fn draw(
         ui.label("Topic");
         ui.text_edit_singleline(&mut draft.topic);
     });
+
+    // Payload: beautified + syntax-highlighted when JSON; warn if intended JSON is broken.
     ui.label("Payload");
-    ui.text_edit_multiline(&mut draft.payload);
+    let json_invalid = json_view::json_edit_invalid(&draft.payload);
+    draw_payload_editor(ui, &mut draft.payload, json_invalid);
+    if json_invalid {
+        ui.colored_label(
+            WARN_BORDER,
+            "Invalid JSON — fix before publishing (plain text is fine).",
+        );
+    }
 
     ui.horizontal(|ui| {
         ui.label("QoS");
@@ -73,38 +88,42 @@ pub fn draw(
     });
 
     if ui.button("Publish").clicked() {
-        match draft.profile_id.as_deref() {
-            Some(id) => {
-                match sessions.publish_live(id, &draft.topic, &draft.payload, draft.qos, draft.retain)
-                {
-                    Ok(()) => {
-                        let broker = connected
-                            .iter()
-                            .find(|(pid, _)| pid == id)
-                            .map(|(_, name)| name.as_str())
-                            .unwrap_or(id);
-                        let entry = RecentPublish::from_draft(draft, broker);
-                        match history.push_and_save(entry) {
-                            Ok(()) => {
-                                *status = format!(
-                                    "Published → {broker} {} (qos={} retain={})",
-                                    draft.topic,
-                                    draft.qos.as_u8(),
-                                    draft.retain
-                                );
-                            }
-                            Err(e) => {
-                                *status = format!(
-                                    "Published → {broker} {} (history save failed: {e})",
-                                    draft.topic
-                                );
+        if json_view::json_edit_invalid(&draft.payload) {
+            *status = "Publish blocked: payload looks like JSON but is invalid — fix or clear braces.".into();
+        } else {
+            match draft.profile_id.as_deref() {
+                Some(id) => {
+                    match sessions.publish_live(id, &draft.topic, &draft.payload, draft.qos, draft.retain)
+                    {
+                        Ok(()) => {
+                            let broker = connected
+                                .iter()
+                                .find(|(pid, _)| pid == id)
+                                .map(|(_, name)| name.as_str())
+                                .unwrap_or(id);
+                            let entry = RecentPublish::from_draft(draft, broker);
+                            match history.push_and_save(entry) {
+                                Ok(()) => {
+                                    *status = format!(
+                                        "Published → {broker} {} (qos={} retain={})",
+                                        draft.topic,
+                                        draft.qos.as_u8(),
+                                        draft.retain
+                                    );
+                                }
+                                Err(e) => {
+                                    *status = format!(
+                                        "Published → {broker} {} (history save failed: {e})",
+                                        draft.topic
+                                    );
+                                }
                             }
                         }
+                        Err(e) => *status = e,
                     }
-                    Err(e) => *status = e,
                 }
+                None => *status = "Select a connected profile to publish.".into(),
             }
-            None => *status = "Select a connected profile to publish.".into(),
         }
     }
 
@@ -155,6 +174,43 @@ pub fn draw(
                 }
             }
         });
+}
+
+/// Editable multiline payload with JSON syntax highlight + invalid warning frame.
+fn draw_payload_editor(ui: &mut egui::Ui, payload: &mut String, json_invalid: bool) {
+    let font_size = ui.text_style_height(&egui::TextStyle::Monospace);
+    let mut layouter = |ui: &egui::Ui, text: &str, wrap_width: f32| -> Arc<egui::Galley> {
+        let mut job = if json_view::looks_like_json(text) {
+            json_view::highlight_job(text, font_size)
+        } else {
+            json_view::plain_mono_job(text, font_size)
+        };
+        job.wrap.max_width = wrap_width;
+        ui.fonts(|f| f.layout_job(job))
+    };
+
+    let frame = if json_invalid {
+        egui::Frame::NONE
+            .fill(WARN_BG)
+            .stroke(Stroke::new(1.5_f32, WARN_BORDER))
+            .inner_margin(egui::Margin::same(4))
+            .corner_radius(4.0)
+    } else {
+        egui::Frame::NONE
+            .inner_margin(egui::Margin::same(2))
+            .corner_radius(4.0)
+    };
+
+    frame.show(ui, |ui| {
+        ui.add(
+            egui::TextEdit::multiline(payload)
+                .id_salt("publish_payload")
+                .desired_width(ui.available_width())
+                .desired_rows(8)
+                .font(egui::TextStyle::Monospace)
+                .layouter(&mut layouter),
+        );
+    });
 }
 
 /// Broker name in profile accent; rest of the row at normal body/monospace size.
