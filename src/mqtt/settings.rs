@@ -85,6 +85,23 @@ pub struct AppSettings {
     /// App-wide font zoom step (−4…+5). 0 = default egui sizes.
     #[serde(default)]
     pub font_zoom_step: i8,
+    /// Ribbon panel open/closed — restored on reload (same for Payload as Publish/Stickies/…).
+    #[serde(default = "default_true")]
+    pub show_profiles: bool,
+    #[serde(default)]
+    pub show_live_traffic: bool,
+    #[serde(default)]
+    pub show_publish: bool,
+    #[serde(default)]
+    pub show_payload: bool,
+    #[serde(default = "default_true")]
+    pub show_stickies: bool,
+    #[serde(default = "default_true")]
+    pub show_topic_tree: bool,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 fn default_max_packet_bytes() -> usize {
@@ -105,6 +122,12 @@ impl Default for AppSettings {
             sticky_layout: StickyLayoutMode::Rows,
             sticky_columns: 2,
             font_zoom_step: 0,
+            show_profiles: true,
+            show_live_traffic: false,
+            show_publish: false,
+            show_payload: false,
+            show_stickies: true,
+            show_topic_tree: true,
         }
     }
 }
@@ -202,6 +225,24 @@ impl AppSettings {
         clone.font_zoom_step = Self::clamp_font_zoom(clone.font_zoom_step);
         let text = serde_json::to_string_pretty(&clone).map_err(|e| e.to_string())?;
         fs::write(&path, text).map_err(|e| format!("write {}: {e}", path.display()))
+    }
+
+    /// Snapshot ribbon panel visibility into settings (call before save).
+    pub fn set_panels(
+        &mut self,
+        profiles: bool,
+        live_traffic: bool,
+        publish: bool,
+        payload: bool,
+        stickies: bool,
+        topic_tree: bool,
+    ) {
+        self.show_profiles = profiles;
+        self.show_live_traffic = live_traffic;
+        self.show_publish = publish;
+        self.show_payload = payload;
+        self.show_stickies = stickies;
+        self.show_topic_tree = topic_tree;
     }
 
     pub fn remember_connected(&mut self, profile_id: &str, connected: bool) {

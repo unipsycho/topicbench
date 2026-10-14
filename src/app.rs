@@ -96,6 +96,15 @@ impl MqttMonitorApp {
         cc.egui_ctx.options_mut(|o| o.zoom_with_keyboard = false);
         let logo = load_logo(&cc.egui_ctx);
         let icons = IconSet::load(&cc.egui_ctx);
+        // Restore ribbon panel open/closed (incl. Payload) from settings.json.
+        let panels = PanelVisibility {
+            profiles: settings.show_profiles,
+            live_traffic: settings.show_live_traffic,
+            publish: settings.show_publish,
+            payload: settings.show_payload,
+            stickies: settings.show_stickies,
+            topic_tree: settings.show_topic_tree,
+        };
         Self {
             profiles,
             sessions: SessionManager::default(),
@@ -109,7 +118,7 @@ impl MqttMonitorApp {
             status,
             logo,
             icons,
-            panels: PanelVisibility::default(),
+            panels,
             settings_open: false,
             shortcuts_open: false,
             focus_search: false,
@@ -121,11 +130,25 @@ impl MqttMonitorApp {
         }
     }
 
+    /// Persist current panel visibility (Payload included) to settings.json.
+    fn persist_panels(&mut self) {
+        self.settings.set_panels(
+            self.panels.profiles,
+            self.panels.live_traffic,
+            self.panels.publish,
+            self.panels.payload,
+            self.panels.stickies,
+            self.panels.topic_tree,
+        );
+        let _ = self.settings.save();
+    }
+
     /// New profile: auto-show Profiles if hidden; remember for Save auto-close.
     fn action_new_profile(&mut self) {
         if !self.panels.profiles {
             self.panels.profiles = true;
             self.profiles_auto_opened = true;
+            self.persist_panels();
         }
         let id = self.profiles.add_new();
         self.status = format!("Created profile {id}");
@@ -141,6 +164,7 @@ impl MqttMonitorApp {
         if self.profiles_auto_opened {
             self.panels.profiles = false;
             self.profiles_auto_opened = false;
+            self.persist_panels();
         }
     }
 
@@ -179,21 +203,27 @@ impl MqttMonitorApp {
             match action {
                 ShortcutAction::ToggleProfiles => {
                     self.panels.profiles = !self.panels.profiles;
+                    self.persist_panels();
                 }
                 ShortcutAction::ToggleTraffic => {
                     self.panels.live_traffic = !self.panels.live_traffic;
+                    self.persist_panels();
                 }
                 ShortcutAction::TogglePublish => {
                     self.panels.publish = !self.panels.publish;
+                    self.persist_panels();
                 }
                 ShortcutAction::TogglePayload => {
                     self.panels.payload = !self.panels.payload;
+                    self.persist_panels();
                 }
                 ShortcutAction::ToggleStickies => {
                     self.panels.stickies = !self.panels.stickies;
+                    self.persist_panels();
                 }
                 ShortcutAction::ToggleTopicTree => {
                     self.panels.topic_tree = !self.panels.topic_tree;
+                    self.persist_panels();
                 }
                 ShortcutAction::ZoomIn => {
                     if self.settings.zoom_font_in() {
@@ -351,12 +381,12 @@ impl MqttMonitorApp {
                 ui.visuals_mut().override_text_color = Some(CHROME_TEXT);
                 ui.spacing_mut().item_spacing.y = 0.0;
 
-                // Top-align groups so large icons sit snug (horizontal() centers vertically).
-                ui.with_layout(egui::Layout::left_to_right(egui::Align::Min), |ui| {
+                // Center brand + groups in ribbon height (true vertical middle).
+                ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
                     ui.spacing_mut().item_spacing.x = 4.0;
 
-                    // Brand block: logo + two-line title, vertically centered in ribbon height.
-                    // Larger bold title so glyphs fill the old empty gap before Profiles.
+                    // Brand block: logo + two-line title, vertically centered as one unit.
+                    // "Master" is horizontally centered under "MQTT".
                     {
                         let logo_w = self
                             .logo
@@ -396,22 +426,32 @@ impl MqttMonitorApp {
                                     );
                                 }
                                 ui.add_space(10.0);
-                                ui.vertical(|ui| {
-                                    ui.spacing_mut().item_spacing.y = -2.0;
-                                    ui.set_width(title_w);
-                                    ui.label(
-                                        RichText::new("MQTT")
-                                            .strong()
-                                            .size(title_size)
-                                            .color(green),
-                                    );
-                                    ui.label(
-                                        RichText::new("Master")
-                                            .strong()
-                                            .size(title_size)
-                                            .color(green),
-                                    );
-                                });
+                                // Center each title line under the other within title_w.
+                                ui.allocate_ui_with_layout(
+                                    egui::vec2(title_w, brand_h),
+                                    egui::Layout::top_down(egui::Align::Center),
+                                    |ui| {
+                                        ui.spacing_mut().item_spacing.y = -2.0;
+                                        // Vertically center the two-line stack in brand_h.
+                                        let line_h = ui.fonts(|f| {
+                                            f.row_height(&FontId::proportional(title_size))
+                                        });
+                                        let stack_h = line_h * 2.0 - 2.0;
+                                        ui.add_space(((brand_h - stack_h) * 0.5).max(0.0));
+                                        ui.label(
+                                            RichText::new("MQTT")
+                                                .strong()
+                                                .size(title_size)
+                                                .color(green),
+                                        );
+                                        ui.label(
+                                            RichText::new("Master")
+                                                .strong()
+                                                .size(title_size)
+                                                .color(green),
+                                        );
+                                    },
+                                );
                                 ui.add_space(10.0);
                             },
                         );
@@ -485,6 +525,7 @@ impl MqttMonitorApp {
                             self.panels.profiles = !self.panels.profiles;
                             // User took control — don't auto-close on Save.
                             self.profiles_auto_opened = false;
+                            self.persist_panels();
                         }
                     });
 
@@ -504,6 +545,7 @@ impl MqttMonitorApp {
                             .clicked()
                         {
                             self.panels.live_traffic = !self.panels.live_traffic;
+                            self.persist_panels();
                         }
                         if self
                             .icons
@@ -517,6 +559,7 @@ impl MqttMonitorApp {
                             .clicked()
                         {
                             self.panels.publish = !self.panels.publish;
+                            self.persist_panels();
                         }
                         if self
                             .icons
@@ -530,6 +573,7 @@ impl MqttMonitorApp {
                             .clicked()
                         {
                             self.panels.payload = !self.panels.payload;
+                            self.persist_panels();
                         }
                         if self
                             .icons
@@ -543,6 +587,7 @@ impl MqttMonitorApp {
                             .clicked()
                         {
                             self.panels.stickies = !self.panels.stickies;
+                            self.persist_panels();
                         }
                         if self
                             .icons
@@ -556,6 +601,7 @@ impl MqttMonitorApp {
                             .clicked()
                         {
                             self.panels.topic_tree = !self.panels.topic_tree;
+                            self.persist_panels();
                         }
                     });
 
@@ -806,6 +852,7 @@ impl eframe::App for MqttMonitorApp {
         }
 
         if self.panels.payload {
+            let stickies_before = self.panels.stickies;
             egui::SidePanel::right("payload")
                 .default_width(320.0)
                 .min_width(220.0)
@@ -823,6 +870,10 @@ impl eframe::App for MqttMonitorApp {
                         &mut self.status,
                     );
                 });
+            // Graph-pin can open Stickies — persist that panel change too.
+            if self.panels.stickies != stickies_before {
+                self.persist_panels();
+            }
         }
 
         egui::CentralPanel::default().show(ctx, |ui| {

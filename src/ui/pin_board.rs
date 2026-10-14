@@ -115,13 +115,13 @@ fn draw_card(
     let Some(pin) = pins.items.get(key).cloned() else {
         return;
     };
-    // Flash = border only (keep card fill clear so JSON/text stay readable).
-    let stroke = flash::flash_stroke(pin.flash_until, now).unwrap_or(Stroke::new(
+    // Card chrome + flash are inset strokes (never grow layout when pulsing).
+    let flash_stroke = flash::flash_stroke(pin.flash_until, now);
+    let card_stroke = Stroke::new(
         1.0_f32,
         ui.visuals().widgets.noninteractive.bg_stroke.color,
-    ));
-    egui::Frame::NONE
-        .stroke(stroke)
+    );
+    let card = egui::Frame::NONE
         .inner_margin(egui::Margin::same(6))
         .show(ui, |ui| {
             // Identity on first row when possible; icon chrome wraps as one group.
@@ -261,6 +261,7 @@ fn draw_card(
                 },
             );
         });
+    flash::paint_inset_or(ui, card.response.rect, flash_stroke, card_stroke);
 }
 
 /// Max content height for Raw — matches Value JSON ScrollArea.
