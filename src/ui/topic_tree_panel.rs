@@ -276,7 +276,7 @@ fn draw_node(
     }
 }
 
-/// Dense row: `[copy topic] topic = payload… [copy payload] [sticky] #n`
+/// Dense row: `[copy topic][sticky] topic = payload… #n [copy payload]`
 fn leaf_row(
     ui: &mut egui::Ui,
     label: &str,
@@ -292,7 +292,7 @@ fn leaf_row(
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 4.0;
 
-        // Left: copy topic
+        // Left: copy-topic + sticky toggle (always visible).
         if icons
             .tiny(ui, "clipboard_checklist", false, "Copy topic")
             .clicked()
@@ -301,19 +301,59 @@ fn leaf_row(
             *status = format!("Copied topic: {full_topic}");
         }
 
+        let sticky = pins.is_sticky(profile_id, full_topic);
+        if icons
+            .tiny(
+                ui,
+                "sticky_topic",
+                sticky,
+                if sticky {
+                    "Remove sticky"
+                } else {
+                    "Pin sticky"
+                },
+            )
+            .clicked()
+        {
+            pins.last_tree_focus = Some((
+                profile_id.to_string(),
+                profile_name.to_string(),
+                full_topic.to_string(),
+            ));
+            if sticky {
+                pins.unpin(profile_id, full_topic);
+                profiles.set_sticky_and_save(profile_id, full_topic, false);
+            } else {
+                pins.pin(profile_id, profile_name, full_topic);
+                profiles.set_sticky_and_save(profile_id, full_topic, true);
+                if let Some(payload) = &node.last_payload {
+                    if let Some(s) = pins.items.get_mut(&PinBoard::key(profile_id, full_topic)) {
+                        s.last_payload = payload.clone();
+                        s.message_count = node.message_count;
+                    }
+                }
+            }
+        }
+
         let payload = node.last_payload.as_deref().unwrap_or("");
         let is_json = json_view::try_pretty_json(payload).is_some();
+        let show_copy_payload = !payload.is_empty();
+        // Reserve right chrome only — not flush to the window edge.
+        let right_reserve = if show_copy_payload { 28.0 } else { 0.0 };
+        let count_reserve = if node.message_count > 0 { 28.0 } else { 0.0 };
+        let width = (ui.available_width() - right_reserve - count_reserve).max(48.0);
 
-        // Middle: topic = payload; JSON preview is pre-truncated + syntax-colored (no Label::truncate).
-        let right_reserve = 56.0;
-        let width = (ui.available_width() - right_reserve).max(48.0);
+        // Middle: topic = payload (as much as fits).
         ui.allocate_ui_with_layout(
             egui::vec2(width, ui.spacing().interact_size.y),
             egui::Layout::left_to_right(egui::Align::Center),
             |ui| {
                 ui.set_clip_rect(ui.max_rect());
                 let resp = if payload.is_empty() {
-                    ui.add(egui::Label::new(RichText::new(label).monospace()).sense(egui::Sense::click()))
+                    ui.add(
+                        egui::Label::new(RichText::new(label).monospace())
+                            .sense(egui::Sense::click()),
+                    )
                 } else if is_json {
                     let max_json = ((width / 7.0) as usize)
                         .saturating_sub(label.len() + 3)
@@ -351,8 +391,12 @@ fn leaf_row(
             },
         );
 
-        // Right: copy payload + sticky
-        if !payload.is_empty()
+        if node.message_count > 0 {
+            ui.label(RichText::new(format!("#{}", node.message_count)).small().weak());
+        }
+
+        // Right: copy-payload (after middle; not forced to window edge).
+        if show_copy_payload
             && icons
                 .tiny(ui, "clipboard_checklist", false, "Copy payload")
                 .clicked()
@@ -360,44 +404,6 @@ fn leaf_row(
             let copy = json_view::try_pretty_json(payload).unwrap_or_else(|| payload.to_string());
             ui.ctx().copy_text(copy);
             *status = "Copied payload".into();
-        }
-
-        let sticky = pins.is_sticky(profile_id, full_topic);
-        if icons
-            .tiny(
-                ui,
-                "sticky_topic",
-                sticky,
-                if sticky {
-                    "Remove sticky"
-                } else {
-                    "Pin sticky"
-                },
-            )
-            .clicked()
-        {
-            pins.last_tree_focus = Some((
-                profile_id.to_string(),
-                profile_name.to_string(),
-                full_topic.to_string(),
-            ));
-            if sticky {
-                pins.unpin(profile_id, full_topic);
-                profiles.set_sticky_and_save(profile_id, full_topic, false);
-            } else {
-                pins.pin(profile_id, profile_name, full_topic);
-                profiles.set_sticky_and_save(profile_id, full_topic, true);
-                if let Some(payload) = &node.last_payload {
-                    if let Some(s) = pins.items.get_mut(&PinBoard::key(profile_id, full_topic)) {
-                        s.last_payload = payload.clone();
-                        s.message_count = node.message_count;
-                    }
-                }
-            }
-        }
-
-        if node.message_count > 0 {
-            ui.label(RichText::new(format!("#{}", node.message_count)).small().weak());
         }
     });
 }
