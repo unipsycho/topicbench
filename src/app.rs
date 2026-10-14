@@ -5,7 +5,7 @@
 
 use crate::mqtt::pins::PinBoard;
 use crate::mqtt::profile::ProfileStore;
-use crate::mqtt::publish::{PublishDraft, PublishHistory};
+use crate::mqtt::publish::{PublishDraft, PublishHistory, TopicPublishDrop};
 use crate::mqtt::session::SessionManager;
 use crate::mqtt::settings::AppSettings;
 use crate::mqtt::subscribe;
@@ -846,6 +846,17 @@ impl eframe::App for MqttMonitorApp {
                         &mut self.status,
                     );
                 });
+        } else if ctx.input(|i| i.pointer.any_released()) {
+            // Publish hidden — still accept a tree drop: open panel and fill the form.
+            if let Some(drop) = egui::DragAndDrop::take_payload::<TopicPublishDrop>(ctx) {
+                self.publish.apply_tree_drop(&drop);
+                self.panels.publish = true;
+                self.persist_panels();
+                self.status = format!(
+                    "Publish opened from tree drop: {} · {}",
+                    drop.profile_name, drop.topic
+                );
+            }
         }
 
         if self.panels.payload {
