@@ -409,7 +409,7 @@ fn draw_gauge(
     painter.circle_stroke(
         egui::pos2(cx, cy),
         5.0,
-        Stroke::new(1.0, Color32::from_rgb(60, 120, 160)),
+        Stroke::new(1.0_f32, Color32::from_rgb(60, 120, 160)),
     );
 
     // Low / high scale labels under the track.
