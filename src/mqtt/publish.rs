@@ -18,14 +18,6 @@ impl Qos {
     pub fn as_u8(self) -> u8 {
         self as u8
     }
-
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::AtMostOnce => "0",
-            Self::AtLeastOnce => "1",
-            Self::ExactlyOnce => "2",
-        }
-    }
 }
 
 #[derive(Clone, Debug)]
