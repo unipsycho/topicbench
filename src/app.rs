@@ -687,9 +687,9 @@ impl MqttMonitorApp {
                     if remaining > 8.0 {
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
                             ui.set_max_width(remaining);
-                            // Hug-sized group; LTR so the rotated "Stats" rail stays left.
+                            // LTR: separator then Stats (same rule as Profiles/Panels/App).
                             ui.with_layout(egui::Layout::left_to_right(egui::Align::Min), |ui| {
-                                ui.spacing_mut().item_spacing.x = 0.0;
+                                icons::ribbon_separator(ui);
                                 stats_ribbon::draw_group(ui, &self.sessions.traffic_stats);
                             });
                         });
