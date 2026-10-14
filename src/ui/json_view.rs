@@ -49,8 +49,8 @@ fn truncate_chars(s: &str, max_chars: usize) -> String {
 }
 
 /// `topic = {…}` LayoutJob with syntax colors on the JSON side (pre-truncated, no widget truncate).
-pub fn row_preview_job(label: &str, payload: &str, max_json_chars: usize) -> LayoutJob {
-    let font = FontId::monospace(12.0);
+pub fn row_preview_job(label: &str, payload: &str, max_json_chars: usize, font_size: f32) -> LayoutJob {
+    let font = FontId::monospace(font_size);
     let json = preview_line(payload, max_json_chars);
     let prefix = format!("{label} = ");
     let text = format!("{prefix}{json}");
@@ -68,6 +68,7 @@ pub fn row_preview_job(label: &str, payload: &str, max_json_chars: usize) -> Lay
 
 /// Draw pretty JSON left-aligned with syntax colors. `id_salt` must be unique per row.
 pub fn draw_pretty(ui: &mut egui::Ui, pretty: &str, id_salt: impl Hash) {
+    let font_size = ui.text_style_height(&egui::TextStyle::Monospace);
     ui.with_layout(Layout::top_down(Align::LEFT), |ui| {
         ui.label(egui::RichText::new("JSON").small().weak());
         egui::ScrollArea::vertical()
@@ -77,7 +78,7 @@ pub fn draw_pretty(ui: &mut egui::Ui, pretty: &str, id_salt: impl Hash) {
             .show(ui, |ui| {
                 ui.set_max_width(ui.available_width());
                 ui.with_layout(Layout::top_down(Align::LEFT), |ui| {
-                    let job = highlight_job(pretty);
+                    let job = highlight_job(pretty, font_size);
                     ui.add(
                         egui::Label::new(job)
                             .wrap()
@@ -99,8 +100,8 @@ pub fn hover_payload(ui: &mut egui::Ui, payload: &str, id_salt: impl Hash) {
 }
 
 /// Tokenize pretty JSON into a colored left-aligned `LayoutJob`.
-fn highlight_job(src: &str) -> LayoutJob {
-    let font = FontId::monospace(12.0);
+fn highlight_job(src: &str, font_size: f32) -> LayoutJob {
+    let font = FontId::monospace(font_size);
     let mut job = LayoutJob {
         text: src.to_string(),
         break_on_newline: true,
@@ -229,7 +230,7 @@ mod tests {
     #[test]
     fn highlight_covers_all_bytes() {
         let src = "{\n  \"ok\": true,\n  \"n\": 2.5\n}";
-        let job = highlight_job(src);
+        let job = highlight_job(src, 12.0);
         let covered: usize = job.sections.iter().map(|s| s.byte_range.len()).sum();
         assert_eq!(covered, src.len());
         assert_eq!(job.halign, Align::LEFT);
@@ -244,7 +245,7 @@ mod tests {
 
     #[test]
     fn row_preview_job_covers_bytes() {
-        let job = row_preview_job("definition", r#"{"a":1,"b":"x"}"#, 80);
+        let job = row_preview_job("definition", r#"{"a":1,"b":"x"}"#, 80, 12.0);
         let covered: usize = job.sections.iter().map(|s| s.byte_range.len()).sum();
         assert_eq!(covered, job.text.len());
         assert!(job.text.starts_with("definition = "));
