@@ -1,4 +1,4 @@
-//! MQTT Monitor — egui/eframe shell (ArtCraft Crafting Apps stack).
+//! MQTT Master — egui/eframe shell (ArtCraft Crafting Apps stack).
 
 mod app;
 mod mqtt;
@@ -8,12 +8,12 @@ fn main() -> eframe::Result<()> {
     let options = eframe::NativeOptions {
         viewport: eframe::egui::ViewportBuilder::default()
             .with_inner_size([1200.0, 760.0])
-            .with_title("MQTT Monitor"),
+            .with_title("MQTT Master"),
         ..Default::default()
     };
 
     eframe::run_native(
-        "MQTT Monitor",
+        "MQTT Master",
         options,
         Box::new(|cc| {
             // Dark chrome for ribbon + body (Mike: no white ribbon).

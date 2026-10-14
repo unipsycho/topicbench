@@ -25,7 +25,7 @@ const ICON_TEX_PX: u32 = 72;
 /// Left rail width for rotated section labels.
 const SECTION_RAIL_W: f32 = 18.0;
 /// Pull rotated section text left so it clears the first command on hover.
-const SECTION_LABEL_NUDGE_X: f32 = 7.0;
+const SECTION_LABEL_NUDGE_X: f32 = 14.0;
 
 /// Dark chrome tokens.
 pub const CHROME_BG: Color32 = Color32::from_rgb(40, 42, 48);
@@ -69,11 +69,33 @@ impl IconSet {
         selected: bool,
         tip: &str,
     ) -> egui::Response {
-        let cell = Vec2::new(CMD_W, CMD_H);
-        let (rect, response) = ui.allocate_exact_size(cell, Sense::click());
-        let response = response.on_hover_text(tip);
+        self.command_enabled(ui, name, label, selected, tip, true)
+    }
 
-        if selected {
+    /// Ribbon command with optional disabled (dimmed, no click).
+    pub fn command_enabled(
+        &self,
+        ui: &mut egui::Ui,
+        name: &str,
+        label: &str,
+        selected: bool,
+        tip: &str,
+        enabled: bool,
+    ) -> egui::Response {
+        let cell = Vec2::new(CMD_W, CMD_H);
+        let sense = if enabled {
+            Sense::click()
+        } else {
+            Sense::hover()
+        };
+        let (rect, response) = ui.allocate_exact_size(cell, sense);
+        let response = response.on_hover_text(if enabled {
+            tip.to_owned()
+        } else {
+            format!("{tip} (disabled)")
+        });
+
+        if enabled && selected {
             ui.painter().rect_filled(rect, 3.0, CHROME_ACCENT_SOFT);
             ui.painter().rect_stroke(
                 rect,
@@ -81,31 +103,37 @@ impl IconSet {
                 Stroke::new(1.0_f32, CHROME_ACCENT_BORDER),
                 egui::StrokeKind::Inside,
             );
-        } else if response.hovered() {
+        } else if enabled && response.hovered() {
             ui.painter().rect_filled(rect, 3.0, CHROME_HOVER);
         }
 
         let icon_center = egui::pos2(rect.center().x, rect.top() + 22.0);
         if let Some(tex) = self.get(name) {
             // Exact square cell — no stretch; texture already pre-scaled to 2×.
-            let img = egui::Image::new(tex)
+            let mut img = egui::Image::new(tex)
                 .fit_to_exact_size(Vec2::splat(CMD_ICON))
                 .maintain_aspect_ratio(true);
+            if !enabled {
+                img = img.tint(Color32::from_rgba_unmultiplied(255, 255, 255, 90));
+            }
             let img_rect = egui::Rect::from_center_size(icon_center, Vec2::splat(CMD_ICON));
             img.paint_at(ui, img_rect);
         }
 
         // Caption with a few px clearance above the cell bottom (avoids section chrome collision).
+        let caption = if !enabled {
+            Color32::from_rgb(100, 104, 112)
+        } else if selected {
+            Color32::from_rgb(180, 210, 255)
+        } else {
+            CHROME_TEXT
+        };
         ui.painter().text(
             egui::pos2(rect.center().x, rect.bottom() - 10.0),
             egui::Align2::CENTER_CENTER,
             label,
             FontId::proportional(11.0),
-            if selected {
-                Color32::from_rgb(180, 210, 255)
-            } else {
-                CHROME_TEXT
-            },
+            caption,
         );
         response
     }
@@ -136,19 +164,6 @@ impl IconSet {
         response
     }
 
-    pub fn labeled_button(&self, ui: &mut egui::Ui, name: &str, label: &str) -> egui::Response {
-        ui.horizontal(|ui| {
-            if let Some(tex) = self.get(name) {
-                ui.add(
-                    egui::Image::new(tex)
-                        .fit_to_exact_size(Vec2::splat(20.0))
-                        .sense(Sense::hover()),
-                );
-            }
-            ui.button(label)
-        })
-        .inner
-    }
 }
 
 /// Content-sized ribbon group: tinted panel + 90° section label on the left rail.

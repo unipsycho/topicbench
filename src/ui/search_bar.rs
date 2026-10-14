@@ -49,14 +49,22 @@ impl SearchFilter {
     }
 }
 
-pub fn draw(ui: &mut egui::Ui, filter: &mut SearchFilter) {
+/// Id salt for the search query field (Ctrl+F focus).
+pub const SEARCH_QUERY_ID: &str = "mqtt_search_query";
+
+pub fn draw(ui: &mut egui::Ui, filter: &mut SearchFilter, request_focus: &mut bool) {
     ui.horizontal(|ui| {
         ui.label("Search");
-        ui.add(
+        let resp = ui.add(
             egui::TextEdit::singleline(&mut filter.query)
+                .id_salt(SEARCH_QUERY_ID)
                 .desired_width(220.0)
                 .hint_text("filter topics / payloads…"),
         );
+        if *request_focus {
+            resp.request_focus();
+            *request_focus = false;
+        }
         egui::ComboBox::from_id_salt("search_scope")
             .selected_text(filter.scope.label())
             .show_ui(ui, |ui| {

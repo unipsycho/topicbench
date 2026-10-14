@@ -2,31 +2,12 @@
 
 use crate::mqtt::profile::ConnectionProfile;
 use crate::mqtt::topic_tree::FLASH_MS;
-use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, VecDeque};
 use std::time::{Duration, Instant};
 
+pub use crate::mqtt::profile::StickyViewMode;
+
 const HISTORY_CAP: usize = 120;
-
-/// How a sticky topic renders its values.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
-#[serde(rename_all = "snake_case")]
-pub enum StickyViewMode {
-    #[default]
-    Raw,
-    Value,
-    Graph,
-}
-
-impl StickyViewMode {
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::Raw => "Raw",
-            Self::Value => "Value",
-            Self::Graph => "Graph",
-        }
-    }
-}
 
 /// Detected payload kind for Value mode.
 #[derive(Clone, Debug)]
@@ -79,6 +60,8 @@ pub struct StickyTopic {
 pub struct PinBoard {
     /// Key: `profile_id\0topic`.
     pub items: BTreeMap<String, StickyTopic>,
+    /// Last topic row the user interacted with in the tree (Ctrl+Shift+S).
+    pub last_tree_focus: Option<(String, String, String)>,
 }
 
 impl PinBoard {
@@ -86,6 +69,7 @@ impl PinBoard {
         format!("{profile_id}\0{topic}")
     }
 
+    /// Pin a topic if missing (keeps existing view mode).
     pub fn pin(&mut self, profile_id: &str, profile_name: &str, topic: &str) {
         let topic = topic.trim();
         if topic.is_empty() {
@@ -104,6 +88,39 @@ impl PinBoard {
         });
     }
 
+    /// Pin or update view mode (used when restoring from profile).
+    pub fn pin_with_mode(
+        &mut self,
+        profile_id: &str,
+        profile_name: &str,
+        topic: &str,
+        view_mode: StickyViewMode,
+    ) {
+        let topic = topic.trim();
+        if topic.is_empty() {
+            return;
+        }
+        let key = Self::key(profile_id, topic);
+        match self.items.entry(key) {
+            std::collections::btree_map::Entry::Occupied(mut e) => {
+                e.get_mut().view_mode = view_mode;
+                e.get_mut().profile_name = profile_name.to_string();
+            }
+            std::collections::btree_map::Entry::Vacant(v) => {
+                v.insert(StickyTopic {
+                    profile_id: profile_id.to_string(),
+                    profile_name: profile_name.to_string(),
+                    topic: topic.to_string(),
+                    last_payload: "(waiting…)".into(),
+                    message_count: 0,
+                    flash_until: None,
+                    view_mode,
+                    history: VecDeque::new(),
+                });
+            }
+        }
+    }
+
     pub fn unpin(&mut self, profile_id: &str, topic: &str) {
         self.items.remove(&Self::key(profile_id, topic));
     }
@@ -112,10 +129,15 @@ impl PinBoard {
         self.items.contains_key(&Self::key(profile_id, topic))
     }
 
-    /// Restore stickies saved on a profile (idempotent).
+    /// Restore stickies saved on a profile (idempotent; reapplies view mode).
     pub fn restore_from_profile(&mut self, profile: &ConnectionProfile) {
-        for topic in &profile.stickies {
-            self.pin(&profile.id, &profile.name, topic);
+        for sticky in &profile.stickies {
+            self.pin_with_mode(
+                &profile.id,
+                &profile.name,
+                &sticky.topic,
+                sticky.view_mode,
+            );
         }
     }
 

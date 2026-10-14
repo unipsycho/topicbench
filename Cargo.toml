@@ -3,7 +3,7 @@ name = "mqtt-monitor"
 version = "0.1.0"
 edition = "2021"
 rust-version = "1.80"
-description = "MQTT monitoring UI (MQTT Explorer–style skeleton)"
+description = "MQTT Master — multi-broker MQTT monitor (Explorer-style)"
 license = "MIT OR Apache-2.0"
 readme = "README.md"
 
@@ -18,6 +18,6 @@ serde_json = "1"
 image = { version = "0.25", default-features = false, features = ["png"] }
 
 [package.metadata.packager]
-product-name = "MQTT Monitor"
-identifier = "com.agileautomation.mqtt-monitor"
+product-name = "MQTT Master"
+identifier = "com.agileautomation.mqtt-master"
 before-packaging-command = "cargo build --release"

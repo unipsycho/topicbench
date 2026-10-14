@@ -6,7 +6,13 @@ use crate::mqtt::settings::{
 use crate::ui::icons::IconSet;
 use eframe::egui;
 
-pub fn draw(ui: &mut egui::Ui, settings: &mut AppSettings, icons: &IconSet, status: &mut String) {
+pub fn draw(
+    ui: &mut egui::Ui,
+    settings: &mut AppSettings,
+    icons: &IconSet,
+    status: &mut String,
+    open_shortcuts: &mut bool,
+) {
     ui.horizontal(|ui| {
         if let Some(tex) = icons.get("configuration_sliders") {
             ui.add(
@@ -94,7 +100,7 @@ pub fn draw(ui: &mut egui::Ui, settings: &mut AppSettings, icons: &IconSet, stat
     ui.add_space(12.0);
     ui.strong("Font zoom");
     ui.label(format!(
-        "Step {} (range −2…+3). Change with Zoom− / Zoom+ on the ribbon.",
+        "Step {} (range −4…+5). Change with Zoom− / Zoom+ on the ribbon.",
         settings.font_zoom_step
     ));
     ui.weak("Scales egui text styles app-wide; persisted with other settings.");
@@ -130,6 +136,13 @@ pub fn draw(ui: &mut egui::Ui, settings: &mut AppSettings, icons: &IconSet, stat
             settings.last_connected.join(", ")
         }
     ));
+
+    ui.add_space(12.0);
+    ui.strong("Keyboard");
+    if ui.button("Keyboard shortcuts…").clicked() {
+        *open_shortcuts = true;
+    }
+    ui.weak("Also F1 or ? (when not typing). Lists every binding.");
 
     ui.add_space(16.0);
     ui.separator();

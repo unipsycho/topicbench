@@ -1,9 +1,74 @@
 //! Connection profiles — editable in UI, persisted as JSON on disk.
 
+use eframe::egui::Color32;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::PathBuf;
+
+/// Default accent (same green as Connected status).
+fn default_profile_color() -> [u8; 3] {
+    [90, 190, 120]
+}
+
+/// How a sticky topic renders (persisted per sticky on the profile).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum StickyViewMode {
+    #[default]
+    Raw,
+    Value,
+    Graph,
+}
+
+impl StickyViewMode {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Raw => "Raw",
+            Self::Value => "Value",
+            Self::Graph => "Graph",
+        }
+    }
+}
+
+/// One sticky topic + its view mode (legacy profiles.json may store a bare string).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct StickyPref {
+    pub topic: String,
+    #[serde(default)]
+    pub view_mode: StickyViewMode,
+}
+
+impl StickyPref {
+    pub fn new(topic: impl Into<String>, view_mode: StickyViewMode) -> Self {
+        Self {
+            topic: topic.into(),
+            view_mode,
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for StickyPref {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum Helper {
+            Topic(String),
+            Full {
+                topic: String,
+                #[serde(default)]
+                view_mode: StickyViewMode,
+            },
+        }
+        match Helper::deserialize(deserializer)? {
+            Helper::Topic(topic) => Ok(Self::new(topic, StickyViewMode::Raw)),
+            Helper::Full { topic, view_mode } => Ok(Self { topic, view_mode }),
+        }
+    }
+}
 
 /// Saved broker connection settings + topic filters.
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -22,24 +87,32 @@ pub struct ConnectionProfile {
     /// MQTT topic filters applied on connect (`+` / `#` OK).
     #[serde(default)]
     pub subscriptions: Vec<String>,
-    /// Sticky topics restored on connect for this profile.
+    /// Sticky topics (+ view mode) restored on connect for this profile.
     #[serde(default)]
-    pub stickies: Vec<String>,
+    pub stickies: Vec<StickyPref>,
+    /// Accent RGB for profile name in tree headings / sticky labels.
+    #[serde(default = "default_profile_color")]
+    pub color_rgb: [u8; 3],
 }
 
 impl ConnectionProfile {
+    pub fn color(&self) -> Color32 {
+        Color32::from_rgb(self.color_rgb[0], self.color_rgb[1], self.color_rgb[2])
+    }
+
     pub fn new_blank(id: String) -> Self {
         Self {
             id: id.clone(),
             name: "New profile".into(),
             host: "127.0.0.1".into(),
             port: 1883,
-            client_id: format!("mqtt-monitor-{id}"),
+            client_id: format!("mqtt-master-{id}"),
             username: String::new(),
             password: String::new(),
             use_tls: false,
             subscriptions: Vec::new(),
             stickies: Vec::new(),
+            color_rgb: default_profile_color(),
         }
     }
 
@@ -49,12 +122,13 @@ impl ConnectionProfile {
             name: "Local broker".into(),
             host: "127.0.0.1".into(),
             port: 1883,
-            client_id: "mqtt-monitor".into(),
+            client_id: "mqtt-master".into(),
             username: String::new(),
             password: String::new(),
             use_tls: false,
             subscriptions: vec!["sensors/#".into()],
             stickies: Vec::new(),
+            color_rgb: [90, 190, 120],
         }
     }
 
@@ -64,12 +138,13 @@ impl ConnectionProfile {
             name: "Lab devices".into(),
             host: "broker.lab.local".into(),
             port: 1883,
-            client_id: "mqtt-monitor-lab".into(),
+            client_id: "mqtt-master-lab".into(),
             username: String::new(),
             password: String::new(),
             use_tls: false,
             subscriptions: vec!["devices/+/telemetry".into()],
             stickies: Vec::new(),
+            color_rgb: [200, 140, 80],
         }
     }
 
@@ -79,10 +154,11 @@ impl ConnectionProfile {
         if topic.is_empty() {
             return false;
         }
-        let idx = self.stickies.iter().position(|t| t == topic);
+        let idx = self.stickies.iter().position(|s| s.topic == topic);
         match (on, idx) {
             (true, None) => {
-                self.stickies.push(topic.to_string());
+                self.stickies
+                    .push(StickyPref::new(topic, StickyViewMode::Raw));
                 true
             }
             (false, Some(i)) => {
@@ -91,6 +167,18 @@ impl ConnectionProfile {
             }
             _ => false,
         }
+    }
+
+    /// Persist Raw/Value/Graph for an existing sticky (returns true if changed).
+    pub fn set_sticky_view_mode(&mut self, topic: &str, mode: StickyViewMode) -> bool {
+        let topic = topic.trim();
+        if let Some(s) = self.stickies.iter_mut().find(|s| s.topic == topic) {
+            if s.view_mode != mode {
+                s.view_mode = mode;
+                return true;
+            }
+        }
+        false
     }
 }
 
@@ -215,6 +303,23 @@ impl ProfileStore {
             let _ = self.save();
         }
     }
+
+    /// Persist a sticky’s Raw/Value/Graph mode and save to disk.
+    pub fn set_sticky_view_mode_and_save(
+        &mut self,
+        profile_id: &str,
+        topic: &str,
+        mode: StickyViewMode,
+    ) {
+        let changed = self
+            .profiles
+            .get_mut(profile_id)
+            .map(|p| p.set_sticky_view_mode(topic, mode))
+            .unwrap_or(false);
+        if changed {
+            let _ = self.save();
+        }
+    }
 }
 
 #[cfg(test)]
@@ -237,9 +342,30 @@ mod tests {
         assert!(loaded.profiles["local"].stickies.is_empty());
 
         store.profiles.get_mut("local").unwrap().set_sticky("sensors/temp", true);
+        store
+            .profiles
+            .get_mut("local")
+            .unwrap()
+            .set_sticky_view_mode("sensors/temp", StickyViewMode::Value);
         store.save_to(&path).unwrap();
         let loaded2 = ProfileStore::load_from(&path);
-        assert_eq!(loaded2.profiles["local"].stickies, vec!["sensors/temp".to_string()]);
+        assert_eq!(
+            loaded2.profiles["local"].stickies,
+            vec![StickyPref::new("sensors/temp", StickyViewMode::Value)]
+        );
+
+        // Legacy bare-string stickies still load as Raw.
+        let legacy = dir.join("legacy.json");
+        fs::write(
+            &legacy,
+            r#"{"profiles":[{"id":"x","name":"X","host":"h","port":1883,"client_id":"c","stickies":["a/b"]}]}"#,
+        )
+        .unwrap();
+        let legacy_store = ProfileStore::load_from(&legacy);
+        assert_eq!(
+            legacy_store.profiles["x"].stickies,
+            vec![StickyPref::new("a/b", StickyViewMode::Raw)]
+        );
         let _ = fs::remove_dir_all(&dir);
     }
 }
