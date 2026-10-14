@@ -17,10 +17,11 @@ use crate::ui::profiles::ProfileListFilter;
 use crate::ui::search_bar::SearchFilter;
 use crate::ui::shortcuts::{self, Action as ShortcutAction};
 use crate::ui::{
-    pin_board, profiles, publish_panel, search_bar, settings_panel, topic_tree_panel, traffic_panel,
+    payload_panel, pin_board, profiles, publish_panel, search_bar, settings_panel, topic_tree_panel,
+    traffic_panel,
 };
 use crate::ui::flash;
-use eframe::egui::{self, Color32, FontId, RichText, TextStyle, TextureHandle, ViewportBuilder, ViewportId};
+use eframe::egui::{self, Color32, FontId, RichText, TextStyle, TextureHandle};
 use image::RgbaImage;
 use std::collections::BTreeMap;
 use std::time::Instant;
@@ -39,6 +40,8 @@ struct PanelVisibility {
     topic_tree: bool,
     /// Off by default — only when publishing.
     publish: bool,
+    /// Off by default — Value view for the selected tree topic.
+    payload: bool,
 }
 
 impl Default for PanelVisibility {
@@ -49,6 +52,7 @@ impl Default for PanelVisibility {
             stickies: true,
             topic_tree: true,
             publish: false,
+            payload: false,
         }
     }
 }
@@ -177,6 +181,9 @@ impl MqttMonitorApp {
                 }
                 ShortcutAction::TogglePublish => {
                     self.panels.publish = !self.panels.publish;
+                }
+                ShortcutAction::TogglePayload => {
+                    self.panels.payload = !self.panels.payload;
                 }
                 ShortcutAction::ToggleStickies => {
                     self.panels.stickies = !self.panels.stickies;
@@ -450,7 +457,7 @@ impl MqttMonitorApp {
 
                     icons::ribbon_separator(ui);
 
-                    // Panels: Traffic / Publish / Stickies / Tree
+                    // Panels: Traffic / Publish / Payload / Stickies / Tree
                     icons::ribbon_group(ui, "Panels", TINT_PANELS, |ui| {
                         if self
                             .icons
@@ -477,6 +484,19 @@ impl MqttMonitorApp {
                             .clicked()
                         {
                             self.panels.publish = !self.panels.publish;
+                        }
+                        if self
+                            .icons
+                            .command(
+                                ui,
+                                "panel_docked",
+                                "Payload",
+                                self.panels.payload,
+                                &shortcuts::tip("Payload panel", "Ctrl+Shift+L"),
+                            )
+                            .clicked()
+                        {
+                            self.panels.payload = !self.panels.payload;
                         }
                         if self
                             .icons
@@ -715,18 +735,17 @@ impl eframe::App for MqttMonitorApp {
                 });
         }
 
+        // Settings — centered modal overlay (same family as shortcuts Window; Escape / outside closes).
         if self.settings_open {
-            let mut close = false;
             let mut status = self.status.clone();
             let mut open_shortcuts = false;
-            ctx.show_viewport_immediate(
-                ViewportId::from_hash_of("mqtt_master_settings"),
-                ViewportBuilder::default()
-                    .with_title("MQTT Master — Settings")
-                    .with_inner_size([460.0, 480.0])
-                    .with_resizable(true),
-                |ctx, _class| {
-                    egui::CentralPanel::default().show(ctx, |ui| {
+            let mut close_clicked = false;
+            let modal = egui::Modal::new(egui::Id::new("mqtt_master_settings")).show(ctx, |ui| {
+                ui.set_min_width(420.0);
+                ui.set_max_width(480.0);
+                egui::ScrollArea::vertical()
+                    .max_height(520.0)
+                    .show(ui, |ui| {
                         settings_panel::draw(
                             ui,
                             &mut self.settings,
@@ -735,16 +754,21 @@ impl eframe::App for MqttMonitorApp {
                             &mut open_shortcuts,
                         );
                     });
-                    if ctx.input(|i| i.viewport().close_requested()) {
-                        close = true;
-                    }
-                },
-            );
+                ui.add_space(8.0);
+                ui.separator();
+                ui.horizontal(|ui| {
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui.button("Close").clicked() {
+                            close_clicked = true;
+                        }
+                    });
+                });
+            });
             self.status = status;
             if open_shortcuts {
                 self.shortcuts_open = true;
             }
-            if close {
+            if close_clicked || modal.should_close() {
                 self.settings_open = false;
             }
         }
@@ -790,6 +814,23 @@ impl eframe::App for MqttMonitorApp {
                         &self.profiles,
                         &self.icons,
                         &mut self.status,
+                    );
+                });
+        }
+
+        if self.panels.payload {
+            egui::SidePanel::right("payload")
+                .default_width(320.0)
+                .min_width(220.0)
+                .width_range(220.0..=560.0)
+                .resizable(true)
+                .show(ctx, |ui| {
+                    payload_panel::draw(
+                        ui,
+                        &self.sessions,
+                        &self.profiles,
+                        &self.pins,
+                        &self.icons,
                     );
                 });
         }

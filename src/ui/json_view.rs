@@ -83,13 +83,15 @@ pub fn payload_preview_job(payload: &str, max_chars: usize, font_size: f32) -> L
 }
 
 /// Draw pretty JSON left-aligned with syntax colors. `id_salt` must be unique per row.
-pub fn draw_pretty(ui: &mut egui::Ui, pretty: &str, id_salt: impl Hash) {
+/// `max_height`: `None` fills available height (Payload panel); sticky cards pass a cap.
+pub fn draw_pretty(ui: &mut egui::Ui, pretty: &str, id_salt: impl Hash, max_height: Option<f32>) {
     let font_size = ui.text_style_height(&egui::TextStyle::Monospace);
+    let height = max_height.unwrap_or_else(|| ui.available_height().max(80.0));
     ui.with_layout(Layout::top_down(Align::LEFT), |ui| {
         ui.label(egui::RichText::new("JSON").small().weak());
         egui::ScrollArea::vertical()
             .id_salt(id_salt)
-            .max_height(220.0)
+            .max_height(height)
             .auto_shrink([false, false])
             .show(ui, |ui| {
                 ui.set_max_width(ui.available_width());
@@ -110,7 +112,7 @@ pub fn draw_pretty(ui: &mut egui::Ui, pretty: &str, id_salt: impl Hash) {
 #[allow(dead_code)]
 pub fn hover_payload(ui: &mut egui::Ui, payload: &str, id_salt: impl Hash) {
     if let Some(pretty) = try_pretty_json(payload) {
-        draw_pretty(ui, &pretty, id_salt);
+        draw_pretty(ui, &pretty, id_salt, Some(220.0));
     } else {
         hover_payload_body(ui, payload);
     }

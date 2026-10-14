@@ -13,6 +13,10 @@ use crate::ui::shortcuts;
 use eframe::egui::{self, Color32, RichText};
 use std::time::Instant;
 
+/// Soft fill behind the selected tree row (Payload panel target).
+fn select_fill() -> Color32 {
+    Color32::from_rgba_unmultiplied(56, 100, 160, 70)
+}
 
 pub fn draw(
     ui: &mut egui::Ui,
@@ -42,7 +46,7 @@ pub fn draw(
         }
     });
     ui.label("Per connected broker — colored heading, then that broker’s topics.");
-    ui.weak("Double-click a parent to expand/collapse its whole subtree.");
+    ui.weak("Double-click a parent to expand/collapse its whole subtree. Single-click selects for Payload.");
     ui.add_space(4.0);
 
     let connected: Vec<&Session> = sessions
@@ -110,6 +114,20 @@ pub fn draw(
 /// Stable id for a tree collapsing node (independent of UI nesting).
 fn tree_id(profile_id: &str, path: &str) -> egui::Id {
     egui::Id::new(("topic-tree", profile_id, path))
+}
+
+fn is_selected(pins: &PinBoard, profile_id: &str, topic: &str) -> bool {
+    pins.last_tree_focus
+        .as_ref()
+        .is_some_and(|(pid, _, t)| pid == profile_id && t == topic)
+}
+
+fn select_topic(pins: &mut PinBoard, profile_id: &str, profile_name: &str, topic: &str) {
+    pins.last_tree_focus = Some((
+        profile_id.to_string(),
+        profile_name.to_string(),
+        topic.to_string(),
+    ));
 }
 
 /// Recursively set open/closed for every collapsing descendant under `node`.
@@ -206,22 +224,37 @@ fn draw_node(
                 }
                 let was_open = state.is_open();
                 let subtree = child.subtree_message_count();
+                let selected = is_selected(pins, profile_id, &child_path);
 
                 let (toggle_resp, header_resp, _) = state
                     .show_header(ui, |ui| {
-                        // Sense click so double-click on the topic text toggles expand.
-                        ui.add(
-                            egui::Label::new(RichText::new(segment).strong())
-                                .sense(egui::Sense::click()),
-                        );
+                        // selectable(false) — text-selection blue must not steal double-click.
+                        let label_resp = egui::Frame::NONE
+                            .fill(if selected {
+                                select_fill()
+                            } else {
+                                Color32::TRANSPARENT
+                            })
+                            .inner_margin(egui::Margin::symmetric(3, 1))
+                            .corner_radius(2.0)
+                            .show(ui, |ui| {
+                                ui.add(
+                                    egui::Label::new(RichText::new(segment).strong())
+                                        .sense(egui::Sense::click())
+                                        .selectable(false),
+                                )
+                            })
+                            .inner;
                         if !was_open && subtree > 0 {
                             ui.add(
                                 egui::Label::new(
                                     RichText::new(format!("#{subtree}")).small().weak(),
                                 )
-                                .sense(egui::Sense::click()),
+                                .sense(egui::Sense::click())
+                                .selectable(false),
                             );
                         }
+                        label_resp
                     })
                     .body(|ui| {
                         if is_leaf_msg {
@@ -263,9 +296,16 @@ fn draw_node(
                         );
                     });
 
-                // Double-click topic row (header text or ▶) → toggle this node + subtree.
-                if header_resp.response.double_clicked() || toggle_resp.double_clicked() {
+                let label_resp = &header_resp.inner;
+                // Double-click: label/header → !was_open; ▶ arrow already toggled twice
+                // across the gesture (net zero), so apply was_open (== !open_at_gesture_start).
+                if label_resp.double_clicked() || header_resp.response.double_clicked() {
                     apply_tree_toggle(ui.ctx(), id, !was_open, profile_id, &child_path, child);
+                } else if toggle_resp.double_clicked() {
+                    apply_tree_toggle(ui.ctx(), id, was_open, profile_id, &child_path, child);
+                } else if label_resp.clicked() {
+                    // Single-click selects for Payload (does not toggle expand).
+                    select_topic(pins, profile_id, profile_name, &child_path);
                 }
             } else {
                 leaf_row(
@@ -326,145 +366,146 @@ fn leaf_row(
     toggle_parent: Option<ToggleParent<'_>>,
 ) {
     let mut dbl = false;
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 4.0;
+    let selected = is_selected(pins, profile_id, full_topic);
+    let row_fill = if selected {
+        select_fill()
+    } else {
+        Color32::TRANSPARENT
+    };
 
-        // Left: copy-topic (topic_tags) + sticky toggle (always visible).
-        if icons
-            .tiny(ui, "topic_tags", false, "Copy topic")
-            .clicked()
-        {
-            ui.ctx().copy_text(full_topic.to_string());
-            *status = format!("Copied topic: {full_topic}");
-        }
+    egui::Frame::NONE.fill(row_fill).show(ui, |ui| {
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 4.0;
 
-        let sticky = pins.is_sticky(profile_id, full_topic);
-        let sticky_tip = shortcuts::tip(
-            if sticky {
-                "Remove sticky"
-            } else {
-                "Pin sticky"
-            },
-            "Ctrl+Shift+S",
-        );
-        if icons
-            .tiny(ui, "sticky_topic", sticky, &sticky_tip)
-            .clicked()
-        {
-            pins.last_tree_focus = Some((
-                profile_id.to_string(),
-                profile_name.to_string(),
-                full_topic.to_string(),
-            ));
-            if sticky {
-                pins.unpin(profile_id, full_topic);
-                profiles.set_sticky_and_save(profile_id, full_topic, false);
-            } else {
-                pins.pin(profile_id, profile_name, full_topic);
-                profiles.set_sticky_and_save(profile_id, full_topic, true);
-                if let Some(payload) = &node.last_payload {
-                    if let Some(s) = pins.items.get_mut(&PinBoard::key(profile_id, full_topic)) {
-                        s.last_payload = payload.clone();
-                        s.message_count = node.message_count;
+            // Left: copy-topic (topic_tags) + sticky toggle (always visible).
+            if icons
+                .tiny(ui, "topic_tags", false, "Copy topic")
+                .clicked()
+            {
+                ui.ctx().copy_text(full_topic.to_string());
+                *status = format!("Copied topic: {full_topic}");
+            }
+
+            let sticky = pins.is_sticky(profile_id, full_topic);
+            let sticky_tip = shortcuts::tip(
+                if sticky {
+                    "Remove sticky"
+                } else {
+                    "Pin sticky"
+                },
+                "Ctrl+Shift+S",
+            );
+            if icons
+                .tiny(ui, "sticky_topic", sticky, &sticky_tip)
+                .clicked()
+            {
+                select_topic(pins, profile_id, profile_name, full_topic);
+                if sticky {
+                    pins.unpin(profile_id, full_topic);
+                    profiles.set_sticky_and_save(profile_id, full_topic, false);
+                } else {
+                    pins.pin(profile_id, profile_name, full_topic);
+                    profiles.set_sticky_and_save(profile_id, full_topic, true);
+                    if let Some(payload) = &node.last_payload {
+                        if let Some(s) = pins.items.get_mut(&PinBoard::key(profile_id, full_topic)) {
+                            s.last_payload = payload.clone();
+                            s.message_count = node.message_count;
+                        }
                     }
                 }
             }
-        }
 
-        let payload = node.last_payload.as_deref().unwrap_or("");
-        let show_copy_payload = !payload.is_empty();
-        let count_reserve = if node.message_count > 0 { 28.0 } else { 0.0 };
-        let width = (ui.available_width() - count_reserve).max(48.0);
+            let payload = node.last_payload.as_deref().unwrap_or("");
+            let show_copy_payload = !payload.is_empty();
+            let count_reserve = if node.message_count > 0 { 28.0 } else { 0.0 };
+            let width = (ui.available_width() - count_reserve).max(48.0);
 
-        // Middle: gray topic · = · copy-payload · highlighted data (clip like icons).
-        ui.allocate_ui_with_layout(
-            egui::vec2(width, ui.spacing().interact_size.y),
-            egui::Layout::left_to_right(egui::Align::Center),
-            |ui| {
-                ui.set_clip_rect(ui.clip_rect().intersect(ui.max_rect()));
-                ui.spacing_mut().item_spacing.x = 2.0;
+            // Middle: gray topic · = · copy-payload · highlighted data (clip like icons).
+            ui.allocate_ui_with_layout(
+                egui::vec2(width, ui.spacing().interact_size.y),
+                egui::Layout::left_to_right(egui::Align::Center),
+                |ui| {
+                    ui.set_clip_rect(ui.clip_rect().intersect(ui.max_rect()));
+                    ui.spacing_mut().item_spacing.x = 2.0;
 
-                let topic_resp = ui.add(
-                    egui::Label::new(
-                        RichText::new(label)
-                            .monospace()
-                            .color(json_view::C_TOPIC),
-                    )
-                    .sense(egui::Sense::click()),
-                );
-                if topic_resp.double_clicked() {
-                    dbl = true;
-                }
-                if topic_resp.clicked() {
-                    pins.last_tree_focus = Some((
-                        profile_id.to_string(),
-                        profile_name.to_string(),
-                        full_topic.to_string(),
-                    ));
-                }
-                // Full path hover — stays open under wheel; scrolls when tall.
-                scrollable_hover(ui, &topic_resp, egui::Id::new(("topic-tip", profile_id, full_topic)), |ui| {
-                    ui.label(RichText::new(full_topic).monospace());
-                });
-
-                if show_copy_payload {
-                    ui.label(RichText::new("=").monospace().color(json_view::C_TOPIC));
-                    if icons
-                        .tiny(ui, "clipboard_checklist", false, "Copy payload")
-                        .clicked()
-                    {
-                        let copy = json_view::try_pretty_json(payload)
-                            .unwrap_or_else(|| payload.to_string());
-                        ui.ctx().copy_text(copy);
-                        *status = "Copied payload".into();
-                    }
-
-                    // Complex JSON → syntax highlight; simple values → profile accent.
-                    let accent = profiles
-                        .profiles
-                        .get(profile_id)
-                        .map(|p| p.color())
-                        .unwrap_or(Color32::from_rgb(90, 190, 120));
-                    let used = label.len() as f32 * 7.0 + 36.0;
-                    let max_chars = ((ui.available_width() - used).max(40.0) / 7.0) as usize;
-                    let max_chars = max_chars.max(12);
-                    let is_complex = json_view::try_pretty_json(payload).is_some();
-                    let data_resp = if is_complex {
-                        let font_size = ui.text_style_height(&egui::TextStyle::Monospace);
-                        let job = json_view::payload_preview_job(payload, max_chars, font_size);
-                        ui.add(egui::Label::new(job).sense(egui::Sense::click()))
-                    } else {
-                        let line = json_view::preview_line(payload, max_chars);
-                        ui.add(
-                            egui::Label::new(RichText::new(line).monospace().color(accent))
-                                .sense(egui::Sense::click()),
+                    let topic_resp = ui.add(
+                        egui::Label::new(
+                            RichText::new(label)
+                                .monospace()
+                                .color(json_view::C_TOPIC),
                         )
-                    };
-                    if data_resp.double_clicked() {
-                        dbl = true;
-                    }
-                    if data_resp.clicked() {
-                        pins.last_tree_focus = Some((
-                            profile_id.to_string(),
-                            profile_name.to_string(),
-                            full_topic.to_string(),
-                        ));
-                    }
-                    scrollable_hover(
-                        ui,
-                        &data_resp,
-                        egui::Id::new(("tree-tip", profile_id, full_topic)),
-                        |ui| {
-                            json_view::hover_payload_body(ui, payload);
-                        },
+                        .sense(egui::Sense::click())
+                        .selectable(false),
                     );
-                }
-            },
-        );
+                    if topic_resp.double_clicked() {
+                        dbl = true;
+                    } else if topic_resp.clicked() {
+                        select_topic(pins, profile_id, profile_name, full_topic);
+                    }
+                    // Full path hover — stays open under wheel; scrolls when tall.
+                    scrollable_hover(ui, &topic_resp, egui::Id::new(("topic-tip", profile_id, full_topic)), |ui| {
+                        ui.label(RichText::new(full_topic).monospace());
+                    });
 
-        if node.message_count > 0 {
-            ui.label(RichText::new(format!("#{}", node.message_count)).small().weak());
-        }
+                    if show_copy_payload {
+                        ui.label(RichText::new("=").monospace().color(json_view::C_TOPIC));
+                        if icons
+                            .tiny(ui, "clipboard_checklist", false, "Copy payload")
+                            .clicked()
+                        {
+                            let copy = json_view::try_pretty_json(payload)
+                                .unwrap_or_else(|| payload.to_string());
+                            ui.ctx().copy_text(copy);
+                            *status = "Copied payload".into();
+                        }
+
+                        // Complex JSON → syntax highlight; simple values → profile accent.
+                        let accent = profiles
+                            .profiles
+                            .get(profile_id)
+                            .map(|p| p.color())
+                            .unwrap_or(Color32::from_rgb(90, 190, 120));
+                        let used = label.len() as f32 * 7.0 + 36.0;
+                        let max_chars = ((ui.available_width() - used).max(40.0) / 7.0) as usize;
+                        let max_chars = max_chars.max(12);
+                        let is_complex = json_view::try_pretty_json(payload).is_some();
+                        let data_resp = if is_complex {
+                            let font_size = ui.text_style_height(&egui::TextStyle::Monospace);
+                            let job = json_view::payload_preview_job(payload, max_chars, font_size);
+                            ui.add(
+                                egui::Label::new(job)
+                                    .sense(egui::Sense::click())
+                                    .selectable(false),
+                            )
+                        } else {
+                            let line = json_view::preview_line(payload, max_chars);
+                            ui.add(
+                                egui::Label::new(RichText::new(line).monospace().color(accent))
+                                    .sense(egui::Sense::click())
+                                    .selectable(false),
+                            )
+                        };
+                        if data_resp.double_clicked() {
+                            dbl = true;
+                        } else if data_resp.clicked() {
+                            select_topic(pins, profile_id, profile_name, full_topic);
+                        }
+                        scrollable_hover(
+                            ui,
+                            &data_resp,
+                            egui::Id::new(("tree-tip", profile_id, full_topic)),
+                            |ui| {
+                                json_view::hover_payload_body(ui, payload);
+                            },
+                        );
+                    }
+                },
+            );
+
+            if node.message_count > 0 {
+                ui.label(RichText::new(format!("#{}", node.message_count)).small().weak());
+            }
+        });
     });
 
     // Double-click payload row of a branch node → same expand/collapse as its header.
@@ -479,7 +520,7 @@ fn leaf_row(
 /// Stays open under wheel; wheel scrolls popup content; moving a few pixels onto
 /// the popup (or the gap) does not open tips for rows underneath.
 fn scrollable_hover(
-    ui: &egui::Ui,
+    ui: &mut egui::Ui,
     resp: &egui::Response,
     id: egui::Id,
     add_contents: impl FnOnce(&mut egui::Ui),

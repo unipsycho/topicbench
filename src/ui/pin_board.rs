@@ -260,12 +260,24 @@ fn draw_raw(ui: &mut egui::Ui, pin: &StickyTopic, sticky_key: &str) {
 }
 
 fn draw_value(ui: &mut egui::Ui, pin: &StickyTopic, sticky_key: &str) {
-    if let Some(pretty) = json_view::try_pretty_json(&pin.last_payload) {
-        json_view::draw_pretty(ui, &pretty, ("sticky-json", sticky_key));
+    // Sticky cards cap JSON height; Payload panel passes None for full height.
+    draw_value_payload(ui, &pin.last_payload, ("sticky-json", sticky_key), Some(220.0));
+}
+
+/// Shared sticky **Value** view (pretty JSON / bool / number / string).
+/// `max_json_height`: `None` fills remaining panel height.
+pub fn draw_value_payload(
+    ui: &mut egui::Ui,
+    payload: &str,
+    id_salt: impl std::hash::Hash,
+    max_json_height: Option<f32>,
+) {
+    if let Some(pretty) = json_view::try_pretty_json(payload) {
+        json_view::draw_pretty(ui, &pretty, id_salt, max_json_height);
         return;
     }
 
-    match DetectedValue::from_payload(&pin.last_payload) {
+    match DetectedValue::from_payload(payload) {
         DetectedValue::Bool(on) => {
             ui.label(RichText::new("Boolean").small().weak());
             let label = if on { "ON" } else { "OFF" };

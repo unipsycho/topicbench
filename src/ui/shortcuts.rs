@@ -32,6 +32,10 @@ pub const BINDINGS: &[Binding] = &[
         action: "Toggle Publish panel",
     },
     Binding {
+        keys: "Ctrl+Shift+L",
+        action: "Toggle Payload panel",
+    },
+    Binding {
         keys: "Ctrl+Shift+K",
         action: "Toggle Stickies panel",
     },
@@ -107,6 +111,7 @@ pub enum Action {
     ToggleProfiles,
     ToggleTraffic,
     TogglePublish,
+    TogglePayload,
     ToggleStickies,
     ToggleTopicTree,
     ZoomIn,
@@ -147,6 +152,9 @@ pub fn consume(ctx: &egui::Context) -> Vec<Action> {
         }
         if chord(i, cmd_shift, Key::U) {
             out.push(Action::TogglePublish);
+        }
+        if chord(i, cmd_shift, Key::L) {
+            out.push(Action::TogglePayload);
         }
         if chord(i, cmd_shift, Key::K) {
             out.push(Action::ToggleStickies);
