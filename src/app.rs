@@ -10,8 +10,7 @@ use crate::mqtt::session::SessionManager;
 use crate::mqtt::settings::AppSettings;
 use crate::mqtt::subscribe;
 use crate::ui::icons::{
-    self, IconSet, CHROME_BG, CHROME_SEP, CHROME_TEXT, STATUS_BG, TINT_APP, TINT_PANELS,
-    TINT_PROFILES,
+    self, IconSet, CHROME_BG, CHROME_SEP, CHROME_TEXT, TINT_APP, TINT_PANELS, TINT_PROFILES,
 };
 use crate::ui::profiles::ProfileListFilter;
 use crate::ui::search_bar::SearchFilter;
@@ -669,13 +668,13 @@ impl MqttMonitorApp {
                 });
             });
 
-        // Dark status strip under the ribbon.
+        // Status strip: same cool charcoal as ribbon (not a deeper neutral band).
         egui::TopBottomPanel::top("status_strip")
             .exact_height(24.0)
             .show_separator_line(false)
             .frame(
                 egui::Frame::NONE
-                    .fill(STATUS_BG)
+                    .fill(CHROME_BG)
                     .inner_margin(egui::Margin::symmetric(10, 3))
                     .stroke(egui::Stroke::new(1.0_f32, CHROME_SEP)),
             )
@@ -768,10 +767,9 @@ fn integer_box_downscale(src: &RgbaImage, factor: u32) -> RgbaImage {
 }
 
 impl eframe::App for MqttMonitorApp {
-    /// Opaque clear — default eframe clear is semi-transparent and shows the desktop
-    /// through any uncovered strip (e.g. SidePanel dragged past its content).
+    /// Opaque clear — match ribbon chrome (not egui gray(27) / transparent desktop).
     fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
-        Color32::from_rgb(27, 27, 27).to_normalized_gamma_f32()
+        CHROME_BG.to_normalized_gamma_f32()
     }
 
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
