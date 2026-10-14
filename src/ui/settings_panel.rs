@@ -92,6 +92,14 @@ pub fn draw(ui: &mut egui::Ui, settings: &mut AppSettings, icons: &IconSet, stat
     }
 
     ui.add_space(12.0);
+    ui.strong("Font zoom");
+    ui.label(format!(
+        "Step {} (range −2…+3). Change with Zoom− / Zoom+ on the ribbon.",
+        settings.font_zoom_step
+    ));
+    ui.weak("Scales egui text styles app-wide; persisted with other settings.");
+
+    ui.add_space(12.0);
     ui.strong("MQTT");
     ui.horizontal(|ui| {
         ui.label("Max packet size");

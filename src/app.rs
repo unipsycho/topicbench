@@ -9,13 +9,18 @@ use crate::mqtt::publish::PublishDraft;
 use crate::mqtt::session::SessionManager;
 use crate::mqtt::settings::AppSettings;
 use crate::mqtt::subscribe;
-use crate::ui::icons::{self, IconSet, CHROME_BG, CHROME_SEP, CHROME_TEXT, STATUS_BG};
+use crate::ui::icons::{
+    self, IconSet, CHROME_BG, CHROME_SEP, CHROME_TEXT, STATUS_BG, TINT_APP, TINT_PANELS,
+    TINT_PROFILES,
+};
 use crate::ui::profiles::ProfileListFilter;
 use crate::ui::search_bar::SearchFilter;
 use crate::ui::{
     pin_board, profiles, publish_panel, search_bar, settings_panel, topic_tree_panel, traffic_panel,
 };
-use eframe::egui::{self, Color32, RichText, TextureHandle, ViewportBuilder, ViewportId};
+use eframe::egui::{self, Color32, FontId, RichText, TextStyle, TextureHandle, ViewportBuilder, ViewportId};
+use image::RgbaImage;
+use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
 
 /// Which optional panels are visible (ribbon toggles).
@@ -69,6 +74,7 @@ impl MqttMonitorApp {
         let profiles = ProfileStore::load_or_sample();
         let settings = AppSettings::load();
         let status = profiles.last_io.clone();
+        apply_font_zoom(&cc.egui_ctx, settings.font_zoom_factor());
         let logo = load_logo(&cc.egui_ctx);
         let icons = IconSet::load(&cc.egui_ctx);
         Self {
@@ -141,10 +147,9 @@ impl MqttMonitorApp {
                 ui.with_layout(egui::Layout::left_to_right(egui::Align::Min), |ui| {
                     ui.spacing_mut().item_spacing.x = 4.0;
 
-                    // Brand stack: title above AA logo (fixed width, high contrast)
+                    // Brand stack: title above AA logo (integer-scale texture, 1:1 paint)
                     ui.vertical(|ui| {
-                        ui.set_width(118.0);
-                        ui.spacing_mut().item_spacing.y = 2.0;
+                        ui.spacing_mut().item_spacing.y = 0.0;
                         ui.vertical_centered(|ui| {
                             ui.label(
                                 RichText::new("MQTT Monitor")
@@ -152,10 +157,13 @@ impl MqttMonitorApp {
                                     .size(13.0)
                                     .color(Color32::WHITE),
                             );
+                            // Padding under title before logo
+                            ui.add_space(6.0);
                             if let Some(logo) = &self.logo {
+                                let size = logo.size_vec2();
                                 ui.add(
                                     egui::Image::new(logo)
-                                        .fit_to_exact_size(egui::vec2(108.0, 40.0))
+                                        .fit_to_exact_size(size)
                                         .maintain_aspect_ratio(true)
                                         .sense(egui::Sense::hover()),
                                 );
@@ -167,7 +175,7 @@ impl MqttMonitorApp {
                     icons::ribbon_separator(ui);
 
                     // Profiles: New / Save / Delete + Profiles side-panel toggle
-                    icons::ribbon_group(ui, "Profiles", |ui| {
+                    icons::ribbon_group(ui, "Profiles", TINT_PROFILES, |ui| {
                         if self
                             .icons
                             .command(ui, "profile_add", "New", false, "New profile")
@@ -214,7 +222,7 @@ impl MqttMonitorApp {
                     icons::ribbon_separator(ui);
 
                     // Panels: Traffic / Publish / Stickies / Tree
-                    icons::ribbon_group(ui, "Panels", |ui| {
+                    icons::ribbon_group(ui, "Panels", TINT_PANELS, |ui| {
                         if self
                             .icons
                             .command(
@@ -271,8 +279,8 @@ impl MqttMonitorApp {
 
                     icons::ribbon_separator(ui);
 
-                    // Settings — same LTR row (no RTL expand); stays visible after Panels.
-                    icons::ribbon_group(ui, "App", |ui| {
+                    // App: Settings + font zoom (−2…+3 steps from default).
+                    icons::ribbon_group(ui, "App", TINT_APP, |ui| {
                         if self
                             .icons
                             .command(
@@ -285,6 +293,46 @@ impl MqttMonitorApp {
                             .clicked()
                         {
                             self.settings_open = true;
+                        }
+                        if self
+                            .icons
+                            .command(
+                                ui,
+                                "zoom_out",
+                                "Zoom−",
+                                false,
+                                "Decrease font size (−2 steps from default)",
+                            )
+                            .clicked()
+                        {
+                            if self.settings.zoom_font_out() {
+                                let _ = self.settings.save();
+                                apply_font_zoom(ctx, self.settings.font_zoom_factor());
+                                self.status = format!(
+                                    "Font zoom {}",
+                                    self.settings.font_zoom_step
+                                );
+                            }
+                        }
+                        if self
+                            .icons
+                            .command(
+                                ui,
+                                "zoom_in",
+                                "Zoom+",
+                                false,
+                                "Increase font size (+3 steps from default)",
+                            )
+                            .clicked()
+                        {
+                            if self.settings.zoom_font_in() {
+                                let _ = self.settings.save();
+                                apply_font_zoom(ctx, self.settings.font_zoom_factor());
+                                self.status = format!(
+                                    "Font zoom {}",
+                                    self.settings.font_zoom_step
+                                );
+                            }
                         }
                     });
                 });
@@ -309,12 +357,83 @@ impl MqttMonitorApp {
     }
 }
 
+/// Apply persisted font zoom to all egui text styles (relative to Style::default()).
+fn apply_font_zoom(ctx: &egui::Context, factor: f32) {
+    let base = egui::Style::default().text_styles;
+    let mut styles: BTreeMap<TextStyle, FontId> = BTreeMap::new();
+    for (style, id) in base {
+        styles.insert(
+            style,
+            FontId::new((id.size * factor).max(8.0), id.family),
+        );
+    }
+    ctx.style_mut(|s| s.text_styles = styles);
+}
+
+/// Load AA logo at an **integer** 1/N of native pixels (box-average), painted 1:1 — no blurry fractional scale.
 fn load_logo(ctx: &egui::Context) -> Option<TextureHandle> {
     let bytes = include_bytes!("../assets/agile-automation-logo.png");
-    let image = image::load_from_memory(bytes).ok()?.into_rgba8();
-    let size = [image.width() as usize, image.height() as usize];
-    let color = egui::ColorImage::from_rgba_unmultiplied(size, image.as_raw());
-    Some(ctx.load_texture("aa-logo", color, egui::TextureOptions::LINEAR))
+    let raw = image::load_from_memory(bytes).ok()?.into_rgba8();
+    let (w, h) = raw.dimensions();
+    // Fit ~40px tall brand slot with integer factor only.
+    const MAX_H: u32 = 40;
+    let factor = (h / MAX_H).max(1);
+    let cw = (w / factor) * factor;
+    let ch = (h / factor) * factor;
+    let ox = (w - cw) / 2;
+    let oy = (h - ch) / 2;
+    let cropped = image::imageops::crop_imm(&raw, ox, oy, cw, ch).to_image();
+    let logo = integer_box_downscale(&cropped, factor);
+    let size = [logo.width() as usize, logo.height() as usize];
+    let color = egui::ColorImage::from_rgba_unmultiplied(size, logo.as_raw());
+    // NEAREST keeps integer-scale glyphs crisp when DPI is 1× / 2×.
+    Some(ctx.load_texture(
+        "aa-logo",
+        color,
+        egui::TextureOptions {
+            magnification: egui::TextureFilter::Nearest,
+            minification: egui::TextureFilter::Nearest,
+            ..egui::TextureOptions::LINEAR
+        },
+    ))
+}
+
+fn integer_box_downscale(src: &RgbaImage, factor: u32) -> RgbaImage {
+    if factor <= 1 {
+        return src.clone();
+    }
+    let w = src.width() / factor;
+    let h = src.height() / factor;
+    let mut out = RgbaImage::new(w, h);
+    let area = (factor * factor) as u32;
+    for y in 0..h {
+        for x in 0..w {
+            let mut r = 0u32;
+            let mut g = 0u32;
+            let mut b = 0u32;
+            let mut a = 0u32;
+            for dy in 0..factor {
+                for dx in 0..factor {
+                    let p = src.get_pixel(x * factor + dx, y * factor + dy).0;
+                    r += p[0] as u32;
+                    g += p[1] as u32;
+                    b += p[2] as u32;
+                    a += p[3] as u32;
+                }
+            }
+            out.put_pixel(
+                x,
+                y,
+                image::Rgba([
+                    (r / area) as u8,
+                    (g / area) as u8,
+                    (b / area) as u8,
+                    (a / area) as u8,
+                ]),
+            );
+        }
+    }
+    out
 }
 
 impl eframe::App for MqttMonitorApp {

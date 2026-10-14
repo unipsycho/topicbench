@@ -6,19 +6,24 @@
 //! Source PNGs are 512²; we Lanczos-downsample to [`ICON_TEX_PX`] (2× ribbon glyph)
 //! before upload so GPU scaling stays crisp (≈2:1 / 1:1 with DPI) instead of 512→36.
 
-use eframe::egui::{self, Color32, RichText, Sense, Stroke, TextureHandle, Vec2};
+use eframe::egui::{self, Color32, FontId, Sense, Stroke, TextureHandle, Vec2};
+use eframe::epaint::TextShape;
 use image::imageops::FilterType;
 use image::RgbaImage;
 use std::collections::HashMap;
+use std::f32::consts::FRAC_PI_2;
 
 /// Large ribbon glyph (logical px — same for New/Save/Delete/Settings/Panels).
 const CMD_ICON: f32 = 36.0;
-const CMD_W: f32 = 56.0;
-const CMD_H: f32 = 58.0;
+/// Slightly tighter horizontal; taller cell for caption bottom clearance.
+const CMD_W: f32 = 52.0;
+const CMD_H: f32 = 64.0;
 /// Dense topic-tree / inline action icons.
 const TINY_ICON: f32 = 14.0;
 /// Uploaded texture edge: 2× [`CMD_ICON`] for sharp HiDPI + clean half-scale at 1×.
 const ICON_TEX_PX: u32 = 72;
+/// Left rail width for rotated section labels.
+const SECTION_RAIL_W: f32 = 18.0;
 
 /// Dark chrome tokens.
 pub const CHROME_BG: Color32 = Color32::from_rgb(40, 42, 48);
@@ -29,6 +34,10 @@ pub const CHROME_ACCENT_BORDER: Color32 = Color32::from_rgb(100, 160, 220);
 pub const CHROME_CAPTION: Color32 = Color32::from_rgb(170, 176, 188);
 pub const CHROME_TEXT: Color32 = Color32::from_rgb(230, 232, 238);
 pub const STATUS_BG: Color32 = Color32::from_rgb(28, 30, 36);
+/// Subtle per-section ribbon tints (solid, slightly lifted from chrome bg).
+pub const TINT_PROFILES: Color32 = Color32::from_rgb(48, 56, 70);
+pub const TINT_PANELS: Color32 = Color32::from_rgb(46, 60, 52);
+pub const TINT_APP: Color32 = Color32::from_rgb(62, 52, 48);
 
 pub struct IconSet {
     textures: HashMap<&'static str, TextureHandle>,
@@ -84,11 +93,12 @@ impl IconSet {
             img.paint_at(ui, img_rect);
         }
 
+        // Caption with a few px clearance above the cell bottom (avoids section chrome collision).
         ui.painter().text(
-            egui::pos2(rect.center().x, rect.bottom() - 6.0),
+            egui::pos2(rect.center().x, rect.bottom() - 10.0),
             egui::Align2::CENTER_CENTER,
             label,
-            egui::FontId::proportional(11.0),
+            FontId::proportional(11.0),
             if selected {
                 Color32::from_rgb(180, 210, 255)
             } else {
@@ -139,23 +149,57 @@ impl IconSet {
     }
 }
 
-/// Content-sized ribbon group. Critical: shrink-wrap so later groups are not clipped to 0 width.
-pub fn ribbon_group(ui: &mut egui::Ui, caption: &str, add_contents: impl FnOnce(&mut egui::Ui)) {
-    ui.vertical(|ui| {
-        ui.spacing_mut().item_spacing.y = 1.0;
-        ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = 2.0;
-            add_contents(ui);
+/// Content-sized ribbon group: tinted panel + 90° section label on the left rail.
+/// Shrink-wraps so later groups are not clipped to 0 width.
+pub fn ribbon_group(
+    ui: &mut egui::Ui,
+    caption: &str,
+    tint: Color32,
+    add_contents: impl FnOnce(&mut egui::Ui),
+) {
+    egui::Frame::NONE
+        .fill(tint)
+        .corner_radius(3.0)
+        .inner_margin(egui::Margin::symmetric(4, 3))
+        .show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 4.0;
+                // Left rail: rotated section name
+                let rail = Vec2::new(SECTION_RAIL_W, CMD_H);
+                let (rail_rect, _) = ui.allocate_exact_size(rail, Sense::hover());
+                paint_rotated_section_label(ui, rail_rect, caption);
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 1.0;
+                    add_contents(ui);
+                });
+            });
+            ui.shrink_width_to_current();
         });
-        ui.label(RichText::new(caption).small().color(CHROME_CAPTION));
-        ui.shrink_width_to_current();
+}
+
+/// Paint `caption` rotated −90° (reads upward) centered in `rect`.
+fn paint_rotated_section_label(ui: &mut egui::Ui, rect: egui::Rect, caption: &str) {
+    let galley = ui.fonts(|f| {
+        f.layout_no_wrap(
+            caption.to_owned(),
+            FontId::proportional(11.0),
+            CHROME_CAPTION,
+        )
     });
+    // Pivot at bottom-center of rail; rotate CCW so text runs bottom→top along the edge.
+    let pos = egui::pos2(
+        rect.center().x + galley.size().y * 0.5,
+        rect.center().y + galley.size().x * 0.5,
+    );
+    ui.painter().add(
+        TextShape::new(pos, galley, CHROME_CAPTION).with_angle(-FRAC_PI_2),
+    );
 }
 
 /// 1px vertical rule between groups (content-sized, not expanding).
 pub fn ribbon_separator(ui: &mut egui::Ui) {
     ui.add_space(4.0);
-    let (rect, _) = ui.allocate_exact_size(Vec2::new(1.0, CMD_H + 4.0), Sense::hover());
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(1.0, CMD_H + 6.0), Sense::hover());
     ui.painter().line_segment(
         [rect.center_top(), rect.center_bottom()],
         Stroke::new(1.0_f32, CHROME_SEP),

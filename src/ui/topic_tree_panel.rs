@@ -322,7 +322,8 @@ fn leaf_row(
                     let max_json = ((width / 7.0) as usize)
                         .saturating_sub(label.len() + 3)
                         .max(24);
-                    let job = json_view::row_preview_job(label, payload, max_json);
+                    let font_size = ui.text_style_height(&egui::TextStyle::Monospace);
+                    let job = json_view::row_preview_job(label, payload, max_json, font_size);
                     ui.add(egui::Label::new(job))
                 } else {
                     let line = format!("{label} = {payload}");

@@ -11,6 +11,12 @@ pub const MAX_PACKET_MAX: usize = 256 * 1024;
 /// Default max packet size (64 KB) — above rumqttc’s ~10 KB default.
 pub const MAX_PACKET_DEFAULT: usize = 64 * 1024;
 
+/// Font zoom: 2 steps down, default, 3 steps up.
+pub const FONT_ZOOM_MIN: i8 = -2;
+pub const FONT_ZOOM_MAX: i8 = 3;
+/// Relative size change per zoom step (~10%).
+pub const FONT_ZOOM_STEP_FACTOR: f32 = 0.10;
+
 /// How the topic tree opens by default.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -76,6 +82,9 @@ pub struct AppSettings {
     /// Column count when `sticky_layout` is Columns (clamped 2–4).
     #[serde(default = "default_sticky_columns")]
     pub sticky_columns: u8,
+    /// App-wide font zoom step (−2…+3). 0 = default egui sizes.
+    #[serde(default)]
+    pub font_zoom_step: i8,
 }
 
 fn default_max_packet_bytes() -> usize {
@@ -95,6 +104,7 @@ impl Default for AppSettings {
             max_packet_bytes: MAX_PACKET_DEFAULT,
             sticky_layout: StickyLayoutMode::Rows,
             sticky_columns: 2,
+            font_zoom_step: 0,
         }
     }
 }
@@ -129,6 +139,32 @@ impl AppSettings {
         Self::clamp_sticky_columns(self.sticky_columns) as usize
     }
 
+    pub fn clamp_font_zoom(step: i8) -> i8 {
+        step.clamp(FONT_ZOOM_MIN, FONT_ZOOM_MAX)
+    }
+
+    pub fn font_zoom_factor(&self) -> f32 {
+        1.0 + Self::clamp_font_zoom(self.font_zoom_step) as f32 * FONT_ZOOM_STEP_FACTOR
+    }
+
+    pub fn zoom_font_in(&mut self) -> bool {
+        let next = Self::clamp_font_zoom(self.font_zoom_step.saturating_add(1));
+        if next == self.font_zoom_step {
+            return false;
+        }
+        self.font_zoom_step = next;
+        true
+    }
+
+    pub fn zoom_font_out(&mut self) -> bool {
+        let next = Self::clamp_font_zoom(self.font_zoom_step.saturating_sub(1));
+        if next == self.font_zoom_step {
+            return false;
+        }
+        self.font_zoom_step = next;
+        true
+    }
+
     pub fn load() -> Self {
         let path = Self::path();
         let mut s = match fs::read_to_string(&path) {
@@ -137,6 +173,7 @@ impl AppSettings {
         };
         s.max_packet_bytes = Self::clamp_max_packet(s.max_packet_bytes);
         s.sticky_columns = Self::clamp_sticky_columns(s.sticky_columns);
+        s.font_zoom_step = Self::clamp_font_zoom(s.font_zoom_step);
         s
     }
 
@@ -148,6 +185,7 @@ impl AppSettings {
         let mut clone = self.clone();
         clone.max_packet_bytes = Self::clamp_max_packet(clone.max_packet_bytes);
         clone.sticky_columns = Self::clamp_sticky_columns(clone.sticky_columns);
+        clone.font_zoom_step = Self::clamp_font_zoom(clone.font_zoom_step);
         let text = serde_json::to_string_pretty(&clone).map_err(|e| e.to_string())?;
         fs::write(&path, text).map_err(|e| format!("write {}: {e}", path.display()))
     }
@@ -174,5 +212,20 @@ mod tests {
         assert_eq!(AppSettings::clamp_max_packet(1024), MAX_PACKET_MIN);
         assert_eq!(AppSettings::clamp_max_packet(64 * 1024), 64 * 1024);
         assert_eq!(AppSettings::clamp_max_packet(512 * 1024), MAX_PACKET_MAX);
+    }
+
+    #[test]
+    fn font_zoom_steps() {
+        let mut s = AppSettings::default();
+        assert_eq!(s.font_zoom_step, 0);
+        assert!((s.font_zoom_factor() - 1.0).abs() < f32::EPSILON);
+        for _ in 0..5 {
+            s.zoom_font_in();
+        }
+        assert_eq!(s.font_zoom_step, FONT_ZOOM_MAX);
+        for _ in 0..10 {
+            s.zoom_font_out();
+        }
+        assert_eq!(s.font_zoom_step, FONT_ZOOM_MIN);
     }
 }

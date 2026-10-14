@@ -220,7 +220,8 @@ fn draw_card(
 
 fn draw_raw(ui: &mut egui::Ui, pin: &StickyTopic) {
     ui.label(RichText::new("Raw").small().weak());
-    ui.label(RichText::new(&pin.last_payload).monospace().small());
+    // Match Value/body font size (not Small) — zoom scales TextStyle::Monospace/Body.
+    ui.label(RichText::new(&pin.last_payload).monospace());
 }
 
 fn draw_value(ui: &mut egui::Ui, pin: &StickyTopic, sticky_key: &str) {
