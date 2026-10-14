@@ -348,7 +348,9 @@ fn leaf_row(
             egui::vec2(width, ui.spacing().interact_size.y),
             egui::Layout::left_to_right(egui::Align::Center),
             |ui| {
-                ui.set_clip_rect(ui.max_rect());
+                // Clip to this cell ∩ ScrollArea clip — never expand past the panel
+                // (bare set_clip_rect(max_rect) let LayoutJob text paint over the ribbon).
+                ui.set_clip_rect(ui.clip_rect().intersect(ui.max_rect()));
                 let resp = if payload.is_empty() {
                     ui.add(
                         egui::Label::new(RichText::new(label).monospace())
