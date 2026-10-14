@@ -104,6 +104,11 @@ impl MqttMonitorApp {
             stickies: settings.show_stickies,
             topic_tree: settings.show_topic_tree,
         };
+        // Restore search text + scope so the filter is active as the tree paints.
+        let search = SearchFilter::from_settings(
+            settings.search_query.clone(),
+            settings.search_scope,
+        );
         Self {
             profiles,
             sessions: SessionManager::default(),
@@ -112,7 +117,7 @@ impl MqttMonitorApp {
             publish_history: PublishHistory::load(),
             settings,
             profile_filter: ProfileListFilter::All,
-            search: SearchFilter::default(),
+            search,
             sub_draft: String::new(),
             status,
             logo,
@@ -126,6 +131,15 @@ impl MqttMonitorApp {
             expand_all_once: None,
             auto_reconnect_done: false,
             payload_search: PayloadSearch::default(),
+        }
+    }
+
+    /// Persist search query + scope to settings.json.
+    fn persist_search(&mut self) {
+        self.settings
+            .set_search(&self.search.query, self.search.scope);
+        if let Err(e) = self.settings.save() {
+            self.status = format!("Settings save failed: {e}");
         }
     }
 
@@ -874,7 +888,11 @@ impl eframe::App for MqttMonitorApp {
         }
 
         egui::CentralPanel::default().show(ctx, |ui| {
+            let search_before = (self.search.query.clone(), self.search.scope);
             search_bar::draw(ui, &mut self.search, &mut self.focus_search);
+            if self.search.query != search_before.0 || self.search.scope != search_before.1 {
+                self.persist_search();
+            }
             ui.add_space(6.0);
             ui.separator();
             ui.add_space(6.0);

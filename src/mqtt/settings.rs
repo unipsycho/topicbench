@@ -61,6 +61,26 @@ impl Default for TopicTreeExpandMode {
     }
 }
 
+/// Search bar scope — persisted in settings.json.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum SearchScope {
+    #[default]
+    All,
+    Topics,
+    Payloads,
+}
+
+impl SearchScope {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::All => "All",
+            Self::Topics => "Topics",
+            Self::Payloads => "Payloads",
+        }
+    }
+}
+
 /// How sticky topic cards are arranged.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
@@ -114,6 +134,12 @@ pub struct AppSettings {
     pub show_stickies: bool,
     #[serde(default = "default_true")]
     pub show_topic_tree: bool,
+    /// Search bar text (supports `|` OR terms) — restored on reload.
+    #[serde(default)]
+    pub search_query: String,
+    /// Search scope dropdown — restored on reload.
+    #[serde(default)]
+    pub search_scope: SearchScope,
 }
 
 fn default_true() -> bool {
@@ -144,6 +170,8 @@ impl Default for AppSettings {
             show_payload: false,
             show_stickies: true,
             show_topic_tree: true,
+            search_query: String::new(),
+            search_scope: SearchScope::All,
         }
     }
 }
@@ -259,6 +287,12 @@ impl AppSettings {
         self.show_payload = payload;
         self.show_stickies = stickies;
         self.show_topic_tree = topic_tree;
+    }
+
+    /// Snapshot search bar query + scope (call before save).
+    pub fn set_search(&mut self, query: &str, scope: SearchScope) {
+        self.search_query = query.to_string();
+        self.search_scope = scope;
     }
 
     pub fn remember_connected(&mut self, profile_id: &str, connected: bool) {

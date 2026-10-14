@@ -4,23 +4,7 @@ use crate::ui::hover_tip;
 use crate::ui::shortcuts;
 use eframe::egui;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
-pub enum SearchScope {
-    #[default]
-    All,
-    Topics,
-    Payloads,
-}
-
-impl SearchScope {
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::All => "All",
-            Self::Topics => "Topics",
-            Self::Payloads => "Payloads",
-        }
-    }
-}
+pub use crate::mqtt::settings::SearchScope;
 
 #[derive(Clone, Debug, Default)]
 pub struct SearchFilter {
@@ -29,6 +13,11 @@ pub struct SearchFilter {
 }
 
 impl SearchFilter {
+    /// Restore from settings.json fields (applied at startup before tree paint).
+    pub fn from_settings(query: String, scope: SearchScope) -> Self {
+        Self { query, scope }
+    }
+
     pub fn is_active(&self) -> bool {
         !self.terms().is_empty()
     }
@@ -100,6 +89,14 @@ mod tests {
         };
         assert!(f.matches("chem/x", Some(r#"{"name":"Citric Acid"}"#)));
         assert!(!f.matches("chem/x", Some(r#"{"name":"water"}"#)));
+    }
+
+    #[test]
+    fn from_settings_roundtrip_fields() {
+        let f = SearchFilter::from_settings("a | b".into(), SearchScope::Topics);
+        assert_eq!(f.query, "a | b");
+        assert_eq!(f.scope, SearchScope::Topics);
+        assert!(f.is_active());
     }
 }
 
