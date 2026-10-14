@@ -9,8 +9,10 @@ use eframe::egui::{self, Align, FontId, Sense, Vec2};
 
 /// Fixed text block width — fits `Recv …  Sent …` on one row without wrap jitter.
 const STATS_W: f32 = 148.0;
-/// Compact height: 2 metric rows + 3 projection rows with tight gaps.
-const STATS_H: f32 = 64.0;
+/// Compact height: Recv|Sent + Thru + 3 projection rows (tight mid-gap).
+const STATS_H: f32 = 62.0;
+/// Breath between Thru and projections (~25% of a former blank line).
+const MID_GAP: f32 = 2.0;
 
 /// Draw the far-right Stats ribbon category (process-lifetime counters).
 pub fn draw_group(ui: &mut egui::Ui, stats: &TrafficStats) {
@@ -53,8 +55,8 @@ pub fn draw_group(ui: &mut egui::Ui, stats: &TrafficStats) {
             CHROME_TEXT,
             wrap.clone(),
         );
-        // Tiny gap before projections (tighter than a full blank row).
-        child.add_space(1.0);
+        // Small breath only — do not use expanding nested layouts (they ate the gap).
+        child.add_space(MID_GAP);
         // /h /d /mo stacked, right-aligned so suffixes line up.
         proj_line(&mut child, STATS_W, &d.per_h, "/h", wrap.clone());
         proj_line(&mut child, STATS_W, &d.per_d, "/d", wrap.clone());
@@ -88,7 +90,7 @@ fn stable_line(
     );
 }
 
-/// Projection row: `value/suffix`, right-aligned so stacked /h /d /mo line up.
+/// Projection row: paint right-aligned in an exact-height strip (no expanding layout).
 fn proj_line(
     ui: &mut egui::Ui,
     width: f32,
@@ -97,6 +99,9 @@ fn proj_line(
     wrap: egui::text::TextWrapping,
 ) {
     let size = 9.0;
+    let row_h = size + 1.0;
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(width, row_h), Sense::hover());
+
     let mut job = egui::text::LayoutJob::default();
     job.wrap = wrap;
     job.halign = Align::RIGHT;
@@ -118,11 +123,7 @@ fn proj_line(
             ..Default::default()
         },
     );
-    ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
-        ui.set_max_width(width);
-        ui.add_sized(
-            Vec2::new(width, size + 1.0),
-            egui::Label::new(job).truncate(),
-        );
-    });
+    let galley = ui.fonts(|f| f.layout_job(job));
+    let pos = egui::pos2(rect.right() - galley.size().x, rect.center().y - galley.size().y * 0.5);
+    ui.painter().galley(pos, galley, CHROME_CAPTION);
 }
