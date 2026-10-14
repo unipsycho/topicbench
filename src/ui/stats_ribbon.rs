@@ -1,16 +1,17 @@
-//! Compact Stats ribbon group: recv / sent / throughput + /h /d /mo projections.
+//! Compact Stats ribbon group: recv / sent / throughput + stacked /h /d /mo.
 //!
 //! Labels come from a 1 Hz frozen snapshot — do not reformat every frame.
 //! Fixed cell width + no-wrap labels avoid reflow jitter as values change length.
 
 use crate::mqtt::traffic_stats::TrafficStats;
-use crate::ui::icons::{self, CHROME_CAPTION, CHROME_TEXT, TINT_STATS};
+use crate::ui::icons::{self, CHROME_CAPTION, CHROME_MUTED, CHROME_TEXT, TINT_STATS};
 use eframe::egui::{self, Align, FontId, Sense, Vec2};
 
-/// Fixed text block width — sized for longest expected formats (e.g. `9999.99 MB/s`,
-/// `9999.99 MB/h  9999.99 MB/d  999.99 GB/mo`) so shorter values never shrink/wrap.
-const STATS_W: f32 = 220.0;
-const STATS_H: f32 = 64.0;
+/// Fixed text block width — sized for one column (`Thru 9999.99 MB/s` / `Recv 9999.99 MB`).
+/// Narrower than the old single-line projections layout (~220px).
+const STATS_W: f32 = 128.0;
+/// Match ribbon brand / separator height so six tight rows fit cleanly.
+const STATS_H: f32 = 70.0;
 
 /// Draw the far-right Stats ribbon category (process-lifetime counters).
 pub fn draw_group(ui: &mut egui::Ui, stats: &TrafficStats) {
@@ -26,9 +27,8 @@ pub fn draw_group(ui: &mut egui::Ui, stats: &TrafficStats) {
         );
         child.set_min_size(cell);
         child.set_max_size(cell);
-        child.spacing_mut().item_spacing.y = 1.0;
+        child.spacing_mut().item_spacing.y = 0.0;
 
-        // No wrap — truncate with ellipsis only if somehow still too wide.
         let wrap = egui::text::TextWrapping {
             max_rows: 1,
             break_anywhere: false,
@@ -36,37 +36,18 @@ pub fn draw_group(ui: &mut egui::Ui, stats: &TrafficStats) {
             ..Default::default()
         };
 
-        // Row 1: totals
-        stable_line(
-            &mut child,
-            STATS_W,
-            &format!("Recv {}   Sent {}", d.recv, d.sent),
-            11.0,
-            CHROME_TEXT,
-            wrap.clone(),
-        );
-        // Row 2: combined in+out throughput (~2s window, 1 Hz label)
-        stable_line(
-            &mut child,
-            STATS_W,
-            &format!("Thru {}", d.thru),
-            11.0,
-            CHROME_TEXT,
-            wrap.clone(),
-        );
-        // Row 3: projections from current rate
-        stable_line(
-            &mut child,
-            STATS_W,
-            &format!("{}/h  {}/d  {}/mo", d.per_h, d.per_d, d.per_mo),
-            10.0,
-            CHROME_CAPTION,
-            wrap,
-        );
+        // Totals + throughput (one metric per row — keeps width narrow).
+        stable_line(&mut child, STATS_W, &format!("Recv {}", d.recv), 10.0, CHROME_TEXT, wrap.clone());
+        stable_line(&mut child, STATS_W, &format!("Sent {}", d.sent), 10.0, CHROME_TEXT, wrap.clone());
+        stable_line(&mut child, STATS_W, &format!("Thru {}", d.thru), 10.0, CHROME_TEXT, wrap.clone());
+        // Projections stacked so /h /d /mo line up (right-aligned in the fixed cell).
+        proj_line(&mut child, STATS_W, &d.per_h, "/h", wrap.clone());
+        proj_line(&mut child, STATS_W, &d.per_d, "/d", wrap.clone());
+        proj_line(&mut child, STATS_W, &d.per_mo, "/mo", wrap);
     });
 }
 
-/// One non-wrapping label row at a fixed width.
+/// One non-wrapping label row at a fixed width (left-aligned).
 fn stable_line(
     ui: &mut egui::Ui,
     width: f32,
@@ -86,9 +67,47 @@ fn stable_line(
             ..Default::default()
         },
     );
-    // Reserve full row width so shorter strings don't shrink the group.
     ui.add_sized(
-        Vec2::new(width, size + 2.0),
+        Vec2::new(width, size + 1.0),
         egui::Label::new(job).truncate(),
     );
+}
+
+/// Projection row: `value/suffix`, right-aligned so stacked /h /d /mo line up.
+fn proj_line(
+    ui: &mut egui::Ui,
+    width: f32,
+    value: &str,
+    suffix: &str,
+    wrap: egui::text::TextWrapping,
+) {
+    let size = 9.0;
+    let mut job = egui::text::LayoutJob::default();
+    job.wrap = wrap;
+    job.halign = Align::RIGHT;
+    job.append(
+        value,
+        0.0,
+        egui::TextFormat {
+            font_id: FontId::proportional(size),
+            color: CHROME_CAPTION,
+            ..Default::default()
+        },
+    );
+    job.append(
+        suffix,
+        0.0,
+        egui::TextFormat {
+            font_id: FontId::proportional(size),
+            color: CHROME_MUTED,
+            ..Default::default()
+        },
+    );
+    ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
+        ui.set_max_width(width);
+        ui.add_sized(
+            Vec2::new(width, size + 1.0),
+            egui::Label::new(job).truncate(),
+        );
+    });
 }
