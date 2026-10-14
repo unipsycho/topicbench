@@ -156,6 +156,7 @@ impl SessionManager {
     }
 
     /// User Disconnect: stop worker reconnect loop; stay Disconnected until Connect.
+    /// Clears that broker’s topic tree / traffic so it leaves the Topic tree panel.
     pub fn disconnect(&mut self, profile_id: &str) {
         if let Some(session) = self.open.get_mut(profile_id) {
             session.user_stopped = true;
@@ -167,6 +168,11 @@ impl SessionManager {
             }
             session.state = SessionState::Disconnected;
             session.detail = "Disconnected".into();
+            // Drop tree nodes + live traffic — disconnected brokers must leave the tree.
+            session.topic_tree = TopicTree::default();
+            session.traffic.clear();
+            session.message_count = 0;
+            session.flash_until = None;
         }
     }
 
@@ -175,6 +181,7 @@ impl SessionManager {
         profile: &ConnectionProfile,
         max_packet_bytes: usize,
         ctx: &Context,
+        pins: &mut PinBoard,
     ) -> Result<String, String> {
         let id = profile.id.as_str();
         let should_connect = match self.open.get(id) {
@@ -186,6 +193,8 @@ impl SessionManager {
             Ok(format!("Connecting {}", profile.name))
         } else {
             self.disconnect(id);
+            // Payload/selection follow must not keep a dead broker focus.
+            pins.clear_tree_focus_for(id);
             Ok(format!("Disconnected {}", profile.name))
         }
     }

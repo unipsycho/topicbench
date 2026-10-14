@@ -70,6 +70,17 @@ impl PinBoard {
         format!("{profile_id}\0{topic}")
     }
 
+    /// Drop Payload/selection follow when that broker disconnects.
+    pub fn clear_tree_focus_for(&mut self, profile_id: &str) {
+        if self
+            .last_tree_focus
+            .as_ref()
+            .is_some_and(|(id, _, _)| id == profile_id)
+        {
+            self.last_tree_focus = None;
+        }
+    }
+
     /// Pin a topic if missing (keeps existing view mode).
     pub fn pin(&mut self, profile_id: &str, profile_name: &str, topic: &str) {
         let topic = topic.trim();

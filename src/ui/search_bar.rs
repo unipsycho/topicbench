@@ -1,5 +1,6 @@
 //! Search / filter bar: All | Topics | Payloads.
 
+use crate::ui::hover_tip;
 use crate::ui::shortcuts;
 use eframe::egui;
 
@@ -55,16 +56,19 @@ pub const SEARCH_QUERY_ID: &str = "mqtt_search_query";
 
 pub fn draw(ui: &mut egui::Ui, filter: &mut SearchFilter, request_focus: &mut bool) {
     ui.horizontal(|ui| {
-        ui.label("Search")
-            .on_hover_text(shortcuts::tip("Focus search", "Ctrl+F"));
-        let resp = ui
-            .add(
+        hover_tip::attach(
+            ui.label("Search"),
+            shortcuts::tip("Focus search", "Ctrl+F"),
+        );
+        let resp = hover_tip::attach(
+            ui.add(
                 egui::TextEdit::singleline(&mut filter.query)
                     .id_salt(SEARCH_QUERY_ID)
                     .desired_width(220.0)
                     .hint_text("filter topics / payloads…"),
-            )
-            .on_hover_text(shortcuts::tip("Focus search", "Ctrl+F"));
+            ),
+            shortcuts::tip("Focus search", "Ctrl+F"),
+        );
         if *request_focus {
             resp.request_focus();
             *request_focus = false;

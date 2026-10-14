@@ -89,11 +89,15 @@ impl IconSet {
             Sense::hover()
         };
         let (rect, response) = ui.allocate_exact_size(cell, sense);
-        let response = response.on_hover_text(if enabled {
-            tip.to_owned()
-        } else {
-            format!("{tip} (disabled)")
-        });
+        // Suppress tips while Settings/Shortcuts overlay owns the pointer.
+        let response = crate::ui::hover_tip::attach(
+            response,
+            if enabled {
+                tip.to_owned()
+            } else {
+                format!("{tip} (disabled)")
+            },
+        );
 
         if enabled && selected {
             ui.painter().rect_filled(rect, 3.0, CHROME_ACCENT_SOFT);
@@ -149,7 +153,7 @@ impl IconSet {
         let pad = 2.0;
         let size = Vec2::splat(TINY_ICON + pad * 2.0);
         let (rect, response) = ui.allocate_exact_size(size, Sense::click());
-        let response = response.on_hover_text(tip);
+        let response = crate::ui::hover_tip::attach(response, tip);
         if selected {
             ui.painter().rect_filled(rect, 2.0, CHROME_ACCENT_SOFT);
         } else if response.hovered() {
