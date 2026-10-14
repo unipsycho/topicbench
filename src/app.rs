@@ -22,7 +22,7 @@ use crate::ui::{
     traffic_panel,
 };
 use crate::ui::flash;
-use eframe::egui::{self, Color32, FontId, RichText, TextStyle, TextureHandle};
+use eframe::egui::{self, Align, Color32, FontFamily, FontId, RichText, TextStyle, TextureHandle};
 use image::RgbaImage;
 use std::collections::BTreeMap;
 use std::time::Instant;
@@ -386,71 +386,66 @@ impl MqttMonitorApp {
                     ui.spacing_mut().item_spacing.x = 4.0;
 
                     // Brand block: logo + two-line title, vertically centered as one unit.
-                    // "Master" is horizontally centered under "MQTT".
+                    // Each title line is x-centered in title_w so Master sits under MQTT.
                     {
-                        let logo_w = self
+                        let logo_size = self
                             .logo
                             .as_ref()
-                            .map(|l| l.size_vec2().x)
-                            .unwrap_or(108.0);
+                            .map(|l| l.size_vec2())
+                            .unwrap_or(egui::vec2(108.0, 54.0));
                         let brand_h = 70.0; // match ribbon group / separator height
                         let green = Color32::from_rgb(90, 190, 120); // Connected/status green
                         let title_size = 24.0;
-                        // Width from the longer line so we don't leave dead space after the text.
-                        let title_w = ui.fonts(|f| {
-                            let mqtt = f.layout_no_wrap(
-                                "MQTT".into(),
-                                FontId::proportional(title_size),
-                                green,
-                            );
-                            let master = f.layout_no_wrap(
-                                "Master".into(),
-                                FontId::proportional(title_size),
-                                green,
-                            );
-                            mqtt.size().x.max(master.size().x).ceil()
+                        let line_gap = -2.0_f32;
+                        let strong_family = ui
+                            .style()
+                            .text_styles
+                            .get(&TextStyle::Name("Strong".into()))
+                            .map(|f| f.family.clone())
+                            .unwrap_or(FontFamily::Proportional);
+                        let font_id = FontId::new(title_size, strong_family);
+                        let (mqtt_g, master_g) = ui.fonts(|f| {
+                            (
+                                f.layout_no_wrap("MQTT".into(), font_id.clone(), green),
+                                f.layout_no_wrap("Master".into(), font_id, green),
+                            )
                         });
-                        let brand_w = logo_w + 10.0 + title_w + 10.0;
+                        let title_w = mqtt_g.size().x.max(master_g.size().x).ceil();
+                        let stack_h = mqtt_g.size().y + master_g.size().y + line_gap;
+                        let brand_w = logo_size.x + 10.0 + title_w + 10.0;
                         ui.allocate_ui_with_layout(
                             egui::vec2(brand_w, brand_h),
-                            egui::Layout::left_to_right(egui::Align::Center),
+                            egui::Layout::left_to_right(Align::Center),
                             |ui| {
                                 ui.spacing_mut().item_spacing.x = 0.0;
                                 if let Some(logo) = &self.logo {
-                                    let size = logo.size_vec2();
                                     ui.add(
                                         egui::Image::new(logo)
-                                            .fit_to_exact_size(size)
+                                            .fit_to_exact_size(logo_size)
                                             .maintain_aspect_ratio(true)
                                             .sense(egui::Sense::hover()),
                                     );
                                 }
                                 ui.add_space(10.0);
-                                // Center each title line under the other within title_w.
-                                ui.allocate_ui_with_layout(
+                                let (title_rect, _) = ui.allocate_exact_size(
                                     egui::vec2(title_w, brand_h),
-                                    egui::Layout::top_down(egui::Align::Center),
-                                    |ui| {
-                                        ui.spacing_mut().item_spacing.y = -2.0;
-                                        // Vertically center the two-line stack in brand_h.
-                                        let line_h = ui.fonts(|f| {
-                                            f.row_height(&FontId::proportional(title_size))
-                                        });
-                                        let stack_h = line_h * 2.0 - 2.0;
-                                        ui.add_space(((brand_h - stack_h) * 0.5).max(0.0));
-                                        ui.label(
-                                            RichText::new("MQTT")
-                                                .strong()
-                                                .size(title_size)
-                                                .color(green),
-                                        );
-                                        ui.label(
-                                            RichText::new("Master")
-                                                .strong()
-                                                .size(title_size)
-                                                .color(green),
-                                        );
-                                    },
+                                    egui::Sense::hover(),
+                                );
+                                // True vertical center of the two-line stack in ribbon height.
+                                let top = title_rect.center().y - stack_h * 0.5;
+                                let mqtt_x =
+                                    title_rect.left() + (title_w - mqtt_g.size().x) * 0.5;
+                                let master_x =
+                                    title_rect.left() + (title_w - master_g.size().x) * 0.5;
+                                ui.painter().galley(
+                                    egui::pos2(mqtt_x, top),
+                                    mqtt_g,
+                                    green,
+                                );
+                                ui.painter().galley(
+                                    egui::pos2(master_x, top + stack_h - master_g.size().y),
+                                    master_g,
+                                    green,
                                 );
                                 ui.add_space(10.0);
                             },
