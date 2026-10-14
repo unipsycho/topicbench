@@ -1,15 +1,18 @@
 //! Publish panel: rumqttc publish + Recent history restore.
 
+use crate::mqtt::profile::ProfileStore;
 use crate::mqtt::publish::{PublishDraft, PublishHistory, RecentPublish, Qos};
 use crate::mqtt::session::{SessionManager, SessionState};
 use crate::ui::icons::IconSet;
-use eframe::egui::{self, RichText};
+use eframe::egui::text::LayoutJob;
+use eframe::egui::{self, Color32, TextFormat};
 
 pub fn draw(
     ui: &mut egui::Ui,
     draft: &mut PublishDraft,
     history: &mut PublishHistory,
     sessions: &SessionManager,
+    profiles: &ProfileStore,
     icons: &IconSet,
     status: &mut String,
 ) {
@@ -107,9 +110,8 @@ pub fn draw(
     ui.separator();
     ui.strong("Recent");
     ui.weak(format!(
-        "Last {} publishes — click to restore form. Saved under {}",
-        crate::mqtt::publish::RECENT_CAP,
-        PublishHistory::path().display()
+        "Last {} publishes — click to restore form.",
+        crate::mqtt::publish::RECENT_CAP
     ));
 
     if history.recent.is_empty() {
@@ -122,9 +124,14 @@ pub fn draw(
         .max_height(160.0)
         .show(ui, |ui| {
             for (i, entry) in history.recent.iter().enumerate() {
-                let label = entry.list_label();
+                let accent = profiles
+                    .profiles
+                    .get(&entry.profile_id)
+                    .map(|p| p.color())
+                    .unwrap_or(Color32::from_rgb(90, 190, 120));
+                let job = recent_row_job(ui, entry, accent);
                 if ui
-                    .selectable_label(false, RichText::new(label).monospace().small())
+                    .selectable_label(false, job)
                     .on_hover_text(format!(
                         "broker={} topic={} qos={} retain={}\n{}",
                         entry.profile_name,
@@ -145,4 +152,41 @@ pub fn draw(
                 }
             }
         });
+}
+
+/// Broker name in profile accent; rest of the row at normal body/monospace size.
+fn recent_row_job(ui: &egui::Ui, entry: &RecentPublish, accent: Color32) -> LayoutJob {
+    let broker = if entry.profile_name.is_empty() {
+        "…"
+    } else {
+        entry.profile_name.as_str()
+    };
+    let body = ui.style().text_styles[&egui::TextStyle::Body].clone();
+    let mono = ui.style().text_styles[&egui::TextStyle::Monospace].clone();
+    let mut job = LayoutJob::default();
+    job.append(
+        broker,
+        0.0,
+        TextFormat {
+            font_id: body,
+            color: accent,
+            ..Default::default()
+        },
+    );
+    job.append(
+        &format!(
+            " · {}  qos={}{}  {}",
+            entry.topic,
+            entry.qos.as_u8(),
+            if entry.retain { " retain" } else { "" },
+            entry.payload_preview()
+        ),
+        0.0,
+        TextFormat {
+            font_id: mono,
+            color: ui.visuals().text_color(),
+            ..Default::default()
+        },
+    );
+    job
 }
