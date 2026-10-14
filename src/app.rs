@@ -489,7 +489,7 @@ impl MqttMonitorApp {
                             .icons
                             .command(
                                 ui,
-                                "panel_docked",
+                                "panel_undock",
                                 "Payload",
                                 self.panels.payload,
                                 &shortcuts::tip("Payload panel", "Ctrl+Shift+L"),
