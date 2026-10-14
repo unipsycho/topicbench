@@ -2,16 +2,23 @@
 //!
 //! Ribbon groups must **shrink-wrap** — a nested `vertical` inside a horizontal bar
 //! otherwise expands and steals the rest of the row (hiding later groups).
+//!
+//! Source PNGs are 512²; we Lanczos-downsample to [`ICON_TEX_PX`] (2× ribbon glyph)
+//! before upload so GPU scaling stays crisp (≈2:1 / 1:1 with DPI) instead of 512→36.
 
 use eframe::egui::{self, Color32, RichText, Sense, Stroke, TextureHandle, Vec2};
+use image::imageops::FilterType;
+use image::RgbaImage;
 use std::collections::HashMap;
 
-/// Large ribbon glyph (margins stay tight).
+/// Large ribbon glyph (logical px — same for New/Save/Delete/Settings/Panels).
 const CMD_ICON: f32 = 36.0;
 const CMD_W: f32 = 56.0;
 const CMD_H: f32 = 58.0;
 /// Dense topic-tree / inline action icons.
 const TINY_ICON: f32 = 14.0;
+/// Uploaded texture edge: 2× [`CMD_ICON`] for sharp HiDPI + clean half-scale at 1×.
+const ICON_TEX_PX: u32 = 72;
 
 /// Dark chrome tokens.
 pub const CHROME_BG: Color32 = Color32::from_rgb(40, 42, 48);
@@ -69,7 +76,10 @@ impl IconSet {
 
         let icon_center = egui::pos2(rect.center().x, rect.top() + 22.0);
         if let Some(tex) = self.get(name) {
-            let img = egui::Image::new(tex).fit_to_exact_size(Vec2::splat(CMD_ICON));
+            // Exact square cell — no stretch; texture already pre-scaled to 2×.
+            let img = egui::Image::new(tex)
+                .fit_to_exact_size(Vec2::splat(CMD_ICON))
+                .maintain_aspect_ratio(true);
             let img_rect = egui::Rect::from_center_size(icon_center, Vec2::splat(CMD_ICON));
             img.paint_at(ui, img_rect);
         }
@@ -106,7 +116,9 @@ impl IconSet {
             ui.painter().rect_filled(rect, 2.0, CHROME_HOVER);
         }
         if let Some(tex) = self.get(name) {
-            let img = egui::Image::new(tex).fit_to_exact_size(Vec2::splat(TINY_ICON));
+            let img = egui::Image::new(tex)
+                .fit_to_exact_size(Vec2::splat(TINY_ICON))
+                .maintain_aspect_ratio(true);
             img.paint_at(ui, egui::Rect::from_center_size(rect.center(), Vec2::splat(TINY_ICON)));
         }
         response
@@ -152,10 +164,75 @@ pub fn ribbon_separator(ui: &mut egui::Ui) {
 }
 
 fn load_png(ctx: &egui::Context, id: &str, bytes: &[u8]) -> Option<TextureHandle> {
-    let image = image::load_from_memory(bytes).ok()?.into_rgba8();
+    let raw = image::load_from_memory(bytes).ok()?.into_rgba8();
+    let image = prepare_icon_texture(&raw, ICON_TEX_PX);
     let size = [image.width() as usize, image.height() as usize];
     let color = egui::ColorImage::from_rgba_unmultiplied(size, image.as_raw());
-    Some(ctx.load_texture(id, color, egui::TextureOptions::LINEAR))
+    // LINEAR on a 72px atlas + mipmaps: crisp at ribbon size, clean when used tiny.
+    let opts = egui::TextureOptions::LINEAR.with_mipmap_mode(Some(egui::TextureFilter::Linear));
+    Some(ctx.load_texture(id, color, opts))
+}
+
+/// Downsample source icon to a square `target` edge without stretching.
+/// Integer Triangle halvings while possible (512→256→128→64), then Lanczos3 to `target`.
+fn prepare_icon_texture(src: &RgbaImage, target: u32) -> RgbaImage {
+    let (w, h) = src.dimensions();
+    if w == 0 || h == 0 || target == 0 {
+        return src.clone();
+    }
+    let square = fit_to_square(src);
+    let side = square.width();
+    if side == target {
+        return square;
+    }
+    if side < target {
+        return pad_to_size(&square, target);
+    }
+
+    let mut img = square;
+    while img.width() >= target * 2 && img.width() % 2 == 0 {
+        let next = img.width() / 2;
+        img = image::imageops::resize(&img, next, next, FilterType::Triangle);
+    }
+    if img.width() == target {
+        img
+    } else {
+        image::imageops::resize(&img, target, target, FilterType::Lanczos3)
+    }
+}
+
+/// Center `src` on a transparent square whose side is max(w, h).
+fn fit_to_square(src: &RgbaImage) -> RgbaImage {
+    let (w, h) = src.dimensions();
+    if w == h {
+        return src.clone();
+    }
+    let side = w.max(h);
+    let mut out = RgbaImage::new(side, side);
+    let ox = (side - w) / 2;
+    let oy = (side - h) / 2;
+    for y in 0..h {
+        for x in 0..w {
+            out.put_pixel(ox + x, oy + y, *src.get_pixel(x, y));
+        }
+    }
+    out
+}
+
+fn pad_to_size(src: &RgbaImage, target: u32) -> RgbaImage {
+    let (w, h) = src.dimensions();
+    if w == target && h == target {
+        return src.clone();
+    }
+    let mut out = RgbaImage::new(target, target);
+    let ox = (target.saturating_sub(w)) / 2;
+    let oy = (target.saturating_sub(h)) / 2;
+    for y in 0..h.min(target) {
+        for x in 0..w.min(target) {
+            out.put_pixel(ox + x, oy + y, *src.get_pixel(x, y));
+        }
+    }
+    out
 }
 
 const ICONS: &[(&str, &[u8])] = &[

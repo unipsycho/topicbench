@@ -26,7 +26,7 @@ pub fn try_pretty_json(payload: &str) -> Option<String> {
     serde_json::to_string_pretty(&value).ok()
 }
 
-/// One-line preview for dense tree rows (newlines → spaces, truncated).
+/// One-line preview for dense tree rows (newlines → spaces, truncated at char bounds).
 pub fn preview_line(payload: &str, max_chars: usize) -> String {
     let src = try_pretty_json(payload).unwrap_or_else(|| payload.to_string());
     let flat: String = src
@@ -36,13 +36,34 @@ pub fn preview_line(payload: &str, max_chars: usize) -> String {
         .split_whitespace()
         .collect::<Vec<_>>()
         .join(" ");
-    if flat.chars().count() > max_chars {
-        // ASCII ellipsis — LayoutJob + Label::truncate panics on mid-char UTF-8 cuts.
-        let trunc: String = flat.chars().take(max_chars.saturating_sub(3)).collect();
-        format!("{trunc}...")
-    } else {
-        flat
+    truncate_chars(&flat, max_chars)
+}
+
+fn truncate_chars(s: &str, max_chars: usize) -> String {
+    if s.chars().count() <= max_chars {
+        return s.to_string();
     }
+    // ASCII "..." only — never mid-codepoint (Label::truncate + LayoutJob panics).
+    let trunc: String = s.chars().take(max_chars.saturating_sub(3)).collect();
+    format!("{trunc}...")
+}
+
+/// `topic = {…}` LayoutJob with syntax colors on the JSON side (pre-truncated, no widget truncate).
+pub fn row_preview_job(label: &str, payload: &str, max_json_chars: usize) -> LayoutJob {
+    let font = FontId::monospace(12.0);
+    let json = preview_line(payload, max_json_chars);
+    let prefix = format!("{label} = ");
+    let text = format!("{prefix}{json}");
+    let mut job = LayoutJob {
+        text: text.clone(),
+        break_on_newline: false,
+        halign: Align::LEFT,
+        ..Default::default()
+    };
+    // Topic segment stays key-blue; JSON payload gets full highlighter.
+    push(&mut job, 0, prefix.len(), C_KEY, font.clone());
+    highlight_range(&mut job, &text, prefix.len(), text.len(), &font);
+    job
 }
 
 /// Draw pretty JSON left-aligned with syntax colors. `id_salt` must be unique per row.
@@ -86,26 +107,32 @@ fn highlight_job(src: &str) -> LayoutJob {
         halign: Align::LEFT,
         ..Default::default()
     };
+    highlight_range(&mut job, src, 0, src.len(), &font);
+    job
+}
 
-    let bytes = src.as_bytes();
-    let mut i = 0usize;
-    while i < bytes.len() {
+/// Highlight `text[from..to]` (byte range) into an existing job (JSON tokenizer).
+fn highlight_range(job: &mut LayoutJob, text: &str, from: usize, to: usize, font: &FontId) {
+    let bytes = text.as_bytes();
+    let to = to.min(bytes.len());
+    let mut i = from.min(to);
+    while i < to {
         let start = i;
         let b = bytes[i];
 
         if b.is_ascii_whitespace() {
-            while i < bytes.len() && bytes[i].is_ascii_whitespace() {
+            while i < to && bytes[i].is_ascii_whitespace() {
                 i += 1;
             }
-            push(&mut job, start, i, C_DEFAULT, font.clone());
+            push(job, start, i, C_DEFAULT, font.clone());
             continue;
         }
 
         // String (key if followed by ':')
         if b == b'"' {
             i += 1;
-            while i < bytes.len() {
-                if bytes[i] == b'\\' && i + 1 < bytes.len() {
+            while i < to {
+                if bytes[i] == b'\\' && i + 1 < to {
                     i += 2;
                     continue;
                 }
@@ -116,55 +143,53 @@ fn highlight_job(src: &str) -> LayoutJob {
                 i += 1;
             }
             let mut j = i;
-            while j < bytes.len() && bytes[j].is_ascii_whitespace() {
+            while j < to && bytes[j].is_ascii_whitespace() {
                 j += 1;
             }
-            let color = if j < bytes.len() && bytes[j] == b':' {
+            let color = if j < to && bytes[j] == b':' {
                 C_KEY
             } else {
                 C_STRING
             };
-            push(&mut job, start, i, color, font.clone());
+            push(job, start, i, color, font.clone());
             continue;
         }
 
         if matches!(b, b'{' | b'}' | b'[' | b']' | b':' | b',') {
             i += 1;
-            push(&mut job, start, i, C_PUNCT, font.clone());
+            push(job, start, i, C_PUNCT, font.clone());
             continue;
         }
 
         if b == b'-' || b.is_ascii_digit() {
             i += 1;
-            while i < bytes.len()
+            while i < to
                 && (bytes[i].is_ascii_digit()
                     || matches!(bytes[i], b'.' | b'e' | b'E' | b'+' | b'-'))
             {
                 i += 1;
             }
-            push(&mut job, start, i, C_NUMBER, font.clone());
+            push(job, start, i, C_NUMBER, font.clone());
             continue;
         }
 
         if b.is_ascii_alphabetic() {
-            while i < bytes.len() && bytes[i].is_ascii_alphabetic() {
+            while i < to && bytes[i].is_ascii_alphabetic() {
                 i += 1;
             }
-            let word = &src[start..i];
+            let word = &text[start..i];
             let color = match word {
                 "true" | "false" => C_BOOL,
                 "null" => C_NULL,
                 _ => C_DEFAULT,
             };
-            push(&mut job, start, i, color, font.clone());
+            push(job, start, i, color, font.clone());
             continue;
         }
 
         i += 1;
-        push(&mut job, start, i, C_DEFAULT, font.clone());
+        push(job, start, i, C_DEFAULT, font.clone());
     }
-
-    job
 }
 
 fn push(job: &mut LayoutJob, start: usize, end: usize, color: Color32, font: FontId) {
@@ -215,5 +240,13 @@ mod tests {
         let p = preview_line(r#"{"a":1}"#, 80);
         assert!(!p.contains('\n'));
         assert!(p.contains("\"a\""));
+    }
+
+    #[test]
+    fn row_preview_job_covers_bytes() {
+        let job = row_preview_job("definition", r#"{"a":1,"b":"x"}"#, 80);
+        let covered: usize = job.sections.iter().map(|s| s.byte_range.len()).sum();
+        assert_eq!(covered, job.text.len());
+        assert!(job.text.starts_with("definition = "));
     }
 }
