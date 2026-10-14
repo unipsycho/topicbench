@@ -787,6 +787,7 @@ impl eframe::App for MqttMonitorApp {
                         &mut self.publish,
                         &mut self.publish_history,
                         &self.sessions,
+                        &self.profiles,
                         &self.icons,
                         &mut self.status,
                     );

@@ -82,29 +82,30 @@ impl RecentPublish {
 
     /// Same broker + topic → one Recent slot (QoS/retain/payload may change).
     pub fn same_broker_topic(&self, other: &Self) -> bool {
-        self.profile_id == other.profile_id && self.topic == other.topic
+        !self.profile_id.is_empty()
+            && self.profile_id == other.profile_id
+            && self.topic == other.topic
     }
 
-    /// Short label for the Recent list.
-    pub fn list_label(&self) -> String {
+    /// True when this row should be replaced by `other` (incl. legacy empty broker id).
+    pub fn collides_with(&self, other: &Self) -> bool {
+        if self.topic != other.topic {
+            return false;
+        }
+        self.same_broker_topic(other)
+            || self.profile_id.is_empty()
+            || other.profile_id.is_empty()
+            || self.profile_id == other.profile_id
+    }
+
+    /// Truncated payload preview for list rows.
+    pub fn payload_preview(&self) -> String {
         let flat = self.payload.replace('\n', " ");
-        let pay: String = if flat.chars().count() > 40 {
+        if flat.chars().count() > 40 {
             format!("{}...", flat.chars().take(37).collect::<String>())
         } else {
             flat
-        };
-        let broker = if self.profile_name.is_empty() {
-            "…"
-        } else {
-            self.profile_name.as_str()
-        };
-        format!(
-            "{broker} · {}  qos={}{}  {}",
-            self.topic,
-            self.qos.as_u8(),
-            if self.retain { " retain" } else { "" },
-            pay
-        )
+        }
     }
 }
 
@@ -146,10 +147,11 @@ impl PublishHistory {
     }
 
     /// Keep first (newest) entry per broker+topic; drop later duplicates.
+    /// Legacy rows with empty profile_id collapse onto same-topic rows.
     fn dedupe_broker_topic(&mut self) {
         let mut kept = Vec::with_capacity(self.recent.len());
         for entry in self.recent.drain(..) {
-            if kept.iter().any(|e: &RecentPublish| e.same_broker_topic(&entry)) {
+            if kept.iter().any(|e: &RecentPublish| e.collides_with(&entry)) {
                 continue;
             }
             kept.push(entry);
@@ -159,7 +161,7 @@ impl PublishHistory {
 
     /// Push newest first; replace any existing same broker+topic; cap at 20.
     pub fn push(&mut self, entry: RecentPublish) {
-        self.recent.retain(|e| !e.same_broker_topic(&entry));
+        self.recent.retain(|e| !e.collides_with(&entry));
         self.recent.insert(0, entry);
         self.recent.truncate(RECENT_CAP);
     }
@@ -208,5 +210,29 @@ mod tests {
         h.push(entry("b", "sensors/x", Qos::AtMostOnce, "3"));
         assert_eq!(h.recent.len(), 2);
         assert_eq!(h.recent[0].profile_id, "b");
+        // A, B, A, B ⇒ still two rows; last publisher on top.
+        h.push(entry("a", "sensors/x", Qos::AtMostOnce, "4"));
+        h.push(entry("b", "sensors/x", Qos::AtLeastOnce, "5"));
+        assert_eq!(h.recent.len(), 2);
+        assert_eq!(h.recent[0].profile_id, "b");
+        assert_eq!(h.recent[0].payload, "5");
+        assert_eq!(h.recent[1].profile_id, "a");
+    }
+
+    #[test]
+    fn history_collapses_legacy_empty_broker_id() {
+        let mut h = PublishHistory::default();
+        h.recent.push(RecentPublish {
+            profile_id: String::new(),
+            profile_name: String::new(),
+            topic: "sensors/x".into(),
+            payload: "old".into(),
+            qos: Qos::AtMostOnce,
+            retain: false,
+        });
+        h.push(entry("a", "sensors/x", Qos::ExactlyOnce, "new"));
+        assert_eq!(h.recent.len(), 1);
+        assert_eq!(h.recent[0].profile_id, "a");
+        assert_eq!(h.recent[0].payload, "new");
     }
 }
