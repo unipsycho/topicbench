@@ -455,11 +455,7 @@ fn leaf_row(
                         &data_resp,
                         egui::Id::new(("tree-tip", profile_id, full_topic)),
                         |ui| {
-                            json_view::hover_payload(
-                                ui,
-                                payload,
-                                ("tree-tip-body", profile_id, full_topic),
-                            );
+                            json_view::hover_payload_body(ui, payload);
                         },
                     );
                 }
@@ -479,65 +475,107 @@ fn leaf_row(
     }
 }
 
-/// Hover popup that stays open under scroll-wheel; wheel scrolls popup when open.
-/// (egui `on_hover_ui` dismisses on any scroll — see egui#4781.)
+/// One exclusive hover popup for the topic tree.
+/// Stays open under wheel; wheel scrolls popup content; moving a few pixels onto
+/// the popup (or the gap) does not open tips for rows underneath.
 fn scrollable_hover(
     ui: &egui::Ui,
     resp: &egui::Response,
     id: egui::Id,
     add_contents: impl FnOnce(&mut egui::Ui),
 ) {
+    let ctx = ui.ctx();
     let popup_id = id.with("scroll_hover");
-    let open_key = popup_id.with("open");
-    let pointer = ui.ctx().pointer_hover_pos();
-    let over_widget = resp.hovered() || pointer.is_some_and(|p| resp.rect.contains(p));
-    let over_popup = egui::AreaState::load(ui.ctx(), popup_id)
-        .zip(pointer)
-        .is_some_and(|(area, p)| area.rect().contains(p));
-    let was_open = ui.ctx().data(|d| d.get_temp::<bool>(open_key).unwrap_or(false));
-    let open = over_widget || (was_open && over_popup);
-    ui.ctx().data_mut(|d| d.insert_temp(open_key, open));
-    if !open {
+    let active_key = egui::Id::new("topic_tree_hover_active");
+    let scroll_key = popup_id.with("scroll_y");
+
+    let pointer = ctx
+        .pointer_interact_pos()
+        .or_else(|| ctx.pointer_hover_pos());
+    let popup_rect = egui::AreaState::load(ctx, popup_id).map(|a| a.rect());
+
+    let over_anchor = resp.hovered()
+        || pointer.is_some_and(|p| resp.rect.expand2(egui::vec2(2.0, 2.0)).contains(p));
+    let over_popup =
+        pointer.zip(popup_rect).is_some_and(|(p, r)| r.expand(6.0).contains(p));
+    // Bridge the 4px gap between anchor and popup so a small move doesn't dismiss.
+    let over_bridge = pointer.zip(popup_rect).is_some_and(|(p, pr)| {
+        let left = resp.rect.left().min(pr.left()) - 4.0;
+        let right = resp.rect.right().max(pr.right()) + 4.0;
+        let top = resp.rect.bottom().min(pr.top()) - 2.0;
+        let bottom = resp.rect.bottom().max(pr.top()) + 2.0;
+        egui::Rect::from_min_max(egui::pos2(left, top), egui::pos2(right, bottom)).contains(p)
+    });
+
+    let active: Option<egui::Id> = ctx.data(|d| d.get_temp(active_key));
+    let is_ours = active == Some(popup_id);
+    // Only one popup: while another is active, ignore hover on other rows.
+    let open = if is_ours {
+        over_anchor || over_popup || over_bridge
+    } else if active.is_none() && over_anchor {
+        true
+    } else {
+        false
+    };
+
+    if open {
+        ctx.data_mut(|d| d.insert_temp(active_key, popup_id));
+    } else if is_ours {
+        ctx.data_mut(|d| {
+            d.remove::<egui::Id>(active_key);
+            d.remove_temp::<f32>(scroll_key);
+        });
+        return;
+    } else {
         return;
     }
 
     let mut pos = resp.rect.left_bottom() + egui::vec2(0.0, 4.0);
-    if let Some(to_global) = ui.ctx().layer_transform_to_global(resp.layer_id) {
+    if let Some(to_global) = ctx.layer_transform_to_global(resp.layer_id) {
         pos = to_global * pos;
     }
 
-    // While inspecting, steal wheel from the tree so the row (and popup) stay put.
-    let steal = over_widget || over_popup;
-    let delta = if steal {
-        ui.ctx().input_mut(|i| {
-            let d = i.smooth_scroll_delta;
-            if d != egui::Vec2::ZERO {
-                i.smooth_scroll_delta = egui::Vec2::ZERO;
-            }
-            d
-        })
-    } else {
-        egui::Vec2::ZERO
-    };
+    // Steal wheel from the parent tree ScrollArea; drive our own offset.
+    let mut scroll_y = ctx.data(|d| d.get_temp::<f32>(scroll_key).unwrap_or(0.0));
+    let delta = ctx.input_mut(|i| {
+        let d = i.smooth_scroll_delta;
+        if d != egui::Vec2::ZERO {
+            i.smooth_scroll_delta = egui::Vec2::ZERO;
+        }
+        d
+    });
+    // smooth_scroll_delta.y > 0 → scroll up → smaller offset.
+    scroll_y = (scroll_y - delta.y).max(0.0);
 
-    egui::Area::new(popup_id)
+    let sa_out = egui::Area::new(popup_id)
         .kind(egui::UiKind::Popup)
         .order(egui::Order::Foreground)
         .fixed_pos(pos)
         .constrain(true)
-        .sense(egui::Sense::hover())
-        .show(ui.ctx(), |ui| {
+        .sense(egui::Sense::click_and_drag())
+        .show(ctx, |ui| {
             egui::Frame::popup(ui.style()).show(ui, |ui| {
                 ui.set_max_width(420.0);
                 egui::ScrollArea::vertical()
                     .id_salt(popup_id.with("sa"))
                     .max_height(280.0)
+                    .auto_shrink([false, true])
+                    .vertical_scroll_offset(scroll_y)
                     .show(ui, |ui| {
-                        if delta != egui::Vec2::ZERO {
-                            ui.scroll_with_delta(delta);
-                        }
                         add_contents(ui);
-                    });
-            });
+                    })
+            })
         });
+
+    let new_y = sa_out
+        .inner
+        .inner
+        .state
+        .offset
+        .y;
+    ctx.data_mut(|d| d.insert_temp(scroll_key, new_y));
+    // Keep animating while the user is scrolling the popup.
+    if delta != egui::Vec2::ZERO {
+        ctx.request_repaint();
+    }
 }

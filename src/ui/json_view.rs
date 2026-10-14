@@ -106,10 +106,29 @@ pub fn draw_pretty(ui: &mut egui::Ui, pretty: &str, id_salt: impl Hash) {
     });
 }
 
-/// Hover UI: pretty + highlighted JSON (or plain text fallback).
+/// Hover UI with its own ScrollArea (sticky/tooltips that aren't inside another SA).
+#[allow(dead_code)]
 pub fn hover_payload(ui: &mut egui::Ui, payload: &str, id_salt: impl Hash) {
     if let Some(pretty) = try_pretty_json(payload) {
         draw_pretty(ui, &pretty, id_salt);
+    } else {
+        hover_payload_body(ui, payload);
+    }
+}
+
+/// Payload body for an outer ScrollArea (no nested scroll — used by tree hover popup).
+pub fn hover_payload_body(ui: &mut egui::Ui, payload: &str) {
+    if let Some(pretty) = try_pretty_json(payload) {
+        let font_size = ui.text_style_height(&egui::TextStyle::Monospace);
+        ui.label(egui::RichText::new("JSON").small().weak());
+        ui.set_max_width(ui.available_width());
+        let job = highlight_job(&pretty, font_size);
+        ui.add(
+            egui::Label::new(job)
+                .wrap()
+                .selectable(true)
+                .halign(Align::LEFT),
+        );
     } else {
         ui.label(egui::RichText::new(payload).monospace());
     }
