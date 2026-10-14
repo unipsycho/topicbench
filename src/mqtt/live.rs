@@ -61,7 +61,8 @@ pub fn spawn(
         opts.set_transport(Transport::tls_with_default_config());
     }
 
-    let (client, mut connection) = Client::new(opts, 100);
+    // Larger request channel — `#` floods + retained bursts shouldn't stall pub/sub requests.
+    let (client, mut connection) = Client::new(opts, 1024);
     let stop = Arc::new(AtomicBool::new(false));
     let stop_w = stop.clone();
     let profile_id = profile.id.clone();
@@ -91,6 +92,8 @@ pub fn spawn(
             let mut last_emit = Instant::now()
                 .checked_sub(STATUS_MIN_INTERVAL)
                 .unwrap_or_else(Instant::now);
+            // Keep the real failure reason — generic "Session ended" must not overwrite it.
+            let mut fatal_detail: Option<String> = None;
 
             for notification in connection.iter() {
                 // User Disconnect — leave the loop; do not reconnect.
@@ -153,12 +156,14 @@ pub fn spawn(
                         if stop_w.load(Ordering::SeqCst) {
                             break;
                         }
+                        let detail = "Broker sent disconnect".to_string();
+                        fatal_detail = Some(detail.clone());
                         emit_state(
                             &tx,
                             &ctx,
                             &profile_id,
                             SessionState::Disconnected,
-                            "Broker sent disconnect".into(),
+                            detail,
                             &mut last_key,
                             &mut last_emit,
                             true,
@@ -170,16 +175,21 @@ pub fn spawn(
                             break;
                         }
                         let err = e.to_string();
-                        // Over-limit decode: do not reconnect-thrash; clear status once, stop session.
-                        if err.contains("payload size limit") {
+                        // Over-limit decode kills the rumqttc connection — stop cleanly with a clear tip.
+                        if err.to_lowercase().contains("payload size")
+                            || err.to_lowercase().contains("packet size")
+                            || err.to_lowercase().contains("too large")
+                        {
+                            let detail = format!(
+                                "Incoming MQTT packet exceeds Max packet size ({max_kb} KB). Raise it in Settings (up to 1 MB), then reconnect. ({err})"
+                            );
+                            fatal_detail = Some(detail.clone());
                             emit_state(
                                 &tx,
                                 &ctx,
                                 &profile_id,
                                 SessionState::Disconnected,
-                                format!(
-                                    "Payload exceeds Max MQTT packet size ({max_kb} KB). Raise in Settings, then reconnect."
-                                ),
+                                detail,
                                 &mut last_key,
                                 &mut last_emit,
                                 true,
@@ -205,11 +215,20 @@ pub fn spawn(
                 }
             }
 
-            // Final stable status: intentional stop vs unexpected end
+            // Final stable status: intentional stop vs last fatal reason vs unexpected end.
             let detail = if stop_w.load(Ordering::SeqCst) {
                 "Disconnected".to_string()
+            } else if let Some(fatal) = fatal_detail {
+                fatal
+            } else if let Some((_, last_detail)) = last_key.clone() {
+                // Keep the last meaningful status (e.g. reconnect error) instead of masking it.
+                if last_detail.starts_with("Connected") {
+                    "Session ended (connection closed)".to_string()
+                } else {
+                    last_detail
+                }
             } else {
-                "Session ended".to_string()
+                "Session ended (connection closed)".to_string()
             };
             emit_state(
                 &tx,

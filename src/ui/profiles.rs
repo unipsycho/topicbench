@@ -122,34 +122,47 @@ pub fn draw(
         let flash_until = session.and_then(|s| s.flash_until);
 
         let fill = if selected { row_bg_sel } else { row_bg };
-        // Full-width selectable row (click anywhere on the strip).
+        // Full-width row: click selects profile; name/count text is selectable for copy.
         let row_h = 28.0;
-        let (rect, response) =
+        let (rect, row_response) =
             ui.allocate_exact_size(egui::vec2(ui.available_width(), row_h), egui::Sense::click());
         ui.painter().rect_filled(rect, 2.0, fill);
         // Update pulse: border only (no fill wash over the name/status text).
         if let Some(stroke) = flash::flash_stroke(flash_until, now) {
             ui.painter().rect_stroke(rect, 2.0, stroke, egui::StrokeKind::Inside);
         }
+        let mut name_clicked = false;
         ui.allocate_new_ui(egui::UiBuilder::new().max_rect(rect.shrink2(egui::vec2(8.0, 4.0))), |ui| {
             ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
                 ui.spacing_mut().item_spacing.x = 6.0;
-                ui.label(
-                    RichText::new(&profile.name)
-                        .strong()
-                        .color(if selected {
-                            Color32::from_rgb(210, 225, 255)
-                        } else {
-                            Color32::from_rgb(230, 232, 238)
-                        }),
+                // Selectable so Mike can drag-select / Ctrl+C the profile name.
+                let name_resp = ui.add(
+                    egui::Label::new(
+                        RichText::new(&profile.name)
+                            .strong()
+                            .color(if selected {
+                                Color32::from_rgb(210, 225, 255)
+                            } else {
+                                Color32::from_rgb(230, 232, 238)
+                            }),
+                    )
+                    .selectable(true)
+                    .sense(egui::Sense::click()),
                 );
+                if name_resp.clicked() {
+                    name_clicked = true;
+                }
                 draw_session_status(ui, icons, state);
                 if msg_count > 0 {
-                    ui.label(RichText::new(format!("#{msg_count}")).strong());
+                    ui.add(
+                        egui::Label::new(RichText::new(format!("#{msg_count}")).strong())
+                            .selectable(true),
+                    );
                 }
             });
         });
-        if response.clicked() {
+        // Row click (or name click) selects the profile — text drag-select still works.
+        if row_response.clicked() || name_clicked {
             profiles.selected_id = Some(id.clone());
         }
         ui.add_space(2.0);
