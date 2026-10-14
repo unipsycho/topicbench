@@ -7,11 +7,10 @@ use crate::mqtt::traffic_stats::TrafficStats;
 use crate::ui::icons::{self, CHROME_CAPTION, CHROME_MUTED, CHROME_TEXT, TINT_STATS};
 use eframe::egui::{self, Align, FontId, Sense, Vec2};
 
-/// Fixed text block width — sized for one column (`Thru 9999.99 MB/s` / `Recv 9999.99 MB`).
-/// Narrower than the old single-line projections layout (~220px).
-const STATS_W: f32 = 128.0;
-/// Match ribbon brand / separator height so six tight rows fit cleanly.
-const STATS_H: f32 = 70.0;
+/// Fixed text block width — fits `Recv …  Sent …` on one row without wrap jitter.
+const STATS_W: f32 = 148.0;
+/// Compact height: 2 metric rows + 3 projection rows with tight gaps.
+const STATS_H: f32 = 64.0;
 
 /// Draw the far-right Stats ribbon category (process-lifetime counters).
 pub fn draw_group(ui: &mut egui::Ui, stats: &TrafficStats) {
@@ -36,11 +35,27 @@ pub fn draw_group(ui: &mut egui::Ui, stats: &TrafficStats) {
             ..Default::default()
         };
 
-        // Totals + throughput (one metric per row — keeps width narrow).
-        stable_line(&mut child, STATS_W, &format!("Recv {}", d.recv), 10.0, CHROME_TEXT, wrap.clone());
-        stable_line(&mut child, STATS_W, &format!("Sent {}", d.sent), 10.0, CHROME_TEXT, wrap.clone());
-        stable_line(&mut child, STATS_W, &format!("Thru {}", d.thru), 10.0, CHROME_TEXT, wrap.clone());
-        // Projections stacked so /h /d /mo line up (right-aligned in the fixed cell).
+        // Row 1: Recv + Sent side by side.
+        stable_line(
+            &mut child,
+            STATS_W,
+            &format!("Recv {}  Sent {}", d.recv, d.sent),
+            10.0,
+            CHROME_TEXT,
+            wrap.clone(),
+        );
+        // Row 2: Thru directly under totals.
+        stable_line(
+            &mut child,
+            STATS_W,
+            &format!("Thru {}", d.thru),
+            10.0,
+            CHROME_TEXT,
+            wrap.clone(),
+        );
+        // Tiny gap before projections (tighter than a full blank row).
+        child.add_space(1.0);
+        // /h /d /mo stacked, right-aligned so suffixes line up.
         proj_line(&mut child, STATS_W, &d.per_h, "/h", wrap.clone());
         proj_line(&mut child, STATS_W, &d.per_d, "/d", wrap.clone());
         proj_line(&mut child, STATS_W, &d.per_mo, "/mo", wrap);
