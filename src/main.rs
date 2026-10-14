@@ -1,5 +1,8 @@
 //! MQTT Master — egui/eframe shell (ArtCraft Crafting Apps stack).
 
+// Hide the console window on Windows GUI builds (no-op on Linux).
+#![cfg_attr(windows, windows_subsystem = "windows")]
+
 mod app;
 mod mqtt;
 mod ui;
