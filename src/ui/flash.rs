@@ -4,7 +4,22 @@
 use eframe::egui::{Color32, Stroke};
 use std::time::Instant;
 
-use crate::mqtt::topic_tree::FLASH_MS;
+use crate::mqtt::topic_tree::{TopicNode, FLASH_MS};
+
+/// True while a flash pulse is still fading.
+pub fn flash_active(until: Option<Instant>, now: Instant) -> bool {
+    until.map(|t| now < t).unwrap_or(false)
+}
+
+/// Any node in the topic tree still fading (quiet single-topic case).
+pub fn tree_flash_active(node: &TopicNode, now: Instant) -> bool {
+    if flash_active(node.flash_until, now) {
+        return true;
+    }
+    node.children
+        .values()
+        .any(|child| tree_flash_active(child, now))
+}
 
 /// Fading 1px green border for an update pulse (no fill wash).
 /// `until` is set to `now + FLASH_MS` on each new value — that resets the fade.

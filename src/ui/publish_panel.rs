@@ -73,11 +73,16 @@ pub fn draw(
                 match sessions.publish_live(id, &draft.topic, &draft.payload, draft.qos, draft.retain)
                 {
                     Ok(()) => {
-                        let entry = RecentPublish::from_draft(draft);
+                        let broker = connected
+                            .iter()
+                            .find(|(pid, _)| pid == id)
+                            .map(|(_, name)| name.as_str())
+                            .unwrap_or(id);
+                        let entry = RecentPublish::from_draft(draft, broker);
                         match history.push_and_save(entry) {
                             Ok(()) => {
                                 *status = format!(
-                                    "Published → {id} {} (qos={} retain={})",
+                                    "Published → {broker} {} (qos={} retain={})",
                                     draft.topic,
                                     draft.qos.as_u8(),
                                     draft.retain
@@ -85,7 +90,7 @@ pub fn draw(
                             }
                             Err(e) => {
                                 *status = format!(
-                                    "Published → {id} {} (history save failed: {e})",
+                                    "Published → {broker} {} (history save failed: {e})",
                                     draft.topic
                                 );
                             }
@@ -121,7 +126,8 @@ pub fn draw(
                 if ui
                     .selectable_label(false, RichText::new(label).monospace().small())
                     .on_hover_text(format!(
-                        "topic={} qos={} retain={}\n{}",
+                        "broker={} topic={} qos={} retain={}\n{}",
+                        entry.profile_name,
                         entry.topic,
                         entry.qos.as_u8(),
                         entry.retain,
@@ -130,7 +136,12 @@ pub fn draw(
                     .clicked()
                 {
                     draft.apply_recent(entry);
-                    *status = format!("Restored recent #{}: {}", i + 1, entry.topic);
+                    *status = format!(
+                        "Restored recent #{}: {} · {}",
+                        i + 1,
+                        entry.profile_name,
+                        entry.topic
+                    );
                 }
             }
         });

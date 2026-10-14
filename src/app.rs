@@ -19,10 +19,11 @@ use crate::ui::shortcuts::{self, Action as ShortcutAction};
 use crate::ui::{
     pin_board, profiles, publish_panel, search_bar, settings_panel, topic_tree_panel, traffic_panel,
 };
+use crate::ui::flash;
 use eframe::egui::{self, Color32, FontId, RichText, TextStyle, TextureHandle, ViewportBuilder, ViewportId};
 use image::RgbaImage;
 use std::collections::BTreeMap;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 /// Profiles left panel: resize handle cannot drag narrower than this (no see-through gap).
 const PROFILES_PANEL_MIN_W: f32 = 240.0;
@@ -76,7 +77,6 @@ pub struct MqttMonitorApp {
     profiles_auto_opened: bool,
     expand_all_once: Option<bool>,
     auto_reconnect_done: bool,
-    last_flash_repaint: Instant,
 }
 
 impl MqttMonitorApp {
@@ -110,7 +110,6 @@ impl MqttMonitorApp {
             profiles_auto_opened: false,
             expand_all_once: None,
             auto_reconnect_done: false,
-            last_flash_repaint: Instant::now(),
         }
     }
 
@@ -662,18 +661,18 @@ impl eframe::App for MqttMonitorApp {
             self.status = msg;
         }
 
+        // egui idles without input — keep frames flowing while any fade is live.
+        let now = Instant::now();
         let flashing = self.sessions.open.values().any(|s| {
-            s.flash_until
-                .map(|t| Instant::now() < t)
-                .unwrap_or(false)
-        }) || self.pins.items.values().any(|p| {
-            p.flash_until
-                .map(|t| Instant::now() < t)
-                .unwrap_or(false)
-        });
-        if flashing && self.last_flash_repaint.elapsed() > Duration::from_millis(32) {
-            self.last_flash_repaint = Instant::now();
-            ctx.request_repaint_after(Duration::from_millis(32));
+            flash::flash_active(s.flash_until, now)
+                || flash::tree_flash_active(&s.topic_tree.root, now)
+        }) || self
+            .pins
+            .items
+            .values()
+            .any(|p| flash::flash_active(p.flash_until, now));
+        if flashing {
+            ctx.request_repaint();
         }
 
         self.handle_shortcuts(ctx);
