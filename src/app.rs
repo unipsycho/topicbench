@@ -5,7 +5,7 @@
 
 use crate::mqtt::pins::PinBoard;
 use crate::mqtt::profile::ProfileStore;
-use crate::mqtt::publish::PublishDraft;
+use crate::mqtt::publish::{PublishDraft, PublishHistory};
 use crate::mqtt::session::SessionManager;
 use crate::mqtt::settings::AppSettings;
 use crate::mqtt::subscribe;
@@ -54,6 +54,7 @@ pub struct MqttMonitorApp {
     pub sessions: SessionManager,
     pub pins: PinBoard,
     pub publish: PublishDraft,
+    pub publish_history: PublishHistory,
     pub settings: AppSettings,
     pub profile_filter: ProfileListFilter,
     pub search: SearchFilter,
@@ -82,6 +83,7 @@ impl MqttMonitorApp {
             sessions: SessionManager::default(),
             pins: PinBoard::default(),
             publish: PublishDraft::default(),
+            publish_history: PublishHistory::load(),
             settings,
             profile_filter: ProfileListFilter::All,
             search: SearchFilter::default(),
@@ -509,7 +511,14 @@ impl eframe::App for MqttMonitorApp {
             egui::SidePanel::right("publish")
                 .default_width(280.0)
                 .show(ctx, |ui| {
-                    publish_panel::draw(ui, &mut self.publish, &self.sessions, &mut self.status);
+                    publish_panel::draw(
+                        ui,
+                        &mut self.publish,
+                        &mut self.publish_history,
+                        &self.sessions,
+                        &self.icons,
+                        &mut self.status,
+                    );
                 });
         }
 
