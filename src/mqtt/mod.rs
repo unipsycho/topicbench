@@ -8,3 +8,4 @@ pub mod session;
 pub mod settings;
 pub mod subscribe;
 pub mod topic_tree;
+pub mod value_path;

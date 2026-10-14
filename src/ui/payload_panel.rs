@@ -1,12 +1,14 @@
 //! Payload side panel — live Value view for the selected topic tree row + find.
 
 use crate::mqtt::pins::{DetectedValue, PinBoard};
-use crate::mqtt::profile::ProfileStore;
+use crate::mqtt::profile::{ProfileStore, StickyViewMode};
 use crate::mqtt::session::SessionManager;
+use crate::mqtt::value_path;
 use crate::ui::hover_tip;
 use crate::ui::icons::IconSet;
 use crate::ui::json_view;
 use eframe::egui::{self, Align, Color32, Key, RichText};
+use std::time::Instant;
 
 fn match_line_fill() -> Color32 {
     Color32::from_rgba_unmultiplied(90, 80, 30, 90)
@@ -56,10 +58,12 @@ struct MatchHit {
 pub fn draw(
     ui: &mut egui::Ui,
     sessions: &SessionManager,
-    profiles: &ProfileStore,
-    pins: &PinBoard,
+    profiles: &mut ProfileStore,
+    pins: &mut PinBoard,
     icons: &IconSet,
     search: &mut PayloadSearch,
+    open_stickies: &mut bool,
+    status: &mut String,
 ) {
     ui.horizontal(|ui| {
         if let Some(tex) = icons.get("panel_undock") {
@@ -74,43 +78,53 @@ pub fn draw(
     ui.label("Live Value view for the selected topic.");
     ui.add_space(4.0);
 
-    let Some((profile_id, profile_name, topic)) = pins.last_tree_focus.as_ref() else {
+    let Some((profile_id, profile_name, topic)) = pins.last_tree_focus.clone() else {
         ui.weak("Select a topic in the tree.");
         return;
     };
 
     let accent = profiles
         .profiles
-        .get(profile_id)
+        .get(&profile_id)
         .map(|p| p.color())
         .unwrap_or(Color32::from_rgb(90, 190, 120));
 
     // Header: broker (accent) + full topic path.
     ui.horizontal(|ui| {
-        ui.label(RichText::new(profile_name).strong().color(accent));
-        ui.label(RichText::new(topic).monospace().small());
+        ui.label(RichText::new(&profile_name).strong().color(accent));
+        ui.label(RichText::new(&topic).monospace().small());
     });
     ui.add_space(4.0);
 
     let node = sessions
         .open
-        .get(profile_id)
-        .and_then(|s| s.topic_tree.root.node_at(topic));
+        .get(&profile_id)
+        .and_then(|s| s.topic_tree.root.node_at(&topic));
 
     match node {
         Some(n) if n.last_payload.as_deref().is_some_and(|p| !p.is_empty()) => {
-            let payload = n.last_payload.as_deref().unwrap_or("");
-            let display = display_text(payload);
+            let payload = n.last_payload.as_deref().unwrap_or("").to_string();
+            let display = display_text(&payload);
+            let is_json = json_view::try_pretty_json(&payload).is_some();
             draw_search_bar(ui, icons, search, &display);
             ui.add_space(4.0);
             // Message count sits on the JSON/Value intro row (not its own line above).
             draw_searchable_body(
                 ui,
                 &display,
-                json_view::try_pretty_json(payload).is_some(),
+                is_json,
                 ("payload-panel", profile_id.as_str(), topic.as_str()),
                 search,
                 n.message_count,
+                icons,
+                &profile_id,
+                &profile_name,
+                &topic,
+                &payload,
+                pins,
+                profiles,
+                open_stickies,
+                status,
             );
         }
         _ => {
@@ -210,6 +224,15 @@ fn draw_searchable_body(
     id_salt: impl std::hash::Hash,
     search: &mut PayloadSearch,
     message_count: u64,
+    icons: &IconSet,
+    profile_id: &str,
+    profile_name: &str,
+    topic: &str,
+    raw_payload: &str,
+    pins: &mut PinBoard,
+    profiles: &mut ProfileStore,
+    open_stickies: &mut bool,
+    status: &mut String,
 ) {
     let matches = find_matches(display, &search.query);
     let n = matches.len();
@@ -239,6 +262,21 @@ fn draw_searchable_body(
     let height = ui.available_height().max(80.0);
     let font_size = ui.text_style_height(&egui::TextStyle::Monospace);
     let lines: Vec<&str> = display.split('\n').collect();
+    // Per-line JSON field path when the leaf is number/bool (graphable).
+    let graph_paths: Vec<Option<String>> = if is_json {
+        value_path::graphable_paths_per_line(display)
+    } else {
+        // Whole-payload scalar Value: one graphable row, no field path.
+        let graphable = matches!(
+            DetectedValue::from_payload(raw_payload),
+            DetectedValue::Bool(_) | DetectedValue::Number(_)
+        );
+        lines
+            .iter()
+            .enumerate()
+            .map(|(i, _)| if graphable && i == 0 { Some(String::new()) } else { None })
+            .collect()
+    };
     // Byte offset of each line start in `display`.
     let mut line_starts = Vec::with_capacity(lines.len());
     let mut off = 0usize;
@@ -295,16 +333,57 @@ fn draw_searchable_body(
                     json_view::plain_line_job_with_search(line, font_size, &line_hits, current_hit)
                 };
 
+                let graph_path = graph_paths.get(li).and_then(|p| p.as_ref());
                 let resp = egui::Frame::NONE
                     .fill(fill)
                     .inner_margin(egui::Margin::symmetric(2, 0))
                     .show(ui, |ui| {
-                        ui.add(
-                            egui::Label::new(job)
-                                .wrap()
-                                .selectable(true)
-                                .halign(Align::LEFT),
-                        )
+                        ui.horizontal(|ui| {
+                            ui.spacing_mut().item_spacing.x = 2.0;
+                            // Far-left graph pin for numeric / boolean leaves.
+                            if let Some(path) = graph_path {
+                                let path_opt = if path.is_empty() {
+                                    None
+                                } else {
+                                    Some(path.as_str())
+                                };
+                                let sticky_topic = value_path::sticky_id(topic, path_opt);
+                                let tip = if let Some(p) = path_opt {
+                                    format!("Sticky Graph: {topic} · {p}")
+                                } else {
+                                    format!("Sticky Graph: {topic}")
+                                };
+                                if icons.tiny(ui, "line_graph", false, &tip).clicked() {
+                                    let current = if let Some(p) = path_opt {
+                                        value_path::extract_path_value(raw_payload, p)
+                                            .unwrap_or_else(|| line.trim().trim_end_matches(',').to_string())
+                                    } else {
+                                        display.trim().to_string()
+                                    };
+                                    pins.pin_graph(
+                                        profile_id,
+                                        profile_name,
+                                        &sticky_topic,
+                                        &current,
+                                        Instant::now(),
+                                    );
+                                    profiles.set_sticky_and_save(profile_id, &sticky_topic, true);
+                                    profiles.set_sticky_view_mode_and_save(
+                                        profile_id,
+                                        &sticky_topic,
+                                        StickyViewMode::Graph,
+                                    );
+                                    *open_stickies = true;
+                                    *status = format!("Sticky Graph · {sticky_topic}");
+                                }
+                            }
+                            ui.add(
+                                egui::Label::new(job)
+                                    .wrap()
+                                    .selectable(true)
+                                    .halign(Align::LEFT),
+                            );
+                        });
                     })
                     .response;
 

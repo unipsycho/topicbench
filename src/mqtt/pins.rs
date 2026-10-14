@@ -162,26 +162,64 @@ impl PinBoard {
         now: Instant,
     ) {
         let flash = now + Duration::from_millis(FLASH_MS);
-        let numeric = payload.trim().parse::<f64>().ok();
         for sticky in self.items.values_mut() {
             if sticky.profile_id != profile_id {
                 continue;
             }
-            if sticky.topic == topic
-                || crate::mqtt::subscribe::topic_matches_filter(topic, &sticky.topic)
-            {
-                sticky.profile_name = profile_name.to_string();
-                sticky.last_payload = payload.to_string();
-                sticky.message_count = sticky.message_count.saturating_add(1);
-                sticky.flash_until = Some(flash);
+            let (base, path) = crate::mqtt::value_path::split_sticky_id(&sticky.topic);
+            let matches = base == topic
+                || crate::mqtt::subscribe::topic_matches_filter(topic, base);
+            if !matches {
+                continue;
+            }
+            // Field-path stickies store the extracted scalar so Graph can plot it.
+            let extracted = match path {
+                Some(p) => crate::mqtt::value_path::extract_path_value(payload, p)
+                    .unwrap_or_else(|| payload.to_string()),
+                None => payload.to_string(),
+            };
+            let numeric = crate::mqtt::value_path::sample_numeric(&extracted);
+            sticky.profile_name = profile_name.to_string();
+            sticky.last_payload = extracted.clone();
+            sticky.message_count = sticky.message_count.saturating_add(1);
+            sticky.flash_until = Some(flash);
+            sticky.history.push_back(HistorySample {
+                at: now,
+                payload: extracted,
+                numeric,
+            });
+            while sticky.history.len() > HISTORY_CAP {
+                sticky.history.pop_front();
+            }
+        }
+    }
+
+    /// Pin (or switch) a topic/field sticky into Graph view and seed current sample.
+    pub fn pin_graph(
+        &mut self,
+        profile_id: &str,
+        profile_name: &str,
+        sticky_topic: &str,
+        current_value: &str,
+        now: Instant,
+    ) {
+        self.pin_with_mode(
+            profile_id,
+            profile_name,
+            sticky_topic,
+            StickyViewMode::Graph,
+        );
+        let key = Self::key(profile_id, sticky_topic);
+        if let Some(sticky) = self.items.get_mut(&key) {
+            let numeric = crate::mqtt::value_path::sample_numeric(current_value);
+            sticky.last_payload = current_value.to_string();
+            if sticky.history.is_empty() {
                 sticky.history.push_back(HistorySample {
                     at: now,
-                    payload: payload.to_string(),
+                    payload: current_value.to_string(),
                     numeric,
                 });
-                while sticky.history.len() > HISTORY_CAP {
-                    sticky.history.pop_front();
-                }
+                sticky.message_count = sticky.message_count.max(1);
             }
         }
     }
