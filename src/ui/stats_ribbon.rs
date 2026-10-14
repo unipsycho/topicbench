@@ -1,7 +1,7 @@
 //! Compact Stats ribbon group: centered vertical stack that hugs content width.
 //!
-//! Drawn as an exact-size tinted block (not via `ribbon_group`) so a wide leftover
-//! ribbon allocation cannot stretch the panel and scramble centering.
+//! Exact-size tinted block matching other ribbon groups' height (`CMD_H` + frame
+//! pad) so top/bottom edges align with App / Panels / Profiles.
 
 use crate::mqtt::traffic_stats::TrafficStats;
 use crate::ui::icons::{CHROME_CAPTION, CHROME_MUTED, CHROME_TEXT, TINT_STATS};
@@ -9,32 +9,31 @@ use eframe::egui::{self, Align, FontId, Sense, Vec2};
 use eframe::epaint::TextShape;
 use std::f32::consts::FRAC_PI_2;
 
-/// Match `icons::SECTION_RAIL_W` / label nudge for the rotated caption.
+/// Match `icons` ribbon_group: rail + `CMD_H` body + `Margin::symmetric(4, 3)`.
 const RAIL_W: f32 = 18.0;
 const RAIL_NUDGE_X: f32 = 14.0;
 const FRAME_PAD_X: f32 = 4.0;
 const FRAME_PAD_Y: f32 = 3.0;
+/// Same content height as New/Save/Settings command cells (`icons::CMD_H`).
+const BODY_H: f32 = 64.0;
 const RAIL_GAP: f32 = 4.0;
-/// Horizontal padding inside the content column (both sides).
 const H_PAD: f32 = 6.0;
-/// Breath between Thru and projections.
-const MID_GAP: f32 = 6.0;
-const ROW_MAIN: f32 = 10.0;
-const ROW_PROJ: f32 = 9.0;
-const ROW_H_MAIN: f32 = 11.0;
-const ROW_H_PROJ: f32 = 10.0;
+/// Breath between Thru and /hr /day (tight enough to fit BODY_H).
+const MID_GAP: f32 = 4.0;
+const ROW_MAIN: f32 = 9.0;
+const ROW_PROJ: f32 = 8.5;
+const ROW_H_MAIN: f32 = 10.0;
+const ROW_H_PROJ: f32 = 9.0;
 
 /// Draw the far-right Stats ribbon category (process-lifetime counters).
 pub fn draw_group(ui: &mut egui::Ui, stats: &TrafficStats) {
     let d = stats.display();
 
-    // One metric per line — same center alignment for every row.
     let lines_main = [
         format!("Recv {}", d.recv),
         format!("Sent {}", d.sent),
         format!("Thru {}", d.thru),
     ];
-    // /mo dropped so the group fits ribbon height.
     let lines_proj = [format!("{}/hr", d.per_h), format!("{}/day", d.per_d)];
 
     let text_w = {
@@ -48,12 +47,14 @@ pub fn draw_group(ui: &mut egui::Ui, stats: &TrafficStats) {
         w.ceil()
     };
     let content_w = text_w + H_PAD * 2.0;
+    // Five lines + mid-gap must fit inside BODY_H (same as other ribbon sections).
     let content_h = ROW_H_MAIN * 3.0 + MID_GAP + ROW_H_PROJ * 2.0;
-    let body_h = content_h.max(58.0);
-    let total_w = FRAME_PAD_X * 2.0 + RAIL_W + RAIL_GAP + content_w;
-    let total_h = FRAME_PAD_Y * 2.0 + body_h;
+    debug_assert!(content_h <= BODY_H);
 
-    // Exact outer size — panel cannot grow into leftover ribbon width.
+    let total_w = FRAME_PAD_X * 2.0 + RAIL_W + RAIL_GAP + content_w;
+    // Outer height matches `ribbon_group`: pad + CMD_H + pad.
+    let total_h = FRAME_PAD_Y * 2.0 + BODY_H;
+
     let (outer, _) = ui.allocate_exact_size(Vec2::new(total_w, total_h), Sense::hover());
     ui.painter().rect_filled(outer, 3.0, TINT_STATS);
 
@@ -61,15 +62,16 @@ pub fn draw_group(ui: &mut egui::Ui, stats: &TrafficStats) {
         egui::pos2(outer.left() + FRAME_PAD_X, outer.top() + FRAME_PAD_Y),
         egui::pos2(outer.right() - FRAME_PAD_X, outer.bottom() - FRAME_PAD_Y),
     );
-    let rail = egui::Rect::from_min_size(inner.min, Vec2::new(RAIL_W, body_h));
+    let rail = egui::Rect::from_min_size(inner.min, Vec2::new(RAIL_W, BODY_H));
     paint_rotated_label(ui, rail, "Stats");
 
     let content = egui::Rect::from_min_max(
         egui::pos2(rail.right() + RAIL_GAP, inner.top()),
-        egui::pos2(inner.right(), inner.bottom()),
+        egui::pos2(inner.right(), inner.top() + BODY_H),
     );
     let cx = content.center().x;
-    let mut y = content.top() + (body_h - content_h) * 0.5;
+    // Vertically center the five-line stack in the shared BODY_H.
+    let mut y = content.top() + (BODY_H - content_h) * 0.5;
 
     for s in &lines_main {
         paint_centered(ui, cx, y, ROW_H_MAIN, s, ROW_MAIN, CHROME_TEXT);
