@@ -79,19 +79,27 @@ pub fn draw(
         }
         ui.heading("Profiles");
     });
-    ui.label("Edit fields here — New / Save / Delete are on the ribbon.");
     ui.add_space(4.0);
 
-    ui.horizontal(|ui| {
-        ui.label("Show");
-        ui.selectable_value(list_filter, ProfileListFilter::All, "All");
-        ui.selectable_value(list_filter, ProfileListFilter::ConnectedOnly, "Connected");
-    });
-    ui.weak(ProfileStore::path().display().to_string());
+    // Filter sits above the list, visually distinct (chrome strip, not a list row).
+    egui::Frame::NONE
+        .fill(Color32::from_rgb(48, 52, 60))
+        .corner_radius(3.0)
+        .inner_margin(egui::Margin::symmetric(8, 5))
+        .show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.label(RichText::new("Show").small().color(Color32::from_rgb(170, 176, 188)));
+                ui.selectable_value(list_filter, ProfileListFilter::All, "All");
+                ui.selectable_value(list_filter, ProfileListFilter::ConnectedOnly, "Connected");
+            });
+        });
     ui.add_space(6.0);
 
+    // Selectable full-width list rows (name + status + count).
     let now = Instant::now();
     let ids: Vec<String> = profiles.profiles.keys().cloned().collect();
+    let row_bg = Color32::from_rgb(36, 38, 44);
+    let row_bg_sel = Color32::from_rgb(48, 78, 112);
     for id in &ids {
         let Some(profile) = profiles.profiles.get(id) else {
             continue;
@@ -107,22 +115,35 @@ pub fn draw(
         let msg_count = session.map(|s| s.message_count).unwrap_or(0);
         let flash_until = session.and_then(|s| s.flash_until);
 
-        let fill = flash::flash_fill(flash_until, now).unwrap_or(Color32::TRANSPARENT);
-        egui::Frame::NONE
-            .fill(fill)
-            .inner_margin(egui::Margin::symmetric(4, 2))
-            .show(ui, |ui| {
-                ui.horizontal(|ui| {
-                    ui.spacing_mut().item_spacing.x = 4.0;
-                    if ui.selectable_label(selected, &profile.name).clicked() {
-                        profiles.selected_id = Some(id.clone());
-                    }
-                    draw_session_status(ui, icons, state);
-                    if msg_count > 0 {
-                        ui.label(RichText::new(format!("#{msg_count}")).strong());
-                    }
-                });
+        let fill = flash::flash_fill(flash_until, now)
+            .unwrap_or(if selected { row_bg_sel } else { row_bg });
+        // Full-width selectable row (click anywhere on the strip).
+        let row_h = 28.0;
+        let (rect, response) =
+            ui.allocate_exact_size(egui::vec2(ui.available_width(), row_h), egui::Sense::click());
+        ui.painter().rect_filled(rect, 2.0, fill);
+        ui.allocate_new_ui(egui::UiBuilder::new().max_rect(rect.shrink2(egui::vec2(8.0, 4.0))), |ui| {
+            ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                ui.spacing_mut().item_spacing.x = 6.0;
+                ui.label(
+                    RichText::new(&profile.name)
+                        .strong()
+                        .color(if selected {
+                            Color32::from_rgb(210, 225, 255)
+                        } else {
+                            Color32::from_rgb(230, 232, 238)
+                        }),
+                );
+                draw_session_status(ui, icons, state);
+                if msg_count > 0 {
+                    ui.label(RichText::new(format!("#{msg_count}")).strong());
+                }
             });
+        });
+        if response.clicked() {
+            profiles.selected_id = Some(id.clone());
+        }
+        ui.add_space(2.0);
     }
 
     ui.add_space(8.0);
