@@ -287,6 +287,13 @@ impl SessionManager {
                         pins.on_message(&profile_id, &name, &topic, &payload, now);
                     }
                 }
+                BrokerEvent::Notice { profile_id, detail } => {
+                    if let Some(session) = self.open.get(&profile_id) {
+                        if !session.user_stopped {
+                            status = Some(format!("{}: {detail}", session.profile_name));
+                        }
+                    }
+                }
             }
         }
 

@@ -4,12 +4,14 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
 
-/// rumqttc incoming packet decode floor (2 KB).
+/// Soft UI payload floor (2 KB) — Settings slider minimum.
 pub const MAX_PACKET_MIN: usize = 2 * 1024;
-/// rumqttc incoming packet decode ceiling (1 MB) — `#` / retained floods can be large.
+/// Soft UI payload ceiling (1 MB) — Settings slider maximum.
 pub const MAX_PACKET_MAX: usize = 1024 * 1024;
-/// Default max packet size (256 KB) — above rumqttc’s ~10 KB default; safer for `#`.
+/// Default soft UI payload limit (256 KB).
 pub const MAX_PACKET_DEFAULT: usize = 256 * 1024;
+/// rumqttc wire decode ceiling — high enough that oversize is a soft skip, not a disconnect.
+pub const WIRE_MAX_PACKET: usize = 16 * 1024 * 1024;
 
 /// Font zoom: 4 steps down, default, 5 steps up.
 pub const FONT_ZOOM_MIN: i8 = -4;
@@ -17,31 +19,45 @@ pub const FONT_ZOOM_MAX: i8 = 5;
 /// Relative size change per zoom step (~10%).
 pub const FONT_ZOOM_STEP_FACTOR: f32 = 0.10;
 
-/// How the topic tree opens by default.
+/// How deep the topic tree opens on connect / first show.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TopicTreeExpandMode {
-    /// Only top-level segments open.
-    ExpandRoot,
+    /// Open the first level of segments (was `expand_root`).
+    #[serde(alias = "expand_root")]
+    Expand1,
+    /// Open two levels deep.
+    Expand2,
+    /// Open three levels deep.
+    Expand3,
     /// Every branch starts open.
     ExpandAll,
-    /// Everything starts collapsed.
-    CollapseAll,
 }
 
 impl TopicTreeExpandMode {
     pub fn label(self) -> &'static str {
         match self {
-            Self::ExpandRoot => "Expand root only",
+            Self::Expand1 => "Expand 1 level",
+            Self::Expand2 => "Expand 2 levels",
+            Self::Expand3 => "Expand 3 levels",
             Self::ExpandAll => "Expand all",
-            Self::CollapseAll => "Collapse all",
+        }
+    }
+
+    /// Nodes with `depth < levels()` start open (`ExpandAll` = unlimited).
+    pub fn levels(self) -> Option<usize> {
+        match self {
+            Self::Expand1 => Some(1),
+            Self::Expand2 => Some(2),
+            Self::Expand3 => Some(3),
+            Self::ExpandAll => None,
         }
     }
 }
 
 impl Default for TopicTreeExpandMode {
     fn default() -> Self {
-        Self::ExpandRoot
+        Self::Expand1
     }
 }
 
@@ -116,7 +132,7 @@ impl Default for AppSettings {
     fn default() -> Self {
         Self {
             auto_reconnect_on_reload: true,
-            topic_tree_expand: TopicTreeExpandMode::ExpandRoot,
+            topic_tree_expand: TopicTreeExpandMode::Expand1,
             last_connected: Vec::new(),
             max_packet_bytes: MAX_PACKET_DEFAULT,
             sticky_layout: StickyLayoutMode::Rows,
