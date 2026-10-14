@@ -355,52 +355,54 @@ impl MqttMonitorApp {
                 ui.with_layout(egui::Layout::left_to_right(egui::Align::Min), |ui| {
                     ui.spacing_mut().item_spacing.x = 4.0;
 
-                    // Brand block: logo + two-line title, vertically centered; groups sit to the right.
-                    ui.horizontal(|ui| {
-                        ui.spacing_mut().item_spacing.x = 0.0;
+                    // Brand block: logo + two-line title, vertically centered in ribbon height.
+                    // Title column fills the gap before Profiles (no empty dead space after "Master").
+                    {
                         let logo_w = self
                             .logo
                             .as_ref()
                             .map(|l| l.size_vec2().x)
                             .unwrap_or(108.0);
-                        // Breathing room: logo | title | ribbon.
-                        let title_w = 72.0;
-                        let brand_w = logo_w + 10.0 + title_w + 12.0;
-                        ui.set_width(brand_w);
-                        ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                            ui.spacing_mut().item_spacing.x = 0.0;
-                            if let Some(logo) = &self.logo {
-                                let size = logo.size_vec2();
-                                ui.add(
-                                    egui::Image::new(logo)
-                                        .fit_to_exact_size(size)
-                                        .maintain_aspect_ratio(true)
-                                        .sense(egui::Sense::hover()),
-                                );
-                            }
-                            // Margin between logo and title.
-                            ui.add_space(10.0);
-                            let green = Color32::from_rgb(90, 190, 120); // Connected/status green
-                            ui.vertical(|ui| {
-                                ui.spacing_mut().item_spacing.y = 0.0;
-                                ui.set_width(title_w);
-                                ui.label(
-                                    RichText::new("MQTT")
-                                        .strong()
-                                        .size(16.0)
-                                        .color(green),
-                                );
-                                ui.label(
-                                    RichText::new("Master")
-                                        .strong()
-                                        .size(16.0)
-                                        .color(green),
-                                );
-                            });
-                            // Margin before ribbon groups.
-                            ui.add_space(12.0);
-                        });
-                    });
+                        let brand_h = 70.0; // match ribbon group / separator height
+                        let title_w = 150.0; // claim former whitespace before Profiles divider
+                        let brand_w = logo_w + 10.0 + title_w + 8.0;
+                        let green = Color32::from_rgb(90, 190, 120); // Connected/status green
+                        ui.allocate_ui_with_layout(
+                            egui::vec2(brand_w, brand_h),
+                            egui::Layout::left_to_right(egui::Align::Center),
+                            |ui| {
+                                ui.spacing_mut().item_spacing.x = 0.0;
+                                if let Some(logo) = &self.logo {
+                                    let size = logo.size_vec2();
+                                    ui.add(
+                                        egui::Image::new(logo)
+                                            .fit_to_exact_size(size)
+                                            .maintain_aspect_ratio(true)
+                                            .sense(egui::Sense::hover()),
+                                    );
+                                }
+                                ui.add_space(10.0);
+                                ui.vertical(|ui| {
+                                    ui.spacing_mut().item_spacing.y = 0.0;
+                                    ui.set_min_width(title_w);
+                                    ui.set_width(title_w);
+                                    // Bold + slightly larger; fills the title column width.
+                                    ui.label(
+                                        RichText::new("MQTT")
+                                            .strong()
+                                            .size(20.0)
+                                            .color(green),
+                                    );
+                                    ui.label(
+                                        RichText::new("Master")
+                                            .strong()
+                                            .size(20.0)
+                                            .color(green),
+                                    );
+                                });
+                            },
+                        );
+                    }
 
                     icons::ribbon_separator(ui);
 

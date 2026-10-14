@@ -6,10 +6,10 @@ use std::path::PathBuf;
 
 /// rumqttc incoming packet decode floor (2 KB).
 pub const MAX_PACKET_MIN: usize = 2 * 1024;
-/// rumqttc incoming packet decode ceiling (256 KB).
-pub const MAX_PACKET_MAX: usize = 256 * 1024;
-/// Default max packet size (64 KB) — above rumqttc’s ~10 KB default.
-pub const MAX_PACKET_DEFAULT: usize = 64 * 1024;
+/// rumqttc incoming packet decode ceiling (1 MB) — `#` / retained floods can be large.
+pub const MAX_PACKET_MAX: usize = 1024 * 1024;
+/// Default max packet size (256 KB) — above rumqttc’s ~10 KB default; safer for `#`.
+pub const MAX_PACKET_DEFAULT: usize = 256 * 1024;
 
 /// Font zoom: 4 steps down, default, 5 steps up.
 pub const FONT_ZOOM_MIN: i8 = -4;
@@ -180,6 +180,11 @@ impl AppSettings {
             Ok(text) => serde_json::from_str(&text).unwrap_or_default(),
             Err(_) => Self::default(),
         };
+        // Soft-migrate the old 64 KB default — `#` retained dumps on AMI brokers exceed it.
+        const OLD_DEFAULT: usize = 64 * 1024;
+        if s.max_packet_bytes == OLD_DEFAULT {
+            s.max_packet_bytes = MAX_PACKET_DEFAULT;
+        }
         s.max_packet_bytes = Self::clamp_max_packet(s.max_packet_bytes);
         s.sticky_columns = Self::clamp_sticky_columns(s.sticky_columns);
         s.font_zoom_step = Self::clamp_font_zoom(s.font_zoom_step);
@@ -220,7 +225,8 @@ mod tests {
         assert_eq!(AppSettings::clamp_max_packet(0), MAX_PACKET_MIN);
         assert_eq!(AppSettings::clamp_max_packet(1024), MAX_PACKET_MIN);
         assert_eq!(AppSettings::clamp_max_packet(64 * 1024), 64 * 1024);
-        assert_eq!(AppSettings::clamp_max_packet(512 * 1024), MAX_PACKET_MAX);
+        assert_eq!(AppSettings::clamp_max_packet(256 * 1024), 256 * 1024);
+        assert_eq!(AppSettings::clamp_max_packet(2 * 1024 * 1024), MAX_PACKET_MAX);
     }
 
     #[test]

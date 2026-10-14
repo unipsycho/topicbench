@@ -125,7 +125,7 @@ pub fn draw(
         }
     });
     ui.weak(
-        "Caps rumqttc decode size (2–256 KB). Applied on the next Connect — reconnect after changing.",
+        "Caps rumqttc decode size (2 KB–1 MB). Applied on the next Connect — reconnect after changing. A `#` flood with a larger retained/live packet will end the session until this is raised.",
     );
 
     ui.add_space(12.0);
