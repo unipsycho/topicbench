@@ -4,6 +4,7 @@ use crate::mqtt::settings::{
     AppSettings, StickyLayoutMode, TopicTreeExpandMode, MAX_PACKET_MAX, MAX_PACKET_MIN,
 };
 use crate::ui::icons::IconSet;
+use crate::ui::shortcuts;
 use eframe::egui;
 
 pub fn draw(
@@ -139,7 +140,11 @@ pub fn draw(
 
     ui.add_space(12.0);
     ui.strong("Keyboard");
-    if ui.button("Keyboard shortcuts…").clicked() {
+    if ui
+        .button("Keyboard shortcuts…")
+        .on_hover_text(shortcuts::tip("Open Keyboard shortcuts help", "F1 / ?"))
+        .clicked()
+    {
         *open_shortcuts = true;
     }
     ui.weak("Also F1 or ? (when not typing). Lists every binding.");

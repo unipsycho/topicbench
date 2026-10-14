@@ -9,6 +9,7 @@ use crate::ui::flash;
 use crate::ui::icons::IconSet;
 use crate::ui::json_view;
 use crate::ui::search_bar::SearchFilter;
+use crate::ui::shortcuts;
 use eframe::egui::{self, Color32, RichText};
 use std::time::Instant;
 
@@ -338,17 +339,16 @@ fn leaf_row(
         }
 
         let sticky = pins.is_sticky(profile_id, full_topic);
+        let sticky_tip = shortcuts::tip(
+            if sticky {
+                "Remove sticky"
+            } else {
+                "Pin sticky"
+            },
+            "Ctrl+Shift+S",
+        );
         if icons
-            .tiny(
-                ui,
-                "sticky_topic",
-                sticky,
-                if sticky {
-                    "Remove sticky"
-                } else {
-                    "Pin sticky"
-                },
-            )
+            .tiny(ui, "sticky_topic", sticky, &sticky_tip)
             .clicked()
         {
             pins.last_tree_focus = Some((
@@ -509,8 +509,28 @@ fn scrollable_hover(
 
     let active: Option<egui::Id> = ctx.data(|d| d.get_temp(active_key));
     let is_ours = active == Some(popup_id);
+
+    // Click outside the sticky zone (popup / anchor / gap) dismisses.
+    let click_outside = is_ours
+        && ctx.input(|i| i.pointer.primary_clicked())
+        && pointer.is_some_and(|p| {
+            let in_anchor = resp.rect.expand2(egui::vec2(2.0, 2.0)).contains(p);
+            let in_popup = popup_rect.is_some_and(|r| r.expand(2.0).contains(p));
+            let in_bridge = popup_rect.is_some_and(|pr| {
+                let left = resp.rect.left().min(pr.left()) - 4.0;
+                let right = resp.rect.right().max(pr.right()) + 4.0;
+                let top = resp.rect.bottom().min(pr.top()) - 2.0;
+                let bottom = resp.rect.bottom().max(pr.top()) + 2.0;
+                egui::Rect::from_min_max(egui::pos2(left, top), egui::pos2(right, bottom))
+                    .contains(p)
+            });
+            !(in_anchor || in_popup || in_bridge)
+        });
+
     // Only one popup: while another is active, ignore hover on other rows.
-    let open = if is_ours {
+    let open = if click_outside {
+        false
+    } else if is_ours {
         over_anchor || over_popup || over_bridge
     } else if active.is_none() && over_anchor {
         true
@@ -520,7 +540,7 @@ fn scrollable_hover(
 
     if open {
         ctx.data_mut(|d| d.insert_temp(active_key, popup_id));
-    } else if is_ours {
+    } else if is_ours || click_outside {
         ctx.data_mut(|d| {
             d.remove::<egui::Id>(active_key);
             d.remove_temp::<f32>(scroll_key);

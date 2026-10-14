@@ -12,6 +12,11 @@ pub struct Binding {
     pub action: &'static str,
 }
 
+/// Hover tip with shortcut: `"Settings (Ctrl+,)"`.
+pub fn tip(label: &str, keys: &str) -> String {
+    format!("{label} ({keys})")
+}
+
 /// Final shipped bindings (keep in sync with `consume` + docs/keyboard-shortcuts.md).
 pub const BINDINGS: &[Binding] = &[
     Binding {
