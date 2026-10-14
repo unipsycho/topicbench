@@ -17,6 +17,46 @@ pub enum ProfileListFilter {
     ConnectedOnly,
 }
 
+/// Colored status chip + icon beside each profile name.
+fn draw_session_status(ui: &mut egui::Ui, icons: &IconSet, state: Option<SessionState>) {
+    let (label, color, icon) = match state {
+        Some(SessionState::Connected) => (
+            "Connected",
+            Color32::from_rgb(90, 190, 120),
+            "connect",
+        ),
+        Some(SessionState::Connecting) => (
+            "Connecting",
+            Color32::from_rgb(220, 180, 80),
+            "connection_status",
+        ),
+        Some(SessionState::Disconnected) => (
+            "Disconnected",
+            Color32::from_rgb(180, 110, 110),
+            "disconnect",
+        ),
+        None => (
+            "Closed",
+            Color32::from_rgb(140, 145, 155),
+            "disconnect",
+        ),
+    };
+    // Prefer specific icon; fall back to connection_status if missing.
+    let icon_name = if icons.get(icon).is_some() {
+        icon
+    } else {
+        "connection_status"
+    };
+    if let Some(tex) = icons.get(icon_name) {
+        ui.add(
+            egui::Image::new(tex)
+                .fit_to_exact_size(egui::vec2(14.0, 14.0))
+                .sense(egui::Sense::hover()),
+        );
+    }
+    ui.label(RichText::new(label).small().strong().color(color));
+}
+
 pub fn draw(
     ui: &mut egui::Ui,
     profiles: &mut ProfileStore,
@@ -63,7 +103,7 @@ pub fn draw(
         }
 
         let selected = profiles.selected_id.as_deref() == Some(id.as_str());
-        let session_label = session.map(|s| s.state.label()).unwrap_or("closed");
+        let state = session.map(|s| s.state);
         let msg_count = session.map(|s| s.message_count).unwrap_or(0);
         let flash_until = session.and_then(|s| s.flash_until);
 
@@ -73,10 +113,11 @@ pub fn draw(
             .inner_margin(egui::Margin::symmetric(4, 2))
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 4.0;
                     if ui.selectable_label(selected, &profile.name).clicked() {
                         profiles.selected_id = Some(id.clone());
                     }
-                    ui.label(format!("· {session_label}"));
+                    draw_session_status(ui, icons, state);
                     if msg_count > 0 {
                         ui.label(RichText::new(format!("#{msg_count}")).strong());
                     }
