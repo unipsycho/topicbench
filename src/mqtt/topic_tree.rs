@@ -3,7 +3,8 @@
 use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
 
-pub const FLASH_MS: u64 = 400;
+/// Update-flash duration: full-on border, then fade out (resets on each new value).
+pub const FLASH_MS: u64 = 500;
 
 #[derive(Clone, Debug, Default)]
 pub struct TopicNode {
