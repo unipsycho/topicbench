@@ -105,33 +105,31 @@ pub fn draw(
 
                     ui.separator();
 
-                    // Right: large presentation (taller for JSON Value beautify)
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        let mode = pins
+                    // Presentation pane — always left-aligned (never right_to_left).
+                    let mode = pins
+                        .items
+                        .get(&key)
+                        .map(|p| p.view_mode)
+                        .unwrap_or(StickyViewMode::Raw);
+                    let is_json = matches!(mode, StickyViewMode::Value)
+                        && pins
                             .items
                             .get(&key)
-                            .map(|p| p.view_mode)
-                            .unwrap_or(StickyViewMode::Raw);
-                        let is_json = matches!(mode, StickyViewMode::Value)
-                            && pins
-                                .items
-                                .get(&key)
-                                .is_some_and(|p| json_view::try_pretty_json(&p.last_payload).is_some());
-                        let height = if is_json { 240.0 } else { 72.0 };
-                        ui.allocate_ui_with_layout(
-                            egui::vec2(ui.available_width().max(180.0), height),
-                            egui::Layout::top_down(egui::Align::RIGHT),
-                            |ui| {
-                                if let Some(p) = pins.items.get(&key) {
-                                    match mode {
-                                        StickyViewMode::Raw => draw_raw(ui, p, status),
-                                        StickyViewMode::Value => draw_value(ui, p, status),
-                                        StickyViewMode::Graph => draw_graph(ui, p),
-                                    }
+                            .is_some_and(|p| json_view::try_pretty_json(&p.last_payload).is_some());
+                    let height = if is_json { 240.0 } else { 72.0 };
+                    ui.allocate_ui_with_layout(
+                        egui::vec2(ui.available_width().max(180.0), height),
+                        egui::Layout::top_down(egui::Align::LEFT),
+                        |ui| {
+                            if let Some(p) = pins.items.get(&key) {
+                                match mode {
+                                    StickyViewMode::Raw => draw_raw(ui, p, status),
+                                    StickyViewMode::Value => draw_value(ui, p, &key, status),
+                                    StickyViewMode::Graph => draw_graph(ui, p),
                                 }
-                            },
-                        );
-                    });
+                            }
+                        },
+                    );
                 });
             });
         ui.add_space(4.0);
@@ -146,14 +144,16 @@ fn draw_raw(ui: &mut egui::Ui, pin: &StickyTopic, status: &mut String) {
     clipboard::payload_with_copy(ui, &pin.last_payload, 96, status);
 }
 
-fn draw_value(ui: &mut egui::Ui, pin: &StickyTopic, status: &mut String) {
+fn draw_value(ui: &mut egui::Ui, pin: &StickyTopic, sticky_key: &str, status: &mut String) {
     // Always beautify JSON objects/arrays in Value mode (no settings toggle yet).
     if let Some(pretty) = json_view::try_pretty_json(&pin.last_payload) {
-        json_view::draw_pretty(ui, &pretty);
-        if ui.small_button("Copy JSON").clicked() {
-            ui.ctx().copy_text(pretty);
-            *status = "Copied pretty JSON".into();
-        }
+        json_view::draw_pretty(ui, &pretty, ("sticky-json", sticky_key));
+        ui.push_id(("copy-json", sticky_key), |ui| {
+            if ui.small_button("Copy JSON").clicked() {
+                ui.ctx().copy_text(pretty.clone());
+                *status = "Copied pretty JSON".into();
+            }
+        });
         return;
     }
 

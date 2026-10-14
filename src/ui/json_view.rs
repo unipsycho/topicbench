@@ -1,7 +1,8 @@
-//! Pretty-print + light syntax highlight for sticky Value JSON payloads.
+//! Pretty-print + light syntax highlight for sticky Value / tree JSON payloads.
 
-use eframe::egui::{self, Color32, FontId, TextFormat};
+use eframe::egui::{self, Align, Color32, FontId, Layout, TextFormat};
 use eframe::epaint::text::{LayoutJob, LayoutSection};
+use std::hash::Hash;
 
 /// Keys / structure punctuation on dark chrome.
 const C_KEY: Color32 = Color32::from_rgb(140, 190, 255);
@@ -25,24 +26,68 @@ pub fn try_pretty_json(payload: &str) -> Option<String> {
     serde_json::to_string_pretty(&value).ok()
 }
 
-/// Draw pretty JSON with simple syntax colors inside a scroll area.
-pub fn draw_pretty(ui: &mut egui::Ui, pretty: &str) {
-    ui.label(egui::RichText::new("JSON").small().weak());
-    egui::ScrollArea::vertical()
-        .max_height(220.0)
-        .auto_shrink([false, true])
-        .show(ui, |ui| {
-            let job = highlight_job(pretty);
-            ui.add(egui::Label::new(job).selectable(true));
-        });
+/// One-line preview for dense tree rows (newlines → spaces, truncated).
+pub fn preview_line(payload: &str, max_chars: usize) -> String {
+    let src = try_pretty_json(payload).unwrap_or_else(|| payload.to_string());
+    let flat: String = src
+        .chars()
+        .map(|c| if c == '\n' || c == '\r' { ' ' } else { c })
+        .collect::<String>()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    if flat.chars().count() > max_chars {
+        let trunc: String = flat.chars().take(max_chars.saturating_sub(1)).collect();
+        format!("{trunc}…")
+    } else {
+        flat
+    }
 }
 
-/// Tokenize pretty JSON into a colored `LayoutJob` (keys, strings, numbers, bools, null).
+/// Draw pretty JSON left-aligned with syntax colors. `id_salt` must be unique per row.
+pub fn draw_pretty(ui: &mut egui::Ui, pretty: &str, id_salt: impl Hash) {
+    ui.with_layout(Layout::top_down(Align::LEFT), |ui| {
+        ui.label(egui::RichText::new("JSON").small().weak());
+        egui::ScrollArea::vertical()
+            .id_salt(id_salt)
+            .max_height(220.0)
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                ui.set_max_width(ui.available_width());
+                ui.with_layout(Layout::top_down(Align::LEFT), |ui| {
+                    let job = highlight_job(pretty);
+                    ui.add(
+                        egui::Label::new(job)
+                            .wrap()
+                            .selectable(true)
+                            .halign(Align::LEFT),
+                    );
+                });
+            });
+    });
+}
+
+/// Hover UI: pretty + highlighted JSON (or plain text fallback).
+pub fn hover_payload(ui: &mut egui::Ui, payload: &str, id_salt: impl Hash) {
+    if let Some(pretty) = try_pretty_json(payload) {
+        draw_pretty(ui, &pretty, id_salt);
+    } else {
+        ui.label(egui::RichText::new(payload).monospace());
+    }
+}
+
+/// Colored LayoutJob for inline use (e.g. truncated tree row payload).
+pub fn highlight_layout(src: &str) -> LayoutJob {
+    highlight_job(src)
+}
+
+/// Tokenize pretty JSON into a colored left-aligned `LayoutJob`.
 fn highlight_job(src: &str) -> LayoutJob {
     let font = FontId::monospace(12.0);
     let mut job = LayoutJob {
         text: src.to_string(),
         break_on_newline: true,
+        halign: Align::LEFT,
         ..Default::default()
     };
 
@@ -136,7 +181,7 @@ fn push(job: &mut LayoutJob, start: usize, end: usize, color: Color32, font: Fon
         format: TextFormat {
             font_id: font,
             color,
-            valign: egui::Align::Center,
+            valign: Align::Center,
             ..Default::default()
         },
     });
@@ -147,10 +192,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn pretty_object() {
-        let p = try_pretty_json(r#"{"a":1,"b":true}"#).unwrap();
+    fn pretty_object_indented() {
+        let p = try_pretty_json(r#"{"a":{"b":1},"c":true}"#).unwrap();
         assert!(p.contains('\n'));
-        assert!(p.contains("\"a\""));
+        assert!(p.contains("  \"a\""));
+        assert!(p.contains("    \"b\""));
     }
 
     #[test]
@@ -165,6 +211,13 @@ mod tests {
         let job = highlight_job(src);
         let covered: usize = job.sections.iter().map(|s| s.byte_range.len()).sum();
         assert_eq!(covered, src.len());
-        assert_eq!(job.text, src);
+        assert_eq!(job.halign, Align::LEFT);
+    }
+
+    #[test]
+    fn preview_flattens() {
+        let p = preview_line(r#"{"a":1}"#, 80);
+        assert!(!p.contains('\n'));
+        assert!(p.contains("\"a\""));
     }
 }

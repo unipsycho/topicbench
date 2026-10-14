@@ -7,6 +7,7 @@ use crate::mqtt::settings::TopicTreeExpandMode;
 use crate::mqtt::topic_tree::TopicNode;
 use crate::ui::flash;
 use crate::ui::icons::IconSet;
+use crate::ui::json_view;
 use crate::ui::search_bar::SearchFilter;
 use eframe::egui::{self, Color32, RichText};
 use std::time::Instant;
@@ -49,6 +50,7 @@ pub fn draw(
         }
     });
     ui.label("Per connected broker — colored heading, then that broker’s topics.");
+    ui.weak("Double-click a parent to expand/collapse its whole subtree.");
     ui.add_space(4.0);
 
     let connected: Vec<&Session> = sessions
@@ -105,6 +107,30 @@ pub fn draw(
             filter,
             status,
         );
+    }
+}
+
+/// Stable id for a tree collapsing node (independent of UI nesting).
+fn tree_id(profile_id: &str, path: &str) -> egui::Id {
+    egui::Id::new(("topic-tree", profile_id, path))
+}
+
+/// Recursively set open/closed for every collapsing descendant under `node`.
+fn set_subtree_open(ctx: &egui::Context, profile_id: &str, path: &str, node: &TopicNode, open: bool) {
+    for (seg, child) in &node.children {
+        let child_path = if path.is_empty() {
+            seg.clone()
+        } else {
+            format!("{path}/{seg}")
+        };
+        if !child.children.is_empty() {
+            let id = tree_id(profile_id, &child_path);
+            let mut state =
+                egui::collapsing_header::CollapsingState::load_with_default_open(ctx, id, open);
+            state.set_open(open);
+            state.store(ctx);
+            set_subtree_open(ctx, profile_id, &child_path, child, open);
+        }
     }
 }
 
@@ -169,8 +195,7 @@ fn draw_node(
 
         egui::Frame::NONE.fill(fill).show(ui, |ui| {
             if has_kids {
-                // CollapsingState so we can show subtree totals while collapsed.
-                let id = ui.make_persistent_id(format!("tt-{profile_id}-{child_path}"));
+                let id = tree_id(profile_id, &child_path);
                 let mut state =
                     egui::collapsing_header::CollapsingState::load_with_default_open(
                         ui.ctx(),
@@ -180,13 +205,13 @@ fn draw_node(
                 if let Some(v) = force_open {
                     state.set_open(v);
                 }
-                let open = state.is_open();
+                let was_open = state.is_open();
                 let subtree = child.subtree_message_count();
 
-                state
+                let (toggle_resp, header_resp, _) = state
                     .show_header(ui, |ui| {
                         ui.label(RichText::new(segment).strong());
-                        if !open && subtree > 0 {
+                        if !was_open && subtree > 0 {
                             ui.label(RichText::new(format!("#{subtree}")).small().weak());
                         }
                     })
@@ -222,6 +247,21 @@ fn draw_node(
                             status,
                         );
                     });
+
+                // Double-click parent → toggle this node + entire subtree under it.
+                if header_resp.response.double_clicked() || toggle_resp.double_clicked() {
+                    let new_open = !was_open;
+                    let mut st =
+                        egui::collapsing_header::CollapsingState::load_with_default_open(
+                            ui.ctx(),
+                            id,
+                            new_open,
+                        );
+                    st.set_open(new_open);
+                    st.store(ui.ctx());
+                    set_subtree_open(ui.ctx(), profile_id, &child_path, child, new_open);
+                    ui.ctx().request_repaint();
+                }
             } else {
                 leaf_row(
                     ui,
@@ -266,26 +306,40 @@ fn leaf_row(
         }
 
         let payload = node.last_payload.as_deref().unwrap_or("");
-        let line = if payload.is_empty() {
+        let is_json = json_view::try_pretty_json(payload).is_some();
+        let preview = if payload.is_empty() {
             label.to_string()
+        } else if is_json {
+            format!("{label} = {}", json_view::preview_line(payload, 96))
         } else {
             format!("{label} = {payload}")
         };
-        let tip = if payload.is_empty() {
-            full_topic.to_string()
-        } else {
-            payload.to_string()
-        };
 
-        // Middle: topic = payload fills remaining width (truncated); tooltip = full payload.
+        // Middle: topic = payload; JSON uses colored layout + pretty hover.
         let right_reserve = 56.0;
         let width = (ui.available_width() - right_reserve).max(48.0);
         ui.allocate_ui_with_layout(
             egui::vec2(width, ui.spacing().interact_size.y),
             egui::Layout::left_to_right(egui::Align::Center),
             |ui| {
-                ui.add(egui::Label::new(RichText::new(line).monospace()).truncate())
-                    .on_hover_text(tip);
+                let resp = if is_json {
+                    let job = json_view::highlight_layout(&preview);
+                    ui.add(egui::Label::new(job).truncate())
+                } else {
+                    ui.add(egui::Label::new(RichText::new(preview).monospace()).truncate())
+                };
+                if !payload.is_empty() {
+                    resp.on_hover_ui(|ui| {
+                        ui.set_max_width(420.0);
+                        json_view::hover_payload(
+                            ui,
+                            payload,
+                            ("tree-tip", profile_id, full_topic),
+                        );
+                    });
+                } else {
+                    resp.on_hover_text(full_topic);
+                }
             },
         );
 
@@ -295,7 +349,8 @@ fn leaf_row(
                 .tiny(ui, "clipboard_checklist", false, "Copy payload")
                 .clicked()
         {
-            ui.ctx().copy_text(payload.to_string());
+            let copy = json_view::try_pretty_json(payload).unwrap_or_else(|| payload.to_string());
+            ui.ctx().copy_text(copy);
             *status = "Copied payload".into();
         }
 
