@@ -1,10 +1,10 @@
-# MQTT Monitor
+# MQTT Master
 
-Dedicated repository for the Rust + egui MQTT Explorer–style monitor.
+Dedicated repository for the Rust + egui **MQTT Master** monitor (Explorer-style).
 
 **Clone:** `git clone https://gitlab.com/agileautomation/mqtt-master.git`
 
-Rust desktop skeleton for an **MQTT Explorer–style** monitor: connection profiles, multiple open brokers, wildcard subscribe, shared pin board, and publish.
+Rust desktop app for multi-broker MQTT monitoring: connection profiles, wildcard subscribe, shared sticky board, topic tree, and publish.
 
 GUI stack: **egui / eframe** — same toolkit used by ArtCraft Crafting Apps ([PhotoCraft](https://github.com/storytold/photocraft), DesignCraft, FilmCraft). MQTT client dependency: **rumqttc** (worker-thread `EventLoop` + channels into the UI; not wired yet).
 

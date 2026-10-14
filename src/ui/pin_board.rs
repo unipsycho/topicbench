@@ -133,7 +133,12 @@ fn draw_card(
                     ui.ctx().copy_text(pin.topic.clone());
                     *status = format!("Copied topic: {}", pin.topic);
                 }
-                ui.strong(&pin.profile_name);
+                let accent = profiles
+                    .profiles
+                    .get(&pin.profile_id)
+                    .map(|p| p.color())
+                    .unwrap_or(Color32::from_rgb(90, 190, 120));
+                ui.label(RichText::new(&pin.profile_name).strong().color(accent));
                 ui.label(RichText::new(&pin.topic).monospace().small());
                 if pin.message_count > 0 {
                     ui.label(RichText::new(format!("#{}", pin.message_count)).small().weak());
@@ -158,27 +163,37 @@ fn draw_card(
                 });
             });
 
-            // Mode dropdown (keep)
-            ui.horizontal(|ui| {
-                if let Some(live) = pins.items.get_mut(key) {
-                    egui::ComboBox::from_id_salt(format!("sticky-view-{key}"))
-                        .selected_text(live.view_mode.label())
-                        .width(90.0)
-                        .show_ui(ui, |ui| {
-                            ui.selectable_value(&mut live.view_mode, StickyViewMode::Raw, "Raw");
-                            ui.selectable_value(
-                                &mut live.view_mode,
-                                StickyViewMode::Value,
-                                "Value",
-                            );
-                            ui.selectable_value(
-                                &mut live.view_mode,
-                                StickyViewMode::Graph,
-                                "Graph",
-                            );
+            // Compact segmented Raw / Value / Graph toggle (icons, one selected).
+            if let Some(live) = pins.items.get_mut(key) {
+                let before = live.view_mode;
+                egui::Frame::NONE
+                    .fill(Color32::from_rgb(32, 34, 40))
+                    .corner_radius(3.0)
+                    .inner_margin(egui::Margin::symmetric(3, 2))
+                    .show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            ui.spacing_mut().item_spacing.x = 2.0;
+                            for (mode, icon, tip) in [
+                                (StickyViewMode::Raw, "terminal", "Raw"),
+                                (StickyViewMode::Value, "json_payload", "Value"),
+                                (StickyViewMode::Graph, "line_graph", "Graph"),
+                            ] {
+                                if icons
+                                    .tiny(ui, icon, live.view_mode == mode, tip)
+                                    .clicked()
+                                {
+                                    live.view_mode = mode;
+                                }
+                            }
                         });
+                    });
+                if live.view_mode != before {
+                    let mode = live.view_mode;
+                    let profile_id = live.profile_id.clone();
+                    let topic = live.topic.clone();
+                    profiles.set_sticky_view_mode_and_save(&profile_id, &topic, mode);
                 }
-            });
+            }
 
             ui.add_space(2.0);
 
@@ -192,7 +207,9 @@ fn draw_card(
                     .items
                     .get(key)
                     .is_some_and(|p| json_view::try_pretty_json(&p.last_payload).is_some());
-            let height = if is_json {
+            // Raw uses the same max height as Value/JSON so long payloads scroll.
+            let tall = is_json || matches!(mode, StickyViewMode::Raw);
+            let height = if tall {
                 if compact {
                     180.0
                 } else {
@@ -208,7 +225,7 @@ fn draw_card(
                 |ui| {
                     if let Some(p) = pins.items.get(key) {
                         match mode {
-                            StickyViewMode::Raw => draw_raw(ui, p),
+                            StickyViewMode::Raw => draw_raw(ui, p, key),
                             StickyViewMode::Value => draw_value(ui, p, key),
                             StickyViewMode::Graph => draw_graph(ui, p),
                         }
@@ -218,10 +235,20 @@ fn draw_card(
         });
 }
 
-fn draw_raw(ui: &mut egui::Ui, pin: &StickyTopic) {
+/// Max content height for Raw — matches Value JSON ScrollArea.
+const RAW_MAX_HEIGHT: f32 = 220.0;
+
+fn draw_raw(ui: &mut egui::Ui, pin: &StickyTopic, sticky_key: &str) {
     ui.label(RichText::new("Raw").small().weak());
-    // Match Value/body font size (not Small) — zoom scales TextStyle::Monospace/Body.
-    ui.label(RichText::new(&pin.last_payload).monospace());
+    // Match Value/body font size; cap height like JSON Value mode.
+    egui::ScrollArea::vertical()
+        .id_salt(("sticky-raw", sticky_key))
+        .max_height(RAW_MAX_HEIGHT)
+        .auto_shrink([false, false])
+        .show(ui, |ui| {
+            ui.set_max_width(ui.available_width());
+            ui.label(RichText::new(&pin.last_payload).monospace());
+        });
 }
 
 fn draw_value(ui: &mut egui::Ui, pin: &StickyTopic, sticky_key: &str) {

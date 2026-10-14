@@ -12,15 +12,6 @@ use crate::ui::search_bar::SearchFilter;
 use eframe::egui::{self, Color32, RichText};
 use std::time::Instant;
 
-/// Distinct heading colors per broker index (not used for topic rows).
-const BROKER_COLORS: [Color32; 6] = [
-    Color32::from_rgb(70, 140, 210),
-    Color32::from_rgb(200, 120, 60),
-    Color32::from_rgb(90, 170, 110),
-    Color32::from_rgb(170, 100, 190),
-    Color32::from_rgb(60, 170, 180),
-    Color32::from_rgb(210, 90, 110),
-];
 
 pub fn draw(
     ui: &mut egui::Ui,
@@ -67,8 +58,13 @@ pub fn draw(
     let force_open = expand_all_once.take();
     let now = Instant::now();
 
-    for (idx, session) in connected.iter().enumerate() {
-        let color = BROKER_COLORS[idx % BROKER_COLORS.len()];
+    for session in &connected {
+        // Profile accent color (user-settable); fallback green if missing.
+        let color = profiles
+            .profiles
+            .get(&session.profile_id)
+            .map(|p| p.color())
+            .unwrap_or(Color32::from_rgb(90, 190, 120));
         ui.add_space(6.0);
         ui.label(
             RichText::new(format!("▸ {}", session.profile_name))
@@ -317,18 +313,29 @@ fn leaf_row(
             |ui| {
                 ui.set_clip_rect(ui.max_rect());
                 let resp = if payload.is_empty() {
-                    ui.add(egui::Label::new(RichText::new(label).monospace()))
+                    ui.add(egui::Label::new(RichText::new(label).monospace()).sense(egui::Sense::click()))
                 } else if is_json {
                     let max_json = ((width / 7.0) as usize)
                         .saturating_sub(label.len() + 3)
                         .max(24);
                     let font_size = ui.text_style_height(&egui::TextStyle::Monospace);
                     let job = json_view::row_preview_job(label, payload, max_json, font_size);
-                    ui.add(egui::Label::new(job))
+                    ui.add(egui::Label::new(job).sense(egui::Sense::click()))
                 } else {
                     let line = format!("{label} = {payload}");
-                    ui.add(egui::Label::new(RichText::new(line).monospace()).truncate())
+                    ui.add(
+                        egui::Label::new(RichText::new(line).monospace())
+                            .truncate()
+                            .sense(egui::Sense::click()),
+                    )
                 };
+                if resp.clicked() {
+                    pins.last_tree_focus = Some((
+                        profile_id.to_string(),
+                        profile_name.to_string(),
+                        full_topic.to_string(),
+                    ));
+                }
                 if !payload.is_empty() {
                     resp.on_hover_ui(|ui| {
                         ui.set_max_width(420.0);
@@ -369,6 +376,11 @@ fn leaf_row(
             )
             .clicked()
         {
+            pins.last_tree_focus = Some((
+                profile_id.to_string(),
+                profile_name.to_string(),
+                full_topic.to_string(),
+            ));
             if sticky {
                 pins.unpin(profile_id, full_topic);
                 profiles.set_sticky_and_save(profile_id, full_topic, false);

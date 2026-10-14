@@ -11,9 +11,9 @@ pub const MAX_PACKET_MAX: usize = 256 * 1024;
 /// Default max packet size (64 KB) — above rumqttc’s ~10 KB default.
 pub const MAX_PACKET_DEFAULT: usize = 64 * 1024;
 
-/// Font zoom: 2 steps down, default, 3 steps up.
-pub const FONT_ZOOM_MIN: i8 = -2;
-pub const FONT_ZOOM_MAX: i8 = 3;
+/// Font zoom: 4 steps down, default, 5 steps up.
+pub const FONT_ZOOM_MIN: i8 = -4;
+pub const FONT_ZOOM_MAX: i8 = 5;
 /// Relative size change per zoom step (~10%).
 pub const FONT_ZOOM_STEP_FACTOR: f32 = 0.10;
 
@@ -82,7 +82,7 @@ pub struct AppSettings {
     /// Column count when `sticky_layout` is Columns (clamped 2–4).
     #[serde(default = "default_sticky_columns")]
     pub sticky_columns: u8,
-    /// App-wide font zoom step (−2…+3). 0 = default egui sizes.
+    /// App-wide font zoom step (−4…+5). 0 = default egui sizes.
     #[serde(default)]
     pub font_zoom_step: i8,
 }
@@ -162,6 +162,15 @@ impl AppSettings {
             return false;
         }
         self.font_zoom_step = next;
+        true
+    }
+
+    /// Reset font zoom to default (step 0).
+    pub fn zoom_font_reset(&mut self) -> bool {
+        if self.font_zoom_step == 0 {
+            return false;
+        }
+        self.font_zoom_step = 0;
         true
     }
 

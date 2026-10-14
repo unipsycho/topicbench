@@ -17,6 +17,9 @@ pub enum ProfileListFilter {
     ConnectedOnly,
 }
 
+/// Id salt for the profile Name field (Ctrl+E / F2 focus).
+pub const PROFILE_NAME_ID: &str = "profile_edit_name";
+
 /// Colored status chip + icon beside each profile name.
 fn draw_session_status(ui: &mut egui::Ui, icons: &IconSet, state: Option<SessionState>) {
     let (label, color, icon) = match state {
@@ -68,6 +71,7 @@ pub fn draw(
     draft_filter: &mut String,
     status: &mut String,
     ctx: &egui::Context,
+    request_editor_focus: &mut bool,
 ) {
     ui.horizontal(|ui| {
         if let Some(tex) = icons.get("profile") {
@@ -157,7 +161,21 @@ pub fn draw(
             if let Some(profile) = profiles.profiles.get_mut(&id) {
                 ui.horizontal(|ui| {
                     ui.label("Name");
-                    ui.text_edit_singleline(&mut profile.name);
+                    let resp = ui.add(
+                        egui::TextEdit::singleline(&mut profile.name).id_salt(PROFILE_NAME_ID),
+                    );
+                    if *request_editor_focus {
+                        resp.request_focus();
+                        *request_editor_focus = false;
+                    }
+                });
+                ui.horizontal(|ui| {
+                    ui.label("Color");
+                    let mut rgb = profile.color_rgb;
+                    if ui.color_edit_button_srgb(&mut rgb).changed() {
+                        profile.color_rgb = rgb;
+                    }
+                    ui.weak("Topic tree + sticky labels");
                 });
                 ui.horizontal(|ui| {
                     ui.label("Host");
@@ -249,11 +267,28 @@ pub fn draw(
             });
 
             ui.add_space(6.0);
-            let label = match sessions.open.get(&id).map(|s| s.state) {
-                Some(SessionState::Connected) | Some(SessionState::Connecting) => "Disconnect",
-                _ => "Connect",
+            // Icon on the button: connected → disconnect; otherwise → connect.
+            let live = sessions.open.get(&id).map(|s| s.state);
+            let (label, icon_name) = match live {
+                Some(SessionState::Connected) | Some(SessionState::Connecting) => {
+                    ("Disconnect", "disconnect")
+                }
+                _ => ("Connect", "connect"),
             };
-            if icons.labeled_button(ui, "connect", label).clicked() {
+            let connect_clicked = if let Some(tex) = icons.get(icon_name) {
+                ui.add(
+                    egui::Button::image_and_text(
+                        egui::Image::new(tex).fit_to_exact_size(egui::vec2(18.0, 18.0)),
+                        label,
+                    )
+                    .min_size(egui::vec2(120.0, 28.0)),
+                )
+                .clicked()
+            } else {
+                ui.add(egui::Button::new(label).min_size(egui::vec2(120.0, 28.0)))
+                    .clicked()
+            };
+            if connect_clicked {
                 let profile = profiles.profiles.get(&id).cloned();
                 if let Some(profile) = profile {
                     let connecting = match sessions.open.get(&id).map(|s| s.state) {

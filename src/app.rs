@@ -15,6 +15,7 @@ use crate::ui::icons::{
 };
 use crate::ui::profiles::ProfileListFilter;
 use crate::ui::search_bar::SearchFilter;
+use crate::ui::shortcuts::{self, Action as ShortcutAction};
 use crate::ui::{
     pin_board, profiles, publish_panel, search_bar, settings_panel, topic_tree_panel, traffic_panel,
 };
@@ -65,6 +66,11 @@ pub struct MqttMonitorApp {
     icons: IconSet,
     panels: PanelVisibility,
     settings_open: bool,
+    shortcuts_open: bool,
+    focus_search: bool,
+    focus_profile_editor: bool,
+    /// Profiles panel was opened by New (auto-close on next Save).
+    profiles_auto_opened: bool,
     expand_all_once: Option<bool>,
     auto_reconnect_done: bool,
     last_flash_repaint: Instant,
@@ -76,6 +82,8 @@ impl MqttMonitorApp {
         let settings = AppSettings::load();
         let status = profiles.last_io.clone();
         apply_font_zoom(&cc.egui_ctx, settings.font_zoom_factor());
+        // Use our font-zoom chords; disable egui’s pixels_per_point zoom.
+        cc.egui_ctx.options_mut(|o| o.zoom_with_keyboard = false);
         let logo = load_logo(&cc.egui_ctx);
         let icons = IconSet::load(&cc.egui_ctx);
         Self {
@@ -93,9 +101,36 @@ impl MqttMonitorApp {
             icons,
             panels: PanelVisibility::default(),
             settings_open: false,
+            shortcuts_open: false,
+            focus_search: false,
+            focus_profile_editor: false,
+            profiles_auto_opened: false,
             expand_all_once: None,
             auto_reconnect_done: false,
             last_flash_repaint: Instant::now(),
+        }
+    }
+
+    /// New profile: auto-show Profiles if hidden; remember for Save auto-close.
+    fn action_new_profile(&mut self) {
+        if !self.panels.profiles {
+            self.panels.profiles = true;
+            self.profiles_auto_opened = true;
+        }
+        let id = self.profiles.add_new();
+        self.status = format!("Created profile {id}");
+        self.focus_profile_editor = true;
+    }
+
+    /// Save profiles; if New auto-opened the panel, close it again.
+    fn action_save_profiles(&mut self) {
+        match self.profiles.save() {
+            Ok(()) => self.status = self.profiles.last_io.clone(),
+            Err(e) => self.status = e,
+        }
+        if self.profiles_auto_opened {
+            self.panels.profiles = false;
+            self.profiles_auto_opened = false;
         }
     }
 
@@ -126,6 +161,164 @@ impl MqttMonitorApp {
         }
         if n > 0 {
             self.status = format!("Auto-reconnect: connecting {n} profile(s)");
+        }
+    }
+
+    fn handle_shortcuts(&mut self, ctx: &egui::Context) {
+        for action in shortcuts::consume(ctx) {
+            match action {
+                ShortcutAction::ToggleProfiles => {
+                    self.panels.profiles = !self.panels.profiles;
+                }
+                ShortcutAction::ToggleTraffic => {
+                    self.panels.live_traffic = !self.panels.live_traffic;
+                }
+                ShortcutAction::TogglePublish => {
+                    self.panels.publish = !self.panels.publish;
+                }
+                ShortcutAction::ToggleStickies => {
+                    self.panels.stickies = !self.panels.stickies;
+                }
+                ShortcutAction::ToggleTopicTree => {
+                    self.panels.topic_tree = !self.panels.topic_tree;
+                }
+                ShortcutAction::ZoomIn => {
+                    if self.settings.zoom_font_in() {
+                        let _ = self.settings.save();
+                        apply_font_zoom(ctx, self.settings.font_zoom_factor());
+                        self.status = format!("Font zoom {}", self.settings.font_zoom_step);
+                    }
+                }
+                ShortcutAction::ZoomOut => {
+                    if self.settings.zoom_font_out() {
+                        let _ = self.settings.save();
+                        apply_font_zoom(ctx, self.settings.font_zoom_factor());
+                        self.status = format!("Font zoom {}", self.settings.font_zoom_step);
+                    }
+                }
+                ShortcutAction::ZoomReset => {
+                    if self.settings.zoom_font_reset() {
+                        let _ = self.settings.save();
+                        apply_font_zoom(ctx, self.settings.font_zoom_factor());
+                        self.status = "Font zoom 0".into();
+                    }
+                }
+                ShortcutAction::OpenSettings => {
+                    self.settings_open = true;
+                }
+                ShortcutAction::OpenShortcutsHelp => {
+                    self.shortcuts_open = true;
+                }
+                ShortcutAction::FocusSearch => {
+                    self.focus_search = true;
+                }
+                ShortcutAction::NewProfile => {
+                    self.action_new_profile();
+                }
+                ShortcutAction::SaveProfiles => {
+                    self.action_save_profiles();
+                }
+                ShortcutAction::DeleteProfile => {
+                    // Delete only when Profiles panel is visible.
+                    if self.panels.profiles {
+                        if let Some(id) = self.profiles.delete_selected() {
+                            self.sessions.close(&id);
+                            self.status = format!("Deleted profile {id}");
+                        }
+                    }
+                }
+                ShortcutAction::ConnectToggle => {
+                    self.shortcut_connect_toggle(ctx);
+                }
+                ShortcutAction::ShowProfiles => {
+                    self.panels.profiles = true;
+                    self.profiles_auto_opened = false;
+                }
+                ShortcutAction::FocusProfileEditor => {
+                    self.panels.profiles = true;
+                    self.profiles_auto_opened = false;
+                    self.focus_profile_editor = true;
+                }
+                ShortcutAction::ProfileSelectPrev => {
+                    self.move_profile_selection(-1);
+                }
+                ShortcutAction::ProfileSelectNext => {
+                    self.move_profile_selection(1);
+                }
+                ShortcutAction::ToggleStickySelectedTopic => {
+                    self.shortcut_toggle_sticky();
+                }
+            }
+        }
+    }
+
+    fn move_profile_selection(&mut self, delta: i32) {
+        let ids: Vec<String> = self.profiles.profiles.keys().cloned().collect();
+        if ids.is_empty() {
+            return;
+        }
+        let cur = self
+            .profiles
+            .selected_id
+            .as_ref()
+            .and_then(|id| ids.iter().position(|k| k == id))
+            .unwrap_or(0);
+        let next = (cur as i32 + delta).clamp(0, ids.len() as i32 - 1) as usize;
+        self.profiles.selected_id = Some(ids[next].clone());
+        self.panels.profiles = true;
+    }
+
+    fn shortcut_connect_toggle(&mut self, ctx: &egui::Context) {
+        let Some(id) = self.profiles.selected_id.clone() else {
+            self.status = "No profile selected".into();
+            return;
+        };
+        let Some(profile) = self.profiles.profiles.get(&id).cloned() else {
+            return;
+        };
+        let connecting = match self.sessions.open.get(&id).map(|s| s.state) {
+            Some(crate::mqtt::session::SessionState::Connected)
+            | Some(crate::mqtt::session::SessionState::Connecting) => false,
+            _ => true,
+        };
+        let max_pkt = AppSettings::clamp_max_packet(self.settings.max_packet_bytes);
+        match self.sessions.toggle(&profile, max_pkt, ctx) {
+            Ok(msg) => {
+                self.settings.remember_connected(&id, connecting);
+                if connecting {
+                    let pruned = self
+                        .profiles
+                        .profiles
+                        .get_mut(&id)
+                        .map(|p| subscribe::prune_redundant(&mut p.subscriptions))
+                        .unwrap_or(false);
+                    if pruned {
+                        let _ = self.profiles.save();
+                    }
+                    if let Some(p) = self.profiles.profiles.get(&id) {
+                        self.pins.restore_from_profile(p);
+                    }
+                }
+                self.status = msg;
+            }
+            Err(e) => self.status = e,
+        }
+    }
+
+    fn shortcut_toggle_sticky(&mut self) {
+        let Some((profile_id, profile_name, topic)) = self.pins.last_tree_focus.clone() else {
+            self.status = "Click a topic tree row first (Ctrl+Shift+S)".into();
+            return;
+        };
+        if self.pins.is_sticky(&profile_id, &topic) {
+            self.pins.unpin(&profile_id, &topic);
+            self.profiles
+                .set_sticky_and_save(&profile_id, &topic, false);
+            self.status = format!("Unstuck {topic}");
+        } else {
+            self.pins.pin(&profile_id, &profile_name, &topic);
+            self.profiles.set_sticky_and_save(&profile_id, &topic, true);
+            self.status = format!("Sticky {topic}");
         }
     }
 
@@ -162,10 +355,11 @@ impl MqttMonitorApp {
                         ui.spacing_mut().item_spacing.y = 0.0;
                         ui.vertical_centered(|ui| {
                             ui.label(
-                                RichText::new("MQTT Monitor")
+                                RichText::new("MQTT Master")
                                     .strong()
-                                    .size(13.0)
-                                    .color(Color32::WHITE),
+                                    .size(17.0)
+                                    // Same green as Connected status.
+                                    .color(Color32::from_rgb(90, 190, 120)),
                             );
                             // Padding under title before logo
                             ui.add_space(6.0);
@@ -190,22 +384,26 @@ impl MqttMonitorApp {
                             .command(ui, "profile_add", "New", false, "New profile")
                             .clicked()
                         {
-                            let id = self.profiles.add_new();
-                            self.status = format!("Created profile {id}");
+                            self.action_new_profile();
                         }
                         if self
                             .icons
                             .command(ui, "save", "Save", false, "Save profiles")
                             .clicked()
                         {
-                            match self.profiles.save() {
-                                Ok(()) => self.status = self.profiles.last_io.clone(),
-                                Err(e) => self.status = e,
-                            }
+                            self.action_save_profiles();
                         }
+                        // Delete disabled while Profiles panel is hidden.
                         if self
                             .icons
-                            .command(ui, "disconnect", "Delete", false, "Delete selected profile")
+                            .command_enabled(
+                                ui,
+                                "disconnect",
+                                "Delete",
+                                false,
+                                "Delete selected profile",
+                                self.panels.profiles,
+                            )
                             .clicked()
                         {
                             if let Some(id) = self.profiles.delete_selected() {
@@ -225,6 +423,8 @@ impl MqttMonitorApp {
                             .clicked()
                         {
                             self.panels.profiles = !self.panels.profiles;
+                            // User took control — don't auto-close on Save.
+                            self.profiles_auto_opened = false;
                         }
                     });
 
@@ -288,7 +488,7 @@ impl MqttMonitorApp {
 
                     icons::ribbon_separator(ui);
 
-                    // App: Settings + font zoom (−2…+3 steps from default).
+                    // App: Settings + font zoom (−4…+5 steps from default).
                     icons::ribbon_group(ui, "App", TINT_APP, |ui| {
                         if self
                             .icons
@@ -310,7 +510,7 @@ impl MqttMonitorApp {
                                 "zoom_out",
                                 "Zoom−",
                                 false,
-                                "Decrease font size (−2 steps from default)",
+                                "Decrease font size (−4 steps from default)",
                             )
                             .clicked()
                         {
@@ -330,7 +530,7 @@ impl MqttMonitorApp {
                                 "zoom_in",
                                 "Zoom+",
                                 false,
-                                "Increase font size (+3 steps from default)",
+                                "Increase font size (+5 steps from default)",
                             )
                             .clicked()
                         {
@@ -467,20 +667,41 @@ impl eframe::App for MqttMonitorApp {
             ctx.request_repaint_after(Duration::from_millis(32));
         }
 
+        self.handle_shortcuts(ctx);
         self.draw_ribbon(ctx);
+
+        // Keyboard shortcuts help popup (F1 / ? / Settings button).
+        if self.shortcuts_open {
+            egui::Window::new("Keyboard shortcuts")
+                .open(&mut self.shortcuts_open)
+                .default_width(520.0)
+                .default_height(480.0)
+                .resizable(true)
+                .collapsible(false)
+                .show(ctx, |ui| {
+                    shortcuts::draw_help(ui);
+                });
+        }
 
         if self.settings_open {
             let mut close = false;
             let mut status = self.status.clone();
+            let mut open_shortcuts = false;
             ctx.show_viewport_immediate(
-                ViewportId::from_hash_of("mqtt_monitor_settings"),
+                ViewportId::from_hash_of("mqtt_master_settings"),
                 ViewportBuilder::default()
-                    .with_title("MQTT Monitor — Settings")
-                    .with_inner_size([460.0, 420.0])
+                    .with_title("MQTT Master — Settings")
+                    .with_inner_size([460.0, 480.0])
                     .with_resizable(true),
                 |ctx, _class| {
                     egui::CentralPanel::default().show(ctx, |ui| {
-                        settings_panel::draw(ui, &mut self.settings, &self.icons, &mut status);
+                        settings_panel::draw(
+                            ui,
+                            &mut self.settings,
+                            &self.icons,
+                            &mut status,
+                            &mut open_shortcuts,
+                        );
                     });
                     if ctx.input(|i| i.viewport().close_requested()) {
                         close = true;
@@ -488,6 +709,9 @@ impl eframe::App for MqttMonitorApp {
                 },
             );
             self.status = status;
+            if open_shortcuts {
+                self.shortcuts_open = true;
+            }
             if close {
                 self.settings_open = false;
             }
@@ -509,6 +733,7 @@ impl eframe::App for MqttMonitorApp {
                             &mut self.sub_draft,
                             &mut self.status,
                             ctx,
+                            &mut self.focus_profile_editor,
                         );
                     });
                 });
@@ -530,7 +755,7 @@ impl eframe::App for MqttMonitorApp {
         }
 
         egui::CentralPanel::default().show(ctx, |ui| {
-            search_bar::draw(ui, &mut self.search);
+            search_bar::draw(ui, &mut self.search, &mut self.focus_search);
             ui.add_space(6.0);
             ui.separator();
             ui.add_space(6.0);
