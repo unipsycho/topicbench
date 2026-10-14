@@ -2,7 +2,7 @@
 
 use crate::mqtt::pins::PinBoard;
 use crate::mqtt::profile::ProfileStore;
-use crate::mqtt::publish::TopicPublishDrop;
+use crate::mqtt::publish::PublishFromTree;
 use crate::mqtt::session::{Session, SessionManager, SessionState};
 use crate::mqtt::settings::TopicTreeExpandMode;
 use crate::mqtt::topic_tree::TopicNode;
@@ -42,6 +42,8 @@ pub fn draw(
     icons: &IconSet,
     filter: &SearchFilter,
     status: &mut String,
+    // Set when a leaf/payload row is double-clicked → open Publish and fill form.
+    publish_from_tree: &mut Option<PublishFromTree>,
 ) {
     ui.horizontal(|ui| {
         if let Some(tex) = icons.get("topic_tree") {
@@ -60,7 +62,7 @@ pub fn draw(
         }
     });
     ui.label("Per connected broker — colored heading, then that broker’s topics.");
-    ui.weak("Double-click a parent to expand/collapse its whole subtree. Single-click selects for Payload. Drag a row onto Publish to fill the form.");
+    ui.weak("Single-click selects for Payload. Double-click a parent to expand/collapse. Double-click a topic/payload row to fill Publish.");
     ui.add_space(4.0);
 
     // Only currently connected brokers — disconnected sessions are cleared on Disconnect.
@@ -122,6 +124,7 @@ pub fn draw(
             icons,
             filter,
             status,
+            publish_from_tree,
         );
     }
 }
@@ -200,6 +203,7 @@ fn draw_node(
     icons: &IconSet,
     filter: &SearchFilter,
     status: &mut String,
+    publish_from_tree: &mut Option<PublishFromTree>,
 ) {
     for (segment, child) in &node.children {
         let child_path = if path.is_empty() {
@@ -304,8 +308,9 @@ fn draw_node(
                 select_topic(pins, profile_id, profile_name, &child_path);
             }
 
-            let body_open = state.is_open();
             state.show_body_indented(&header_row.response, ui, |ui| {
+                // Folder's own payload row: single-click = Payload; double-click = Publish.
+                // Expand/collapse stays on the folder header (label / ▶).
                 if is_leaf_msg {
                     leaf_row(
                         ui,
@@ -318,14 +323,8 @@ fn draw_node(
                         pins,
                         icons,
                         status,
-                        Some(ToggleParent {
-                            id,
-                            was_open: body_open,
-                            profile_id,
-                            path: &child_path,
-                            node: child,
-                        }),
                         None, // folder header owns the flash
+                        publish_from_tree,
                     );
                 }
                 draw_node(
@@ -343,6 +342,7 @@ fn draw_node(
                     icons,
                     filter,
                     status,
+                    publish_from_tree,
                 );
             });
         } else {
@@ -357,20 +357,11 @@ fn draw_node(
                 pins,
                 icons,
                 status,
-                None,
                 flash_stroke,
+                publish_from_tree,
             );
         }
     }
-}
-
-/// Parent node to toggle when its own payload row is double-clicked.
-struct ToggleParent<'a> {
-    id: egui::Id,
-    was_open: bool,
-    profile_id: &'a str,
-    path: &'a str,
-    node: &'a TopicNode,
 }
 
 fn apply_tree_toggle(
@@ -390,6 +381,7 @@ fn apply_tree_toggle(
 }
 
 /// Dense row: `[copy topic][sticky] gray_topic = [copy payload] highlighted_payload… #n`
+/// Single-click selects for Payload; double-click fills Publish.
 fn leaf_row(
     ui: &mut egui::Ui,
     label: &str,
@@ -401,8 +393,8 @@ fn leaf_row(
     pins: &mut PinBoard,
     icons: &IconSet,
     status: &mut String,
-    toggle_parent: Option<ToggleParent<'_>>,
     flash_stroke: Option<egui::Stroke>,
+    publish_from_tree: &mut Option<PublishFromTree>,
 ) {
     let mut dbl = false;
     let selected = is_selected(pins, profile_id, full_topic);
@@ -549,26 +541,15 @@ fn leaf_row(
     // Inset flash — same row size with or without pulse.
     flash::paint_inset(ui, row.response.rect, flash_stroke);
 
-    // Drag row → Publish (broker + topic + current payload). Clicks still work; drag after threshold.
-    let dnd_id = egui::Id::new(("tree-publish-dnd", profile_id, full_topic));
-    let dnd = ui.interact(row.response.rect, dnd_id, egui::Sense::drag());
-    if dnd.dragged() {
-        dnd.dnd_set_drag_payload(TopicPublishDrop {
+    // Double-click leaf / payload row → Publish (also select for Payload).
+    if dbl {
+        select_topic(pins, profile_id, profile_name, full_topic);
+        *publish_from_tree = Some(PublishFromTree {
             profile_id: profile_id.to_string(),
             profile_name: profile_name.to_string(),
             topic: full_topic.to_string(),
             payload: node.last_payload.clone().unwrap_or_default(),
         });
-        ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
-    } else if dnd.hovered() {
-        ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
-    }
-
-    // Double-click payload row of a branch node → same expand/collapse as its header.
-    if dbl {
-        if let Some(t) = toggle_parent {
-            apply_tree_toggle(ui.ctx(), t.id, !t.was_open, t.profile_id, t.path, t.node);
-        }
     }
 }
 

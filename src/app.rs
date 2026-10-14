@@ -5,7 +5,7 @@
 
 use crate::mqtt::pins::PinBoard;
 use crate::mqtt::profile::ProfileStore;
-use crate::mqtt::publish::{PublishDraft, PublishHistory, TopicPublishDrop};
+use crate::mqtt::publish::{PublishDraft, PublishHistory, PublishFromTree};
 use crate::mqtt::session::SessionManager;
 use crate::mqtt::settings::AppSettings;
 use crate::mqtt::subscribe;
@@ -846,17 +846,6 @@ impl eframe::App for MqttMonitorApp {
                         &mut self.status,
                     );
                 });
-        } else if ctx.input(|i| i.pointer.any_released()) {
-            // Publish hidden — still accept a tree drop: open panel and fill the form.
-            if let Some(drop) = egui::DragAndDrop::take_payload::<TopicPublishDrop>(ctx) {
-                self.publish.apply_tree_drop(&drop);
-                self.panels.publish = true;
-                self.persist_panels();
-                self.status = format!(
-                    "Publish opened from tree drop: {} · {}",
-                    drop.profile_name, drop.topic
-                );
-            }
         }
 
         if self.panels.payload {
@@ -920,6 +909,7 @@ impl eframe::App for MqttMonitorApp {
                 }
 
                 if self.panels.topic_tree {
+                    let mut publish_from_tree: Option<PublishFromTree> = None;
                     topic_tree_panel::draw(
                         ui,
                         &self.sessions,
@@ -930,7 +920,20 @@ impl eframe::App for MqttMonitorApp {
                         &self.icons,
                         &self.search,
                         &mut self.status,
+                        &mut publish_from_tree,
                     );
+                    // Leaf double-click → open Publish and fill broker / topic / payload.
+                    if let Some(fill) = publish_from_tree {
+                        self.publish.apply_from_tree(&fill);
+                        if !self.panels.publish {
+                            self.panels.publish = true;
+                            self.persist_panels();
+                        }
+                        self.status = format!(
+                            "Publish filled from tree: {} · {}",
+                            fill.profile_name, fill.topic
+                        );
+                    }
                 }
             });
         });
