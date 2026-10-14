@@ -307,31 +307,27 @@ fn leaf_row(
 
         let payload = node.last_payload.as_deref().unwrap_or("");
         let is_json = json_view::try_pretty_json(payload).is_some();
-        let preview = if payload.is_empty() {
-            label.to_string()
-        } else if is_json {
-            format!("{label} = {}", json_view::preview_line(payload, 96))
-        } else {
-            format!("{label} = {payload}")
-        };
 
-        // Middle: topic = payload; JSON uses colored layout + pretty hover.
+        // Middle: topic = payload; JSON preview is pre-truncated + syntax-colored (no Label::truncate).
         let right_reserve = 56.0;
         let width = (ui.available_width() - right_reserve).max(48.0);
         ui.allocate_ui_with_layout(
             egui::vec2(width, ui.spacing().interact_size.y),
             egui::Layout::left_to_right(egui::Align::Center),
             |ui| {
-                // Plain truncated label in the row (avoid LayoutJob+truncate UTF-8 panic);
-                // pretty + syntax colors live in the hover tooltip for JSON.
-                let color = if is_json {
-                    Color32::from_rgb(140, 190, 255)
+                ui.set_clip_rect(ui.max_rect());
+                let resp = if payload.is_empty() {
+                    ui.add(egui::Label::new(RichText::new(label).monospace()))
+                } else if is_json {
+                    let max_json = ((width / 7.0) as usize)
+                        .saturating_sub(label.len() + 3)
+                        .max(24);
+                    let job = json_view::row_preview_job(label, payload, max_json);
+                    ui.add(egui::Label::new(job))
                 } else {
-                    ui.visuals().text_color()
+                    let line = format!("{label} = {payload}");
+                    ui.add(egui::Label::new(RichText::new(line).monospace()).truncate())
                 };
-                let resp = ui.add(
-                    egui::Label::new(RichText::new(preview).monospace().color(color)).truncate(),
-                );
                 if !payload.is_empty() {
                     resp.on_hover_ui(|ui| {
                         ui.set_max_width(420.0);
