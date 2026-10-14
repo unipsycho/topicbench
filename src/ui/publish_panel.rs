@@ -65,7 +65,12 @@ pub fn draw(
 
     ui.horizontal(|ui| {
         ui.label("Topic");
-        ui.text_edit_singleline(&mut draft.topic);
+        // Match topic-tree leaf typography (monospace, normal weight).
+        ui.add(
+            egui::TextEdit::singleline(&mut draft.topic)
+                .font(egui::TextStyle::Monospace)
+                .desired_width(ui.available_width().max(120.0)),
+        );
     });
 
     // Payload: beautified + syntax-highlighted when JSON; warn if intended JSON is broken.

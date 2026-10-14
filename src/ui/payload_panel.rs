@@ -89,10 +89,10 @@ pub fn draw(
         .map(|p| p.color())
         .unwrap_or(Color32::from_rgb(90, 190, 120));
 
-    // Header: broker (accent) + full topic path.
+    // Header: broker (accent) + full topic path (same mono typography as the tree list).
     ui.horizontal(|ui| {
-        ui.label(RichText::new(&profile_name).strong().color(accent));
-        ui.label(RichText::new(&topic).monospace().small());
+        ui.label(RichText::new(&profile_name).color(accent));
+        ui.label(json_view::topic_path_text(&topic));
     });
     ui.add_space(4.0);
 

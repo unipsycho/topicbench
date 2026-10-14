@@ -146,8 +146,8 @@ fn draw_card(
                     .get(&pin.profile_id)
                     .map(|p| p.color())
                     .unwrap_or(Color32::from_rgb(90, 190, 120));
-                ui.label(RichText::new(&pin.profile_name).strong().color(accent));
-                ui.label(RichText::new(&pin.topic).monospace().small());
+                ui.label(RichText::new(&pin.profile_name).color(accent));
+                ui.label(json_view::topic_path_text(&pin.topic));
                 if pin.message_count > 0 {
                     ui.label(RichText::new(format!("#{}", pin.message_count)).small().weak());
                 }
