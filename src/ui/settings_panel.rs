@@ -6,7 +6,7 @@ use eframe::egui;
 
 pub fn draw(ui: &mut egui::Ui, settings: &mut AppSettings, icons: &IconSet, status: &mut String) {
     ui.horizontal(|ui| {
-        if let Some(tex) = icons.get("server_settings") {
+        if let Some(tex) = icons.get("configuration_sliders") {
             ui.add(
                 egui::Image::new(tex)
                     .fit_to_exact_size(egui::vec2(22.0, 22.0))

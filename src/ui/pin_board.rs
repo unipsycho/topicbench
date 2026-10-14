@@ -6,6 +6,7 @@ use crate::mqtt::profile::ProfileStore;
 use crate::mqtt::session::{SessionManager, SessionState};
 use crate::ui::clipboard;
 use crate::ui::flash;
+use crate::ui::json_view;
 use crate::ui::search_bar::SearchFilter;
 use eframe::egui::{self, Color32, Pos2, RichText, Stroke};
 use std::collections::HashSet;
@@ -104,17 +105,23 @@ pub fn draw(
 
                     ui.separator();
 
-                    // Right: large presentation
+                    // Right: large presentation (taller for JSON Value beautify)
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        let mode = pins
+                            .items
+                            .get(&key)
+                            .map(|p| p.view_mode)
+                            .unwrap_or(StickyViewMode::Raw);
+                        let is_json = matches!(mode, StickyViewMode::Value)
+                            && pins
+                                .items
+                                .get(&key)
+                                .is_some_and(|p| json_view::try_pretty_json(&p.last_payload).is_some());
+                        let height = if is_json { 240.0 } else { 72.0 };
                         ui.allocate_ui_with_layout(
-                            egui::vec2(ui.available_width().max(180.0), 72.0),
+                            egui::vec2(ui.available_width().max(180.0), height),
                             egui::Layout::top_down(egui::Align::RIGHT),
                             |ui| {
-                                let mode = pins
-                                    .items
-                                    .get(&key)
-                                    .map(|p| p.view_mode)
-                                    .unwrap_or(StickyViewMode::Raw);
                                 if let Some(p) = pins.items.get(&key) {
                                     match mode {
                                         StickyViewMode::Raw => draw_raw(ui, p, status),
@@ -140,6 +147,16 @@ fn draw_raw(ui: &mut egui::Ui, pin: &StickyTopic, status: &mut String) {
 }
 
 fn draw_value(ui: &mut egui::Ui, pin: &StickyTopic, status: &mut String) {
+    // Always beautify JSON objects/arrays in Value mode (no settings toggle yet).
+    if let Some(pretty) = json_view::try_pretty_json(&pin.last_payload) {
+        json_view::draw_pretty(ui, &pretty);
+        if ui.small_button("Copy JSON").clicked() {
+            ui.ctx().copy_text(pretty);
+            *status = "Copied pretty JSON".into();
+        }
+        return;
+    }
+
     match DetectedValue::from_payload(&pin.last_payload) {
         DetectedValue::Bool(on) => {
             ui.label(RichText::new("Boolean").small().weak());
