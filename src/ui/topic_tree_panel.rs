@@ -460,13 +460,9 @@ fn leaf_row(
                     ui.spacing_mut().item_spacing.x = 2.0;
 
                     let topic_resp = ui.add(
-                        egui::Label::new(
-                            RichText::new(label)
-                                .monospace()
-                                .color(json_view::C_TOPIC),
-                        )
-                        .sense(egui::Sense::click())
-                        .selectable(false),
+                        egui::Label::new(json_view::topic_path_text(label))
+                            .sense(egui::Sense::click())
+                            .selectable(false),
                     );
                     if topic_resp.double_clicked() {
                         dbl = true;

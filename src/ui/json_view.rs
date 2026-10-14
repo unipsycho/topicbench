@@ -15,6 +15,11 @@ const C_DEFAULT: Color32 = Color32::from_rgb(220, 222, 228);
 /// Topic-name gray (matches ribbon caption / weak chrome).
 pub const C_TOPIC: Color32 = Color32::from_rgb(170, 176, 188);
 
+/// Topic path typography matching the topic-tree leaf list (mono, normal weight, gray).
+pub fn topic_path_text(topic: &str) -> egui::RichText {
+    egui::RichText::new(topic).monospace().color(C_TOPIC)
+}
+
 /// True when text looks like an intended JSON object/array (starts with `{` or `[`).
 pub fn looks_like_json(payload: &str) -> bool {
     let t = payload.trim();

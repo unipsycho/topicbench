@@ -295,7 +295,12 @@ pub fn draw(
             }
 
             ui.horizontal(|ui| {
-                ui.add(egui::TextEdit::singleline(draft_filter).desired_width(160.0).hint_text("topic/#"));
+                ui.add(
+                    egui::TextEdit::singleline(draft_filter)
+                        .desired_width(160.0)
+                        .hint_text("topic/#")
+                        .font(egui::TextStyle::Monospace),
+                );
                 if ui.button("Add").clicked() {
                     let filter = draft_filter.trim().to_string();
                     match profiles.profiles.get_mut(&id) {
