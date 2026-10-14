@@ -383,14 +383,26 @@ impl MqttMonitorApp {
                     icons::ribbon_group(ui, "Profiles", TINT_PROFILES, |ui| {
                         if self
                             .icons
-                            .command(ui, "profile_add", "New", false, "New profile")
+                            .command(
+                                ui,
+                                "profile_add",
+                                "New",
+                                false,
+                                &shortcuts::tip("New profile", "Ctrl+N"),
+                            )
                             .clicked()
                         {
                             self.action_new_profile();
                         }
                         if self
                             .icons
-                            .command(ui, "save", "Save", false, "Save profiles")
+                            .command(
+                                ui,
+                                "save",
+                                "Save",
+                                false,
+                                &shortcuts::tip("Save profiles", "Ctrl+S"),
+                            )
                             .clicked()
                         {
                             self.action_save_profiles();
@@ -403,7 +415,10 @@ impl MqttMonitorApp {
                                 "disconnect",
                                 "Delete",
                                 false,
-                                "Delete selected profile",
+                                &shortcuts::tip(
+                                    "Delete selected profile",
+                                    "Delete / Ctrl+Backspace",
+                                ),
                                 self.panels.profiles,
                             )
                             .clicked()
@@ -420,7 +435,10 @@ impl MqttMonitorApp {
                                 "panel_docked",
                                 "Profiles",
                                 self.panels.profiles,
-                                "Show or hide the profiles side panel",
+                                &shortcuts::tip(
+                                    "Show or hide the profiles side panel",
+                                    "Ctrl+Shift+P",
+                                ),
                             )
                             .clicked()
                         {
@@ -441,7 +459,7 @@ impl MqttMonitorApp {
                                 "incoming_messages",
                                 "Traffic",
                                 self.panels.live_traffic,
-                                "Live traffic",
+                                &shortcuts::tip("Live traffic", "Ctrl+Shift+T"),
                             )
                             .clicked()
                         {
@@ -454,7 +472,7 @@ impl MqttMonitorApp {
                                 "publish_message",
                                 "Publish",
                                 self.panels.publish,
-                                "Publish panel",
+                                &shortcuts::tip("Publish panel", "Ctrl+Shift+U"),
                             )
                             .clicked()
                         {
@@ -467,7 +485,7 @@ impl MqttMonitorApp {
                                 "sticky_topic",
                                 "Stickies",
                                 self.panels.stickies,
-                                "Sticky topics",
+                                &shortcuts::tip("Sticky topics", "Ctrl+Shift+K"),
                             )
                             .clicked()
                         {
@@ -480,7 +498,7 @@ impl MqttMonitorApp {
                                 "topic_tree",
                                 "Tree",
                                 self.panels.topic_tree,
-                                "Topic tree",
+                                &shortcuts::tip("Topic tree", "Ctrl+Shift+R"),
                             )
                             .clicked()
                         {
@@ -499,7 +517,7 @@ impl MqttMonitorApp {
                                 "configuration_sliders",
                                 "Settings",
                                 self.settings_open,
-                                "Open settings window",
+                                &shortcuts::tip("Open settings window", "Ctrl+,"),
                             )
                             .clicked()
                         {
@@ -512,7 +530,10 @@ impl MqttMonitorApp {
                                 "zoom_out",
                                 "Zoom−",
                                 false,
-                                "Decrease font size (−4 steps from default)",
+                                &shortcuts::tip(
+                                    "Decrease font size (−4 steps from default)",
+                                    "Ctrl+-",
+                                ),
                             )
                             .clicked()
                         {
@@ -532,7 +553,10 @@ impl MqttMonitorApp {
                                 "zoom_in",
                                 "Zoom+",
                                 false,
-                                "Increase font size (+5 steps from default)",
+                                &shortcuts::tip(
+                                    "Increase font size (+5 steps from default)",
+                                    "Ctrl+= / Ctrl++",
+                                ),
                             )
                             .clicked()
                         {

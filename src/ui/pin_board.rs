@@ -8,6 +8,7 @@ use crate::mqtt::settings::{AppSettings, StickyLayoutMode};
 use crate::ui::flash;
 use crate::ui::icons::IconSet;
 use crate::ui::json_view;
+use crate::ui::shortcuts;
 use crate::ui::search_bar::SearchFilter;
 use eframe::egui::{self, Color32, Pos2, RichText, Stroke};
 use std::collections::HashSet;
@@ -176,7 +177,12 @@ fn draw_card(
 
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if icons
-                        .tiny(ui, "sticky_topic", true, "Unstick")
+                        .tiny(
+                            ui,
+                            "sticky_topic",
+                            true,
+                            &shortcuts::tip("Unstick", "Ctrl+Shift+S"),
+                        )
                         .clicked()
                     {
                         pins.unpin(&pin.profile_id, &pin.topic);

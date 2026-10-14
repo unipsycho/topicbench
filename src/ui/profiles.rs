@@ -4,6 +4,7 @@ use crate::mqtt::pins::PinBoard;
 use crate::mqtt::profile::ProfileStore;
 use crate::mqtt::session::{SessionManager, SessionState};
 use crate::mqtt::settings::AppSettings;
+use crate::ui::shortcuts;
 use crate::mqtt::subscribe;
 use crate::ui::clipboard;
 use crate::ui::flash;
@@ -163,10 +164,13 @@ pub fn draw(
             ui.heading("Edit");
             if let Some(profile) = profiles.profiles.get_mut(&id) {
                 ui.horizontal(|ui| {
-                    ui.label("Name");
-                    let resp = ui.add(
-                        egui::TextEdit::singleline(&mut profile.name).id_salt(PROFILE_NAME_ID),
-                    );
+                    ui.label("Name")
+                        .on_hover_text(shortcuts::tip("Focus profile editor", "Ctrl+E / F2"));
+                    let resp = ui
+                        .add(
+                            egui::TextEdit::singleline(&mut profile.name).id_salt(PROFILE_NAME_ID),
+                        )
+                        .on_hover_text(shortcuts::tip("Focus profile editor", "Ctrl+E / F2"));
                     if *request_editor_focus {
                         resp.request_focus();
                         *request_editor_focus = false;
@@ -304,6 +308,14 @@ pub fn draw(
                 }
                 _ => ("Connect", "connect"),
             };
+            let connect_tip = shortcuts::tip(
+                if label == "Disconnect" {
+                    "Disconnect selected profile"
+                } else {
+                    "Connect selected profile"
+                },
+                "Ctrl+Enter",
+            );
             let connect_clicked = if let Some(tex) = icons.get(icon_name) {
                 ui.add(
                     egui::Button::image_and_text(
@@ -312,9 +324,11 @@ pub fn draw(
                     )
                     .min_size(egui::vec2(120.0, 28.0)),
                 )
+                .on_hover_text(connect_tip)
                 .clicked()
             } else {
                 ui.add(egui::Button::new(label).min_size(egui::vec2(120.0, 28.0)))
+                    .on_hover_text(connect_tip)
                     .clicked()
             };
             if connect_clicked {
