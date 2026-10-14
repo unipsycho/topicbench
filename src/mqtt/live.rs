@@ -28,6 +28,8 @@ pub enum BrokerEvent {
         payload: String,
         /// MQTT RETAIN flag from the Publish packet.
         retain: bool,
+        /// Raw publish payload length in bytes (before soft-limit placeholder).
+        payload_bytes: usize,
     },
     /// Non-fatal note (e.g. skipped oversized payload) — does not change connection state.
     Notice {
@@ -172,6 +174,7 @@ pub fn spawn(
                             topic: topic.clone(),
                             payload,
                             retain,
+                            payload_bytes: raw_len,
                         });
                         if skipped {
                             let size_kb = (raw_len + 1023) / 1024;

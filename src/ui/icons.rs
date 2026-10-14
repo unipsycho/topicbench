@@ -43,6 +43,8 @@ pub const STATUS_BG: Color32 = Color32::from_rgb(26, 28, 34);
 pub const TINT_PROFILES: Color32 = Color32::from_rgb(48, 56, 70);
 pub const TINT_PANELS: Color32 = Color32::from_rgb(46, 60, 52);
 pub const TINT_APP: Color32 = Color32::from_rgb(62, 52, 48);
+/// Cool steel tint for the Stats ribbon group (right edge).
+pub const TINT_STATS: Color32 = Color32::from_rgb(42, 54, 64);
 
 pub struct IconSet {
     textures: HashMap<&'static str, TextureHandle>,

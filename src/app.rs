@@ -17,8 +17,8 @@ use crate::ui::search_bar::SearchFilter;
 use crate::ui::shortcuts::{self, Action as ShortcutAction};
 use crate::ui::payload_panel::PayloadSearch;
 use crate::ui::{
-    payload_panel, pin_board, profiles, publish_panel, search_bar, settings_panel, topic_tree_panel,
-    traffic_panel,
+    payload_panel, pin_board, profiles, publish_panel, search_bar, settings_panel, stats_ribbon,
+    topic_tree_panel, traffic_panel,
 };
 use crate::ui::flash;
 use eframe::egui::{self, Align, Color32, FontFamily, FontId, RichText, TextStyle, TextureHandle};
@@ -679,6 +679,27 @@ impl MqttMonitorApp {
                             }
                         }
                     });
+
+                    // Push Stats to the far right; keep LTR inside so the section rail
+                    // stays on the left of the group (same as Profiles / Panels / App).
+                    let remaining = ui.available_width();
+                    if remaining > 8.0 {
+                        ui.allocate_ui_with_layout(
+                            egui::vec2(remaining, 70.0),
+                            egui::Layout::right_to_left(egui::Align::Min),
+                            |ui| {
+                                ui.with_layout(
+                                    egui::Layout::left_to_right(egui::Align::Min),
+                                    |ui| {
+                                        stats_ribbon::draw_group(
+                                            ui,
+                                            &self.sessions.traffic_stats,
+                                        );
+                                    },
+                                );
+                            },
+                        );
+                    }
                 });
             });
 
@@ -792,6 +813,8 @@ impl eframe::App for MqttMonitorApp {
         if let Some(msg) = self.sessions.poll_events(&mut self.pins) {
             self.status = msg;
         }
+        // Slide the Stats throughput window forward (idle rate → 0).
+        self.sessions.traffic_stats.tick();
 
         // egui idles without input — keep frames flowing while any fade is live.
         let now = Instant::now();
@@ -805,6 +828,9 @@ impl eframe::App for MqttMonitorApp {
             .any(|p| flash::flash_active(p.flash_until, now));
         if flashing {
             ctx.request_repaint();
+        } else if self.sessions.traffic_stats.needs_repaint() {
+            // Light refresh so Thru / projections update without input.
+            ctx.request_repaint_after(std::time::Duration::from_millis(250));
         }
 
         self.handle_shortcuts(ctx);
@@ -854,7 +880,7 @@ impl eframe::App for MqttMonitorApp {
                         ui,
                         &mut self.publish,
                         &mut self.publish_history,
-                        &self.sessions,
+                        &mut self.sessions,
                         &self.profiles,
                         &self.icons,
                         &mut self.status,

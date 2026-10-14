@@ -8,4 +8,5 @@ pub mod session;
 pub mod settings;
 pub mod subscribe;
 pub mod topic_tree;
+pub mod traffic_stats;
 pub mod value_path;
