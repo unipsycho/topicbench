@@ -4,6 +4,13 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
 
+/// rumqttc incoming packet decode floor (2 KB).
+pub const MAX_PACKET_MIN: usize = 2 * 1024;
+/// rumqttc incoming packet decode ceiling (256 KB).
+pub const MAX_PACKET_MAX: usize = 256 * 1024;
+/// Default max packet size (64 KB) — above rumqttc’s ~10 KB default.
+pub const MAX_PACKET_DEFAULT: usize = 64 * 1024;
+
 /// How the topic tree opens by default.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -42,6 +49,13 @@ pub struct AppSettings {
     /// Profile ids that were connected when the app last ran / last connect change.
     #[serde(default)]
     pub last_connected: Vec<String>,
+    /// Max MQTT packet size in bytes (incoming + outgoing). Clamped 2KB–256KB.
+    #[serde(default = "default_max_packet_bytes")]
+    pub max_packet_bytes: usize,
+}
+
+fn default_max_packet_bytes() -> usize {
+    MAX_PACKET_DEFAULT
 }
 
 impl Default for AppSettings {
@@ -50,6 +64,7 @@ impl Default for AppSettings {
             auto_reconnect_on_reload: true,
             topic_tree_expand: TopicTreeExpandMode::ExpandRoot,
             last_connected: Vec::new(),
+            max_packet_bytes: MAX_PACKET_DEFAULT,
         }
     }
 }
@@ -63,12 +78,27 @@ impl AppSettings {
         base.join("mqtt-monitor").join("settings.json")
     }
 
+    /// Clamp packet size into the supported Settings range.
+    pub fn clamp_max_packet(bytes: usize) -> usize {
+        bytes.clamp(MAX_PACKET_MIN, MAX_PACKET_MAX)
+    }
+
+    pub fn max_packet_kb(&self) -> usize {
+        Self::clamp_max_packet(self.max_packet_bytes) / 1024
+    }
+
+    pub fn set_max_packet_kb(&mut self, kb: usize) {
+        self.max_packet_bytes = Self::clamp_max_packet(kb.saturating_mul(1024));
+    }
+
     pub fn load() -> Self {
         let path = Self::path();
-        match fs::read_to_string(&path) {
+        let mut s = match fs::read_to_string(&path) {
             Ok(text) => serde_json::from_str(&text).unwrap_or_default(),
             Err(_) => Self::default(),
-        }
+        };
+        s.max_packet_bytes = Self::clamp_max_packet(s.max_packet_bytes);
+        s
     }
 
     pub fn save(&self) -> Result<(), String> {
@@ -76,7 +106,9 @@ impl AppSettings {
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent).map_err(|e| format!("mkdir {}: {e}", parent.display()))?;
         }
-        let text = serde_json::to_string_pretty(self).map_err(|e| e.to_string())?;
+        let mut clone = self.clone();
+        clone.max_packet_bytes = Self::clamp_max_packet(clone.max_packet_bytes);
+        let text = serde_json::to_string_pretty(&clone).map_err(|e| e.to_string())?;
         fs::write(&path, text).map_err(|e| format!("write {}: {e}", path.display()))
     }
 
@@ -89,5 +121,18 @@ impl AppSettings {
             self.last_connected.retain(|id| id != profile_id);
         }
         let _ = self.save();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn clamp_max_packet_range() {
+        assert_eq!(AppSettings::clamp_max_packet(0), MAX_PACKET_MIN);
+        assert_eq!(AppSettings::clamp_max_packet(1024), MAX_PACKET_MIN);
+        assert_eq!(AppSettings::clamp_max_packet(64 * 1024), 64 * 1024);
+        assert_eq!(AppSettings::clamp_max_packet(512 * 1024), MAX_PACKET_MAX);
     }
 }
