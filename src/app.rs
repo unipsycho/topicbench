@@ -16,6 +16,7 @@ use crate::ui::icons::{
 use crate::ui::profiles::ProfileListFilter;
 use crate::ui::search_bar::SearchFilter;
 use crate::ui::shortcuts::{self, Action as ShortcutAction};
+use crate::ui::payload_panel::PayloadSearch;
 use crate::ui::{
     payload_panel, pin_board, profiles, publish_panel, search_bar, settings_panel, topic_tree_panel,
     traffic_panel,
@@ -81,6 +82,8 @@ pub struct MqttMonitorApp {
     profiles_auto_opened: bool,
     expand_all_once: Option<bool>,
     auto_reconnect_done: bool,
+    /// Find-in-payload query / match cursor for the Payload side panel.
+    payload_search: PayloadSearch,
 }
 
 impl MqttMonitorApp {
@@ -114,6 +117,7 @@ impl MqttMonitorApp {
             profiles_auto_opened: false,
             expand_all_once: None,
             auto_reconnect_done: false,
+            payload_search: PayloadSearch::default(),
         }
     }
 
@@ -831,6 +835,7 @@ impl eframe::App for MqttMonitorApp {
                         &self.profiles,
                         &self.pins,
                         &self.icons,
+                        &mut self.payload_search,
                     );
                 });
         }
