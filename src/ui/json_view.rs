@@ -15,6 +15,22 @@ const C_DEFAULT: Color32 = Color32::from_rgb(220, 222, 228);
 /// Topic-name gray (matches ribbon caption / weak chrome).
 pub const C_TOPIC: Color32 = Color32::from_rgb(170, 176, 188);
 
+/// True when text looks like an intended JSON object/array (starts with `{` or `[`).
+pub fn looks_like_json(payload: &str) -> bool {
+    let t = payload.trim();
+    t.starts_with('{') || t.starts_with('[')
+}
+
+/// True when `payload` parses as any JSON value (object, array, or scalar).
+pub fn is_valid_json(payload: &str) -> bool {
+    serde_json::from_str::<serde_json::Value>(payload.trim()).is_ok()
+}
+
+/// Intended JSON object/array that is currently invalid — warn / block publish.
+pub fn json_edit_invalid(payload: &str) -> bool {
+    looks_like_json(payload) && !is_valid_json(payload)
+}
+
 /// If `payload` is a JSON object or array, return pretty-printed text.
 pub fn try_pretty_json(payload: &str) -> Option<String> {
     let t = payload.trim();
@@ -136,8 +152,8 @@ pub fn hover_payload_body(ui: &mut egui::Ui, payload: &str) {
     }
 }
 
-/// Tokenize pretty JSON into a colored left-aligned `LayoutJob`.
-fn highlight_job(src: &str, font_size: f32) -> LayoutJob {
+/// Tokenize JSON text into a colored left-aligned `LayoutJob` (Publish editor / Value).
+pub fn highlight_job(src: &str, font_size: f32) -> LayoutJob {
     let font = FontId::monospace(font_size);
     let mut job = LayoutJob {
         text: src.to_string(),
@@ -146,6 +162,19 @@ fn highlight_job(src: &str, font_size: f32) -> LayoutJob {
         ..Default::default()
     };
     highlight_range(&mut job, src, 0, src.len(), &font);
+    job
+}
+
+/// Plain monospace `LayoutJob` for non-JSON Publish payloads.
+pub fn plain_mono_job(src: &str, font_size: f32) -> LayoutJob {
+    let font = FontId::monospace(font_size);
+    let mut job = LayoutJob {
+        text: src.to_string(),
+        break_on_newline: true,
+        halign: Align::LEFT,
+        ..Default::default()
+    };
+    push(&mut job, 0, src.len(), C_DEFAULT, font);
     job
 }
 
@@ -363,6 +392,15 @@ mod tests {
     fn reject_plain_text() {
         assert!(try_pretty_json("hello").is_none());
         assert!(try_pretty_json("42").is_none());
+    }
+
+    #[test]
+    fn json_edit_invalid_detects_broken_object() {
+        assert!(!json_edit_invalid("hello"));
+        assert!(!json_edit_invalid(r#"{"ok":true}"#));
+        assert!(json_edit_invalid(r#"{"ok":"#));
+        assert!(looks_like_json("  [1,2 "));
+        assert!(!is_valid_json("  [1,2 "));
     }
 
     #[test]

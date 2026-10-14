@@ -930,8 +930,8 @@ impl eframe::App for MqttMonitorApp {
                             self.persist_panels();
                         }
                         self.status = format!(
-                            "Publish filled from tree: {} · {}",
-                            fill.profile_name, fill.topic
+                            "Publish filled from tree: {} · {} (retain={})",
+                            fill.profile_name, fill.topic, fill.retain
                         );
                     }
                 }

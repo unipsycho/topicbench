@@ -265,6 +265,7 @@ impl SessionManager {
                     profile_id,
                     topic,
                     payload,
+                    retain,
                 } => {
                     if !seen_msgs.insert((profile_id.clone(), topic.clone(), payload.clone())) {
                         continue;
@@ -275,7 +276,7 @@ impl SessionManager {
                         }
                         session.message_count = session.message_count.saturating_add(1);
                         session.flash_until = Some(now + Duration::from_millis(FLASH_MS));
-                        session.topic_tree.observe(&topic, &payload, now);
+                        session.topic_tree.observe(&topic, &payload, retain, now);
                         session.traffic.push_front(TrafficLine {
                             topic: topic.clone(),
                             payload: payload.clone(),
