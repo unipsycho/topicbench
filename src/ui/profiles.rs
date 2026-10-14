@@ -127,10 +127,8 @@ pub fn draw(
         let (rect, row_response) =
             ui.allocate_exact_size(egui::vec2(ui.available_width(), row_h), egui::Sense::click());
         ui.painter().rect_filled(rect, 2.0, fill);
-        // Update pulse: border only (no fill wash over the name/status text).
-        if let Some(stroke) = flash::flash_stroke(flash_until, now) {
-            ui.painter().rect_stroke(rect, 2.0, stroke, egui::StrokeKind::Inside);
-        }
+        // Update pulse: inset border only (no fill wash; layout size unchanged).
+        flash::paint_inset(ui, rect, flash::flash_stroke(flash_until, now));
         let mut name_clicked = false;
         ui.allocate_new_ui(egui::UiBuilder::new().max_rect(rect.shrink2(egui::vec2(8.0, 4.0))), |ui| {
             ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {

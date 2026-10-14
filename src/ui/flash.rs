@@ -1,7 +1,8 @@
 //! Brief receive-pulse border for profile rows, stickies, and tree nodes.
 //! 1px border only — snap full-on, fade out over FLASH_MS; each update resets.
+//! Paint with [`paint_inset`] so layout size never grows when the pulse is on.
 
-use eframe::egui::{Color32, Stroke};
+use eframe::egui::{Color32, Rect, Stroke, StrokeKind, Ui};
 use std::time::Instant;
 
 use crate::mqtt::topic_tree::{TopicNode, FLASH_MS};
@@ -36,4 +37,18 @@ pub fn flash_stroke(until: Option<Instant>, now: Instant) -> Option<Stroke> {
         1.0_f32,
         Color32::from_rgba_unmultiplied(80, 200, 120, a),
     ))
+}
+
+/// Draw a 1px flash (or fallback) stroke **inside** `rect` — never expands layout.
+pub fn paint_inset(ui: &Ui, rect: Rect, stroke: Option<Stroke>) {
+    if let Some(stroke) = stroke {
+        ui.painter()
+            .rect_stroke(rect, 2.0, stroke, StrokeKind::Inside);
+    }
+}
+
+/// Sticky/card chrome: always 1px inside; flash color when pulsing.
+pub fn paint_inset_or(ui: &Ui, rect: Rect, flash: Option<Stroke>, fallback: Stroke) {
+    ui.painter()
+        .rect_stroke(rect, 2.0, flash.unwrap_or(fallback), StrokeKind::Inside);
 }

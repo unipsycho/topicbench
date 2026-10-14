@@ -198,9 +198,8 @@ fn draw_node(
         }
         let has_kids = !child.children.is_empty();
         let is_leaf_msg = child.last_payload.is_some();
-        // Flash = border only so gray topic / highlighted payload stay readable.
-        let flash_stroke = flash::flash_stroke(child.flash_until, now)
-            .unwrap_or(egui::Stroke::NONE);
+        // Flash = inset border only (never expands row height when pulsing).
+        let flash_stroke = flash::flash_stroke(child.flash_until, now);
 
         let default_open = match force_open {
             Some(v) => v,
@@ -211,141 +210,143 @@ fn draw_node(
             },
         };
 
-        egui::Frame::NONE.stroke(flash_stroke).show(ui, |ui| {
-            if has_kids {
-                let id = tree_id(profile_id, &child_path);
-                let mut state =
-                    egui::collapsing_header::CollapsingState::load_with_default_open(
-                        ui.ctx(),
-                        id,
-                        default_open,
-                    );
-                if let Some(v) = force_open {
-                    state.set_open(v);
-                }
-                let was_open = state.is_open();
-                let subtree = child.subtree_message_count();
-                let selected = is_selected(pins, profile_id, &child_path);
+        if has_kids {
+            let id = tree_id(profile_id, &child_path);
+            let mut state =
+                egui::collapsing_header::CollapsingState::load_with_default_open(
+                    ui.ctx(),
+                    id,
+                    default_open,
+                );
+            if let Some(v) = force_open {
+                state.set_open(v);
+            }
+            let was_open = state.is_open();
+            let subtree = child.subtree_message_count();
+            let selected = is_selected(pins, profile_id, &child_path);
 
-                // Custom header: we own click vs double-click. Do not use show_header —
-                // its ▶ button toggles on every clicked(), so a double-click nets zero
-                // and header_resp unions the arrow (wrong !was_open path).
-                let header_row = ui.horizontal(|ui| {
-                    ui.spacing_mut().item_spacing.x = 0.0;
-                    let toggle_size =
-                        egui::vec2(ui.spacing().indent, ui.spacing().icon_width);
-                    let (toggle_id, toggle_rect) = ui.allocate_space(toggle_size);
-                    // Unique id so we don't share interaction with CollapsingState persistence id.
-                    let toggle_resp =
-                        ui.interact(toggle_rect, toggle_id.with("tree_toggle"), egui::Sense::click());
-                    let openness = state.openness(ui.ctx());
-                    egui::collapsing_header::paint_default_icon(ui, openness, &toggle_resp);
+            // Custom header: we own click vs double-click. Do not use show_header —
+            // its ▶ button toggles on every clicked(), so a double-click nets zero
+            // and header_resp unions the arrow (wrong !was_open path).
+            let header_row = ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 0.0;
+                let toggle_size =
+                    egui::vec2(ui.spacing().indent, ui.spacing().icon_width);
+                let (toggle_id, toggle_rect) = ui.allocate_space(toggle_size);
+                // Unique id so we don't share interaction with CollapsingState persistence id.
+                let toggle_resp =
+                    ui.interact(toggle_rect, toggle_id.with("tree_toggle"), egui::Sense::click());
+                let openness = state.openness(ui.ctx());
+                egui::collapsing_header::paint_default_icon(ui, openness, &toggle_resp);
 
-                    ui.spacing_mut().item_spacing.x = 4.0;
-                    let label_resp = egui::Frame::NONE
-                        .fill(if selected {
-                            select_fill()
-                        } else {
-                            Color32::TRANSPARENT
-                        })
-                        .inner_margin(egui::Margin::symmetric(3, 1))
-                        .corner_radius(2.0)
-                        .show(ui, |ui| {
-                            ui.add(
-                                egui::Label::new(RichText::new(segment).strong())
-                                    .sense(egui::Sense::click())
-                                    .selectable(false),
-                            )
-                        })
-                        .inner;
-                    if !was_open && subtree > 0 {
+                ui.spacing_mut().item_spacing.x = 4.0;
+                let label_resp = egui::Frame::NONE
+                    .fill(if selected {
+                        select_fill()
+                    } else {
+                        Color32::TRANSPARENT
+                    })
+                    .inner_margin(egui::Margin::symmetric(3, 1))
+                    .corner_radius(2.0)
+                    .show(ui, |ui| {
                         ui.add(
-                            egui::Label::new(
-                                RichText::new(format!("#{subtree}")).small().weak(),
-                            )
-                            .sense(egui::Sense::click())
-                            .selectable(false),
-                        );
-                    }
-                    (toggle_resp, label_resp)
-                });
-                let (toggle_resp, label_resp) = header_row.inner;
-
-                // Double-click folder row → flip open + whole subtree.
-                // ▶ single-click toggles this node; on a double-click the first click already
-                // flipped was_open, so target is was_open (not !was_open). Label dbl has no
-                // prior flip → target !was_open. Single-click label → select for Payload.
-                if label_resp.double_clicked() {
-                    let target = !was_open;
-                    apply_tree_toggle(ui.ctx(), id, target, profile_id, &child_path, child);
-                    state.set_open(target);
-                } else if toggle_resp.double_clicked() {
-                    let target = was_open;
-                    apply_tree_toggle(ui.ctx(), id, target, profile_id, &child_path, child);
-                    state.set_open(target);
-                } else if toggle_resp.clicked() {
-                    state.toggle(ui);
-                    state.store(ui.ctx());
-                } else if label_resp.clicked() {
-                    select_topic(pins, profile_id, profile_name, &child_path);
+                            egui::Label::new(RichText::new(segment).strong())
+                                .sense(egui::Sense::click())
+                                .selectable(false),
+                        )
+                    })
+                    .inner;
+                if !was_open && subtree > 0 {
+                    ui.add(
+                        egui::Label::new(
+                            RichText::new(format!("#{subtree}")).small().weak(),
+                        )
+                        .sense(egui::Sense::click())
+                        .selectable(false),
+                    );
                 }
+                (toggle_resp, label_resp)
+            });
+            // Pulse inside the header row rect — layout size stays constant.
+            flash::paint_inset(ui, header_row.response.rect, flash_stroke);
+            let (toggle_resp, label_resp) = header_row.inner;
 
-                let body_open = state.is_open();
-                state.show_body_indented(&header_row.response, ui, |ui| {
-                    if is_leaf_msg {
-                        leaf_row(
-                            ui,
-                            segment,
-                            &child_path,
-                            child,
-                            profile_id,
-                            profile_name,
-                            profiles,
-                            pins,
-                            icons,
-                            status,
-                            Some(ToggleParent {
-                                id,
-                                was_open: body_open,
-                                profile_id,
-                                path: &child_path,
-                                node: child,
-                            }),
-                        );
-                    }
-                    draw_node(
+            // Double-click folder row → flip open + whole subtree.
+            // ▶ single-click toggles this node; on a double-click the first click already
+            // flipped was_open, so target is was_open (not !was_open). Label dbl has no
+            // prior flip → target !was_open. Single-click label → select for Payload.
+            if label_resp.double_clicked() {
+                let target = !was_open;
+                apply_tree_toggle(ui.ctx(), id, target, profile_id, &child_path, child);
+                state.set_open(target);
+            } else if toggle_resp.double_clicked() {
+                let target = was_open;
+                apply_tree_toggle(ui.ctx(), id, target, profile_id, &child_path, child);
+                state.set_open(target);
+            } else if toggle_resp.clicked() {
+                state.toggle(ui);
+                state.store(ui.ctx());
+            } else if label_resp.clicked() {
+                select_topic(pins, profile_id, profile_name, &child_path);
+            }
+
+            let body_open = state.is_open();
+            state.show_body_indented(&header_row.response, ui, |ui| {
+                if is_leaf_msg {
+                    leaf_row(
                         ui,
+                        segment,
+                        &child_path,
                         child,
-                        child_path.clone(),
                         profile_id,
                         profile_name,
                         profiles,
                         pins,
-                        now,
-                        expand_mode,
-                        force_open,
-                        depth + 1,
                         icons,
-                        filter,
                         status,
+                        Some(ToggleParent {
+                            id,
+                            was_open: body_open,
+                            profile_id,
+                            path: &child_path,
+                            node: child,
+                        }),
+                        None, // folder header owns the flash
                     );
-                });
-            } else {
-                leaf_row(
+                }
+                draw_node(
                     ui,
-                    segment,
-                    &child_path,
                     child,
+                    child_path.clone(),
                     profile_id,
                     profile_name,
                     profiles,
                     pins,
+                    now,
+                    expand_mode,
+                    force_open,
+                    depth + 1,
                     icons,
+                    filter,
                     status,
-                    None,
                 );
-            }
-        });
+            });
+        } else {
+            leaf_row(
+                ui,
+                segment,
+                &child_path,
+                child,
+                profile_id,
+                profile_name,
+                profiles,
+                pins,
+                icons,
+                status,
+                None,
+                flash_stroke,
+            );
+        }
     }
 }
 
@@ -387,6 +388,7 @@ fn leaf_row(
     icons: &IconSet,
     status: &mut String,
     toggle_parent: Option<ToggleParent<'_>>,
+    flash_stroke: Option<egui::Stroke>,
 ) {
     let mut dbl = false;
     let selected = is_selected(pins, profile_id, full_topic);
@@ -396,7 +398,7 @@ fn leaf_row(
         Color32::TRANSPARENT
     };
 
-    egui::Frame::NONE.fill(row_fill).show(ui, |ui| {
+    let row = egui::Frame::NONE.fill(row_fill).show(ui, |ui| {
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 4.0;
 
@@ -530,6 +532,8 @@ fn leaf_row(
             }
         });
     });
+    // Inset flash — same row size with or without pulse.
+    flash::paint_inset(ui, row.response.rect, flash_stroke);
 
     // Double-click payload row of a branch node → same expand/collapse as its header.
     if dbl {
