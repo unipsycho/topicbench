@@ -680,25 +680,19 @@ impl MqttMonitorApp {
                         }
                     });
 
-                    // Push Stats to the far right; keep LTR inside so the section rail
-                    // stays on the left of the group (same as Profiles / Panels / App).
+                    // Push Stats to the far right of remaining ribbon space without
+                    // expanding the tinted group to the full leftover width (that made
+                    // centered text look jumbled inside a wide empty cell).
                     let remaining = ui.available_width();
                     if remaining > 8.0 {
-                        ui.allocate_ui_with_layout(
-                            egui::vec2(remaining, 70.0),
-                            egui::Layout::right_to_left(egui::Align::Min),
-                            |ui| {
-                                ui.with_layout(
-                                    egui::Layout::left_to_right(egui::Align::Min),
-                                    |ui| {
-                                        stats_ribbon::draw_group(
-                                            ui,
-                                            &self.sessions.traffic_stats,
-                                        );
-                                    },
-                                );
-                            },
-                        );
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
+                            ui.set_max_width(remaining);
+                            // Hug-sized group; LTR so the rotated "Stats" rail stays left.
+                            ui.with_layout(egui::Layout::left_to_right(egui::Align::Min), |ui| {
+                                ui.spacing_mut().item_spacing.x = 0.0;
+                                stats_ribbon::draw_group(ui, &self.sessions.traffic_stats);
+                            });
+                        });
                     }
                 });
             });
