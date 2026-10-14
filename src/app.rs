@@ -381,8 +381,10 @@ impl MqttMonitorApp {
                 ui.visuals_mut().override_text_color = Some(CHROME_TEXT);
                 ui.spacing_mut().item_spacing.y = 0.0;
 
-                // Center brand + groups in ribbon height (true vertical middle).
-                ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                // Top-align the ribbon row (Align::Center left a clear-color void above the
+                // frame while egui still reserved space from the window top). Brand logo +
+                // two-line title stay vertically centered inside brand_h below.
+                ui.with_layout(egui::Layout::left_to_right(egui::Align::Min), |ui| {
                     ui.spacing_mut().item_spacing.x = 4.0;
 
                     // Brand block: logo + two-line title, vertically centered as one unit.
