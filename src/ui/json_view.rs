@@ -77,11 +77,6 @@ pub fn hover_payload(ui: &mut egui::Ui, payload: &str, id_salt: impl Hash) {
     }
 }
 
-/// Colored LayoutJob for inline use (e.g. truncated tree row payload).
-pub fn highlight_layout(src: &str) -> LayoutJob {
-    highlight_job(src)
-}
-
 /// Tokenize pretty JSON into a colored left-aligned `LayoutJob`.
 fn highlight_job(src: &str) -> LayoutJob {
     let font = FontId::monospace(12.0);
