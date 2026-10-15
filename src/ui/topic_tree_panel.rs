@@ -3,7 +3,7 @@
 use crate::mqtt::pins::PinBoard;
 use crate::mqtt::profile::ProfileStore;
 use crate::mqtt::publish::PublishFromTree;
-use crate::mqtt::session::{Session, SessionManager, SessionState};
+use crate::mqtt::session::{SessionManager, SessionState};
 use crate::mqtt::settings::TopicTreeExpandMode;
 use crate::mqtt::topic_tree::TopicNode;
 use crate::ui::flash;
@@ -35,7 +35,7 @@ fn select_fill() -> Color32 {
 
 pub fn draw(
     ui: &mut egui::Ui,
-    sessions: &SessionManager,
+    sessions: &mut SessionManager,
     profiles: &mut ProfileStore,
     pins: &mut PinBoard,
     expand_mode: TopicTreeExpandMode,
@@ -46,6 +46,7 @@ pub fn draw(
     // Set when a leaf/payload row is double-clicked → open Publish and fill form.
     publish_from_tree: &mut Option<PublishFromTree>,
 ) {
+    let mut delete_hierarchy = false;
     ui.horizontal(|ui| {
         if let Some(tex) = icons.get("topic_tree") {
             ui.add(
@@ -61,19 +62,43 @@ pub fn draw(
         if ui.small_button("Collapse all").clicked() {
             *expand_all_once = Some(false);
         }
+        // Red remove_x — only when a tree row is selected (Payload focus).
+        if pins.last_tree_focus.is_some() {
+            if icons
+                .tiny(ui, "remove_x", false, "Delete topic hierarchy")
+                .clicked()
+            {
+                delete_hierarchy = true;
+            }
+        }
     });
+    // Drop selected topic + descendants from the in-memory display tree (not broker).
+    if delete_hierarchy {
+        if let Some((profile_id, _, topic)) = pins.last_tree_focus.take() {
+            if let Some(session) = sessions.open.get_mut(&profile_id) {
+                if session.topic_tree.remove_hierarchy(&topic) {
+                    *status = format!("Deleted topic hierarchy: {topic}");
+                } else {
+                    *status = format!("Topic not in tree: {topic}");
+                }
+            } else {
+                *status = format!("Broker not connected: {topic}");
+            }
+        }
+    }
     ui.label("Per connected broker — colored heading, then that broker’s topics.");
     ui.weak("Single-click selects for Payload. Double-click a parent to expand/collapse. Double-click a topic/payload row to fill Publish.");
     ui.add_space(4.0);
 
     // Only currently connected brokers — disconnected sessions are cleared on Disconnect.
-    let connected: Vec<&Session> = sessions
+    let connected_ids: Vec<String> = sessions
         .open
         .values()
         .filter(|s| s.state == SessionState::Connected)
+        .map(|s| s.profile_id.clone())
         .collect();
 
-    if connected.is_empty() {
+    if connected_ids.is_empty() {
         ui.weak("Connect a profile and subscribe to see topics.");
         return;
     }
@@ -81,35 +106,41 @@ pub fn draw(
     let force_open = expand_all_once.take();
     let now = Instant::now();
 
-    for session in &connected {
+    for profile_id in connected_ids {
+        let Some(session) = sessions.open.get(&profile_id) else {
+            continue;
+        };
         // Profile accent color (user-settable); fallback green if missing.
         let color = profiles
             .profiles
             .get(&session.profile_id)
             .map(|p| p.color())
             .unwrap_or(Color32::from_rgb(90, 190, 120));
+        let profile_name = session.profile_name.clone();
+        let state_label = session.state.label();
+        let tree_empty = session.topic_tree.root.children.is_empty();
         ui.add_space(6.0);
         ui.label(
-            RichText::new(format!("▸ {}", session.profile_name))
+            RichText::new(format!("▸ {profile_name}"))
                 .heading()
                 .color(color)
                 .strong(),
         );
         ui.label(
-            RichText::new(format!(
-                "{} · {}",
-                session.state.label(),
-                session.profile_id
-            ))
-            .small()
-            .color(color),
+            RichText::new(format!("{state_label} · {profile_id}"))
+                .small()
+                .color(color),
         );
 
-        if session.topic_tree.root.children.is_empty() {
+        if tree_empty {
             ui.weak("  No traffic yet on this broker.");
             continue;
         }
 
+        // Re-borrow session for tree walk (ids collected above so map stays usable).
+        let Some(session) = sessions.open.get(&profile_id) else {
+            continue;
+        };
         draw_node(
             ui,
             &session.topic_tree.root,

@@ -1033,7 +1033,7 @@ impl eframe::App for MqttMonitorApp {
                     let mut publish_from_tree: Option<PublishFromTree> = None;
                     topic_tree_panel::draw(
                         ui,
-                        &self.sessions,
+                        &mut self.sessions,
                         &mut self.profiles,
                         &mut self.pins,
                         self.settings.topic_tree_expand,

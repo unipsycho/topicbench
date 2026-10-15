@@ -52,6 +52,29 @@ impl TopicNode {
         }
         total
     }
+
+    /// Remove `topic` and its entire descendant hierarchy from the in-memory tree.
+    /// Returns true if a node was removed. Empty / root path clears all children.
+    pub fn remove_hierarchy(&mut self, topic: &str) -> bool {
+        let parts: Vec<&str> = topic.split('/').filter(|p| !p.is_empty()).collect();
+        if parts.is_empty() {
+            let had = !self.children.is_empty();
+            self.children.clear();
+            self.last_payload = None;
+            self.last_retain = false;
+            self.message_count = 0;
+            self.flash_until = None;
+            return had;
+        }
+        let mut node = self;
+        for part in &parts[..parts.len() - 1] {
+            match node.children.get_mut(*part) {
+                Some(child) => node = child,
+                None => return false,
+            }
+        }
+        node.children.remove(parts[parts.len() - 1]).is_some()
+    }
 }
 
 /// Root of the topic tree for one profile/session.
@@ -63,6 +86,11 @@ pub struct TopicTree {
 impl TopicTree {
     pub fn observe(&mut self, topic: &str, payload: &str, retain: bool, now: Instant) {
         self.root.observe(topic, payload, retain, now);
+    }
+
+    /// Drop a topic path and all descendants from the session display tree (not the broker).
+    pub fn remove_hierarchy(&mut self, topic: &str) -> bool {
+        self.root.remove_hierarchy(topic)
     }
 }
 
@@ -89,5 +117,26 @@ mod tests {
             Some("21.5")
         );
         assert!(tree.root.node_at("missing").is_none());
+    }
+
+    #[test]
+    fn remove_hierarchy_drops_descendants() {
+        let mut tree = TopicTree::default();
+        let now = Instant::now();
+        tree.observe("sensors/lab/temp", "21.5", true, now);
+        tree.observe("sensors/lab/humidity", "40", false, now);
+        tree.observe("sensors/yard/light", "1", false, now);
+        assert!(tree.remove_hierarchy("sensors/lab"));
+        assert!(tree.root.node_at("sensors/lab").is_none());
+        assert!(tree.root.node_at("sensors/lab/temp").is_none());
+        assert_eq!(
+            tree.root
+                .node_at("sensors/yard/light")
+                .and_then(|n| n.last_payload.as_deref()),
+            Some("1")
+        );
+        assert!(!tree.remove_hierarchy("sensors/lab"));
+        assert!(tree.remove_hierarchy("sensors"));
+        assert!(tree.root.children.is_empty());
     }
 }
