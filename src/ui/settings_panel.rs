@@ -7,43 +7,42 @@ use crate::ui::icons::{IconSet, CHROME_ACCENT_BORDER};
 use crate::ui::shortcuts;
 use eframe::egui::{self, Sense};
 
-/// Combined sticky layout choice shown in the single Layout dropdown.
+/// Sticky board column count (Settings Layout dropdown).
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum StickyLayoutChoice {
-    Rows,
-    TwoColumns,
-    FourColumns,
+    Cols2,
+    Cols3,
+    Cols4,
 }
 
 impl StickyLayoutChoice {
     fn label(self) -> &'static str {
         match self {
-            Self::Rows => "Rows",
-            Self::TwoColumns => "Two columns",
-            Self::FourColumns => "Four columns",
+            Self::Cols2 => "2 cols",
+            Self::Cols3 => "3 cols",
+            Self::Cols4 => "4 cols",
         }
     }
 
     fn from_settings(s: &AppSettings) -> Self {
+        // Legacy "Rows" maps to 2 cols in the UI.
         match s.sticky_layout {
-            StickyLayoutMode::Rows => Self::Rows,
-            StickyLayoutMode::Columns if s.sticky_columns >= 4 => Self::FourColumns,
-            StickyLayoutMode::Columns => Self::TwoColumns,
+            StickyLayoutMode::Rows => Self::Cols2,
+            StickyLayoutMode::Columns => match AppSettings::clamp_sticky_columns(s.sticky_columns) {
+                4 => Self::Cols4,
+                3 => Self::Cols3,
+                _ => Self::Cols2,
+            },
         }
     }
 
     fn apply(self, s: &mut AppSettings) {
-        match self {
-            Self::Rows => s.sticky_layout = StickyLayoutMode::Rows,
-            Self::TwoColumns => {
-                s.sticky_layout = StickyLayoutMode::Columns;
-                s.sticky_columns = 2;
-            }
-            Self::FourColumns => {
-                s.sticky_layout = StickyLayoutMode::Columns;
-                s.sticky_columns = 4;
-            }
-        }
+        s.sticky_layout = StickyLayoutMode::Columns;
+        s.sticky_columns = match self {
+            Self::Cols2 => 2,
+            Self::Cols3 => 3,
+            Self::Cols4 => 4,
+        };
     }
 }
 
@@ -100,6 +99,10 @@ pub fn draw(
 
     ui.add_space(12.0);
     ui.strong("Sticky topics");
+    // Normalize legacy Rows → 2-column grid so Save persists the new model.
+    if draft.sticky_layout == StickyLayoutMode::Rows {
+        StickyLayoutChoice::Cols2.apply(draft);
+    }
     ui.horizontal(|ui| {
         ui.label("Layout");
         let mut choice = StickyLayoutChoice::from_settings(draft);
@@ -107,9 +110,9 @@ pub fn draw(
             .selected_text(choice.label())
             .show_ui(ui, |ui| {
                 for opt in [
-                    StickyLayoutChoice::Rows,
-                    StickyLayoutChoice::TwoColumns,
-                    StickyLayoutChoice::FourColumns,
+                    StickyLayoutChoice::Cols2,
+                    StickyLayoutChoice::Cols3,
+                    StickyLayoutChoice::Cols4,
                 ] {
                     if ui
                         .selectable_value(&mut choice, opt, opt.label())
