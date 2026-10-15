@@ -85,6 +85,8 @@ pub struct MqttMonitorApp {
     auto_reconnect_done: bool,
     /// Find-in-payload query / match cursor for the Payload side panel.
     payload_search: PayloadSearch,
+    /// Profile password field: plain text when true (session UI only; resets on profile switch).
+    show_profile_password: bool,
 }
 
 impl MqttMonitorApp {
@@ -133,6 +135,7 @@ impl MqttMonitorApp {
             expand_all_once: None,
             auto_reconnect_done: false,
             payload_search: PayloadSearch::default(),
+            show_profile_password: false,
         }
     }
 
@@ -166,6 +169,7 @@ impl MqttMonitorApp {
             self.persist_panels();
         }
         let id = self.profiles.add_new();
+        self.show_profile_password = false;
         self.status = format!("Created profile {id}");
         self.focus_profile_editor = true;
     }
@@ -322,6 +326,9 @@ impl MqttMonitorApp {
             .and_then(|id| ids.iter().position(|k| k == id))
             .unwrap_or(0);
         let next = (cur as i32 + delta).clamp(0, ids.len() as i32 - 1) as usize;
+        if self.profiles.selected_id.as_deref() != Some(ids[next].as_str()) {
+            self.show_profile_password = false;
+        }
         self.profiles.selected_id = Some(ids[next].clone());
         self.panels.profiles = true;
     }
@@ -904,6 +911,7 @@ impl eframe::App for MqttMonitorApp {
                             &mut self.status,
                             ctx,
                             &mut self.focus_profile_editor,
+                            &mut self.show_profile_password,
                         );
                     });
                 });

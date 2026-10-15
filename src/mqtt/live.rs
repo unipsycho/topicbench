@@ -3,6 +3,7 @@
 //! Intentional disconnect sets `stop` so the worker exits and does **not**
 //! auto-reconnect until the user Connects again.
 
+use crate::mqtt::certs;
 use crate::mqtt::profile::ConnectionProfile;
 use crate::mqtt::session::SessionState;
 use crate::mqtt::settings::WIRE_MAX_PACKET;
@@ -68,8 +69,27 @@ pub fn spawn(
     if !profile.username.is_empty() {
         opts.set_credentials(&profile.username, &profile.password);
     }
-    if profile.use_tls {
-        opts.set_transport(Transport::tls_with_default_config());
+    // TLS: optional certs folder (CA + client cert + key) or system roots when Use TLS alone.
+    let want_tls = profile.use_tls || !profile.certs_dir.trim().is_empty();
+    if want_tls {
+        match certs::discover_optional(&profile.certs_dir) {
+            Ok(Some(resolved)) => {
+                let (ca, client_cert, key) = resolved.load_pem().map_err(|e| {
+                    format!("TLS certs: {e}")
+                })?;
+                opts.set_transport(Transport::tls(
+                    ca,
+                    Some((client_cert, key)),
+                    None,
+                ));
+            }
+            Ok(None) => {
+                opts.set_transport(Transport::tls_with_default_config());
+            }
+            Err(e) => {
+                return Err(format!("TLS certs: {e}"));
+            }
+        }
     }
 
     // Larger request channel — `#` floods + retained bursts shouldn't stall pub/sub requests.
