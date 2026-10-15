@@ -10,8 +10,8 @@ use crate::mqtt::session::SessionManager;
 use crate::mqtt::settings::AppSettings;
 use crate::mqtt::subscribe;
 use crate::ui::icons::{
-    self, ribbon_compact_columns, IconSet, CHROME_BG, CHROME_SEP, CHROME_TEXT, TINT_APP,
-    TINT_PANELS, TINT_PROFILES,
+    self, ribbon_compact_columns, IconSet, CHROME_ACCENT_BORDER, CHROME_ACCENT_SOFT, CHROME_BG,
+    CHROME_SEP, CHROME_TEXT, TINT_APP, TINT_PANELS, TINT_PROFILES,
 };
 use crate::ui::profiles::ProfileListFilter;
 use crate::ui::ribbon_layout::{self, SectionMode};
@@ -87,6 +87,8 @@ pub struct MqttMonitorApp {
     payload_search: PayloadSearch,
     /// Profile password field: plain text when true (session UI only; resets on profile switch).
     show_profile_password: bool,
+    /// Settings modal draft — applied on Save, discarded on Cancel / Escape / backdrop.
+    settings_draft: Option<AppSettings>,
 }
 
 impl MqttMonitorApp {
@@ -136,7 +138,34 @@ impl MqttMonitorApp {
             auto_reconnect_done: false,
             payload_search: PayloadSearch::default(),
             show_profile_password: false,
+            settings_draft: None,
         }
+    }
+
+    /// Open Settings with a draft snapshot of current settings.
+    fn open_settings(&mut self) {
+        self.settings_draft = Some(self.settings.clone());
+        self.settings_open = true;
+    }
+
+    /// Commit draft to live settings + disk, then close.
+    fn save_settings_modal(&mut self) {
+        if let Some(draft) = self.settings_draft.take() {
+            self.settings = draft;
+            match self.settings.save() {
+                Ok(()) => {
+                    self.status = format!("Saved {}", AppSettings::path().display());
+                }
+                Err(e) => self.status = e,
+            }
+        }
+        self.settings_open = false;
+    }
+
+    /// Discard draft and close without applying.
+    fn cancel_settings_modal(&mut self) {
+        self.settings_draft = None;
+        self.settings_open = false;
     }
 
     /// Persist search query + scope to settings.json.
@@ -266,7 +295,7 @@ impl MqttMonitorApp {
                     }
                 }
                 ShortcutAction::OpenSettings => {
-                    self.settings_open = true;
+                    self.open_settings();
                 }
                 ShortcutAction::OpenShortcutsHelp => {
                     self.shortcuts_open = true;
@@ -604,7 +633,7 @@ impl MqttMonitorApp {
                 });
             }
             if clicks[0] {
-                self.settings_open = true;
+                self.open_settings();
             }
             if clicks[1] {
                 if self.settings.zoom_font_out() {
@@ -1056,41 +1085,72 @@ impl eframe::App for MqttMonitorApp {
             }
         }
 
-        // Settings — centered modal (Escape / outside closes). Tips under it are blocked.
+        // Settings — centered modal (Save commits; Cancel / Escape / outside discards).
         if self.settings_open {
-            let mut status = self.status.clone();
+            if self.settings_draft.is_none() {
+                self.settings_draft = Some(self.settings.clone());
+            }
             let mut open_shortcuts = false;
-            let mut close_clicked = false;
+            let mut save_clicked = false;
+            let mut cancel_clicked = false;
             let modal = egui::Modal::new(egui::Id::new("mqtt_master_settings")).show(ctx, |ui| {
                 ui.set_min_width(420.0);
                 ui.set_max_width(480.0);
                 egui::ScrollArea::vertical()
                     .max_height(520.0)
                     .show(ui, |ui| {
-                        settings_panel::draw(
-                            ui,
-                            &mut self.settings,
-                            &self.icons,
-                            &mut status,
-                            &mut open_shortcuts,
-                        );
+                        if let Some(draft) = self.settings_draft.as_mut() {
+                            settings_panel::draw(
+                                ui,
+                                draft,
+                                &self.icons,
+                                &mut open_shortcuts,
+                            );
+                        }
                     });
                 ui.add_space(8.0);
                 ui.separator();
                 ui.horizontal(|ui| {
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui.button("Close").clicked() {
-                            close_clicked = true;
+                        // Save — accent, larger, with icon (same spot Close used).
+                        let save_btn = if let Some(tex) = self.icons.get("save") {
+                            ui.add(
+                                egui::Button::image_and_text(
+                                    egui::Image::new(tex)
+                                        .fit_to_exact_size(egui::vec2(18.0, 18.0)),
+                                    RichText::new("Save").strong(),
+                                )
+                                .fill(CHROME_ACCENT_SOFT)
+                                .stroke(egui::Stroke::new(1.0, CHROME_ACCENT_BORDER))
+                                .min_size(egui::vec2(96.0, 32.0)),
+                            )
+                        } else {
+                            ui.add(
+                                egui::Button::new(RichText::new("Save").strong())
+                                    .fill(CHROME_ACCENT_SOFT)
+                                    .stroke(egui::Stroke::new(1.0, CHROME_ACCENT_BORDER))
+                                    .min_size(egui::vec2(96.0, 32.0)),
+                            )
+                        };
+                        if save_btn.clicked() {
+                            save_clicked = true;
+                        }
+                        if ui
+                            .add(egui::Button::new("Cancel").min_size(egui::vec2(72.0, 28.0)))
+                            .clicked()
+                        {
+                            cancel_clicked = true;
                         }
                     });
                 });
             });
-            self.status = status;
             if open_shortcuts {
                 self.shortcuts_open = true;
             }
-            if close_clicked || modal.should_close() {
-                self.settings_open = false;
+            if save_clicked {
+                self.save_settings_modal();
+            } else if cancel_clicked || modal.should_close() {
+                self.cancel_settings_modal();
             }
         }
     }
