@@ -84,6 +84,9 @@ pub struct ConnectionProfile {
     pub password: String,
     #[serde(default)]
     pub use_tls: bool,
+    /// Optional folder with CA + client cert + private key (AWS IoT–style).
+    #[serde(default)]
+    pub certs_dir: String,
     /// MQTT topic filters applied on connect (`+` / `#` OK).
     #[serde(default)]
     pub subscriptions: Vec<String>,
@@ -110,6 +113,7 @@ impl ConnectionProfile {
             username: String::new(),
             password: String::new(),
             use_tls: false,
+            certs_dir: String::new(),
             subscriptions: Vec::new(),
             stickies: Vec::new(),
             color_rgb: default_profile_color(),
@@ -126,6 +130,7 @@ impl ConnectionProfile {
             username: String::new(),
             password: String::new(),
             use_tls: false,
+            certs_dir: String::new(),
             subscriptions: vec!["sensors/#".into()],
             stickies: Vec::new(),
             color_rgb: [90, 190, 120],
@@ -142,6 +147,7 @@ impl ConnectionProfile {
             username: String::new(),
             password: String::new(),
             use_tls: false,
+            certs_dir: String::new(),
             subscriptions: vec!["devices/+/telemetry".into()],
             stickies: Vec::new(),
             color_rgb: [200, 140, 80],

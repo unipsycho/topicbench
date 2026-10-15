@@ -1,5 +1,6 @@
 //! Left panel: edit profiles (incl. subscriptions), connect, All vs Connected.
 
+use crate::mqtt::certs;
 use crate::mqtt::pins::PinBoard;
 use crate::mqtt::profile::ProfileStore;
 use crate::mqtt::session::{SessionManager, SessionState};
@@ -11,6 +12,7 @@ use crate::ui::clipboard;
 use crate::ui::flash;
 use crate::ui::icons::{IconSet, CHROME_CAPTION};
 use eframe::egui::{self, Color32, RichText};
+use std::path::Path;
 use std::time::Instant;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -74,6 +76,7 @@ pub fn draw(
     status: &mut String,
     ctx: &egui::Context,
     request_editor_focus: &mut bool,
+    show_password: &mut bool,
 ) {
     ui.horizontal(|ui| {
         if let Some(tex) = icons.get("profile") {
@@ -161,6 +164,9 @@ pub fn draw(
         });
         // Row click (or name click) selects the profile — text drag-select still works.
         if row_response.clicked() || name_clicked {
+            if profiles.selected_id.as_deref() != Some(id.as_str()) {
+                *show_password = false; // hide password when switching profiles
+            }
             profiles.selected_id = Some(id.clone());
         }
         ui.add_space(2.0);
@@ -215,11 +221,79 @@ pub fn draw(
                     ui.label("Username");
                     ui.text_edit_singleline(&mut profile.username);
                 });
+                // Password + eyeball toggle (masked by default; revealed text is selectable).
                 ui.horizontal(|ui| {
                     ui.label("Password");
-                    ui.add(egui::TextEdit::singleline(&mut profile.password).password(true));
+                    ui.add(
+                        egui::TextEdit::singleline(&mut profile.password)
+                            .password(!*show_password)
+                            .desired_width(160.0),
+                    );
+                    let (eye_icon, eye_tip) = if *show_password {
+                        ("eye_off", "Hide password")
+                    } else {
+                        ("eye", "Show password")
+                    };
+                    if icons.tiny(ui, eye_icon, *show_password, eye_tip).clicked() {
+                        *show_password = !*show_password;
+                    }
                 });
                 ui.checkbox(&mut profile.use_tls, "Use TLS");
+                // Optional certs folder for AWS IoT–style CA + client cert + key.
+                ui.horizontal(|ui| {
+                    if let Some(tex) = icons.get("tls_security") {
+                        ui.add(
+                            egui::Image::new(tex)
+                                .fit_to_exact_size(egui::vec2(14.0, 14.0))
+                                .sense(egui::Sense::hover()),
+                        );
+                    }
+                    ui.label("Certs folder");
+                    ui.add(
+                        egui::TextEdit::singleline(&mut profile.certs_dir)
+                            .desired_width(140.0)
+                            .hint_text("/path/to/certs"),
+                    );
+                    if icons
+                        .tiny(ui, "folder_open", false, "Choose certs folder")
+                        .clicked()
+                    {
+                        if let Some(path) = rfd::FileDialog::new()
+                            .set_title("MQTT TLS certs folder")
+                            .pick_folder()
+                        {
+                            profile.certs_dir = path.display().to_string();
+                            profile.use_tls = true;
+                        }
+                    }
+                    if !profile.certs_dir.trim().is_empty()
+                        && icons
+                            .tiny(ui, "remove_x", false, "Clear certs folder")
+                            .clicked()
+                    {
+                        profile.certs_dir.clear();
+                    }
+                });
+                // Show which three files were auto-detected (or the error).
+                let certs_trim = profile.certs_dir.trim().to_string();
+                if !certs_trim.is_empty() {
+                    match certs::discover(Path::new(&certs_trim)) {
+                        Ok(resolved) => {
+                            ui.weak(format!(
+                                "CA: {}  ·  Cert: {}  ·  Key: {}",
+                                resolved.ca_name(),
+                                resolved.cert_name(),
+                                resolved.key_name()
+                            ));
+                            if profile.port == 1883 {
+                                ui.weak("Tip: AWS IoT typically uses port 8883 with TLS.");
+                            }
+                        }
+                        Err(e) => {
+                            ui.colored_label(Color32::from_rgb(220, 140, 100), e);
+                        }
+                    }
+                }
                 sessions.sync_profile_name(&id, &profile.name);
             }
 
