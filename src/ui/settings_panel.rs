@@ -1,17 +1,57 @@
-//! Settings content (shown in its own viewport window).
+//! Settings content (shown in a modal; edits a draft until Save).
 
 use crate::mqtt::settings::{
     AppSettings, StickyLayoutMode, TopicTreeExpandMode, MAX_PACKET_MAX, MAX_PACKET_MIN,
 };
-use crate::ui::icons::IconSet;
+use crate::ui::icons::{IconSet, CHROME_ACCENT_BORDER};
 use crate::ui::shortcuts;
-use eframe::egui;
+use eframe::egui::{self, Sense};
 
+/// Combined sticky layout choice shown in the single Layout dropdown.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum StickyLayoutChoice {
+    Rows,
+    TwoColumns,
+    FourColumns,
+}
+
+impl StickyLayoutChoice {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Rows => "Rows",
+            Self::TwoColumns => "Two columns",
+            Self::FourColumns => "Four columns",
+        }
+    }
+
+    fn from_settings(s: &AppSettings) -> Self {
+        match s.sticky_layout {
+            StickyLayoutMode::Rows => Self::Rows,
+            StickyLayoutMode::Columns if s.sticky_columns >= 4 => Self::FourColumns,
+            StickyLayoutMode::Columns => Self::TwoColumns,
+        }
+    }
+
+    fn apply(self, s: &mut AppSettings) {
+        match self {
+            Self::Rows => s.sticky_layout = StickyLayoutMode::Rows,
+            Self::TwoColumns => {
+                s.sticky_layout = StickyLayoutMode::Columns;
+                s.sticky_columns = 2;
+            }
+            Self::FourColumns => {
+                s.sticky_layout = StickyLayoutMode::Columns;
+                s.sticky_columns = 4;
+            }
+        }
+    }
+}
+
+/// Draw settings body into `draft` (caller commits on Save / discards on Cancel).
 pub fn draw(
     ui: &mut egui::Ui,
-    settings: &mut AppSettings,
+    draft: &mut AppSettings,
     icons: &IconSet,
-    status: &mut String,
     open_shortcuts: &mut bool,
 ) {
     ui.horizontal(|ui| {
@@ -25,27 +65,26 @@ pub fn draw(
         ui.heading("Settings");
     });
     ui.label("Persisted under ~/.config/mqtt-monitor/settings.json");
-    ui.add_space(8.0);
 
-    let mut dirty = false;
+    // Accent bar under title + persist line.
+    ui.add_space(6.0);
+    let bar_w = ui.available_width();
+    let (bar, _) = ui.allocate_exact_size(egui::vec2(bar_w, 3.0), Sense::hover());
+    ui.painter().rect_filled(bar, 1.5, CHROME_ACCENT_BORDER);
+    ui.add_space(10.0);
 
-    if ui
-        .checkbox(
-            &mut settings.auto_reconnect_on_reload,
-            "Auto Reconnect on Reload",
-        )
-        .changed()
-    {
-        dirty = true;
-    }
-    ui.weak("When enabled, profiles that were connected last time reconnect on startup.");
+    ui.checkbox(
+        &mut draft.auto_reconnect_on_reload,
+        "Auto Reconnect on Reload",
+    );
+    ui.weak("Reconnect last-connected profiles on startup.");
 
     ui.add_space(12.0);
     ui.strong("Topic tree");
     ui.horizontal(|ui| {
         ui.label("Expand on startup");
         egui::ComboBox::from_id_salt("tt_expand_mode")
-            .selected_text(settings.topic_tree_expand.label())
+            .selected_text(draft.topic_tree_expand.label())
             .show_ui(ui, |ui| {
                 for mode in [
                     TopicTreeExpandMode::Expand1,
@@ -53,75 +92,55 @@ pub fn draw(
                     TopicTreeExpandMode::Expand3,
                     TopicTreeExpandMode::ExpandAll,
                 ] {
-                    if ui
-                        .selectable_value(&mut settings.topic_tree_expand, mode, mode.label())
-                        .changed()
-                    {
-                        dirty = true;
-                    }
+                    ui.selectable_value(&mut draft.topic_tree_expand, mode, mode.label());
                 }
             });
     });
-    ui.weak(
-        "Opens the tree to this depth when topics first appear (connect / startup). Expand all / Collapse all in the tree panel still override manually.",
-    );
+    ui.weak("Initial expand depth when topics appear.");
 
     ui.add_space(12.0);
     ui.strong("Sticky topics");
     ui.horizontal(|ui| {
         ui.label("Layout");
-        egui::ComboBox::from_id_salt("sticky_layout_mode")
-            .selected_text(settings.sticky_layout.label())
+        let mut choice = StickyLayoutChoice::from_settings(draft);
+        egui::ComboBox::from_id_salt("sticky_layout_choice")
+            .selected_text(choice.label())
             .show_ui(ui, |ui| {
-                for mode in [StickyLayoutMode::Rows, StickyLayoutMode::Columns] {
+                for opt in [
+                    StickyLayoutChoice::Rows,
+                    StickyLayoutChoice::TwoColumns,
+                    StickyLayoutChoice::FourColumns,
+                ] {
                     if ui
-                        .selectable_value(&mut settings.sticky_layout, mode, mode.label())
+                        .selectable_value(&mut choice, opt, opt.label())
                         .changed()
                     {
-                        dirty = true;
+                        choice.apply(draft);
                     }
                 }
             });
     });
-    if settings.sticky_layout == StickyLayoutMode::Columns {
-        ui.horizontal(|ui| {
-            ui.label("Columns");
-            for n in [2_u8, 3, 4] {
-                if ui
-                    .selectable_value(&mut settings.sticky_columns, n, n.to_string())
-                    .changed()
-                {
-                    settings.sticky_columns = AppSettings::clamp_sticky_columns(n);
-                    dirty = true;
-                }
-            }
-        });
-        ui.weak("More columns give each sticky less width — better for comparing several JSON payloads.");
-    } else {
-        ui.weak("Rows stack stickies full-width (best for long JSON).");
-    }
 
     ui.add_space(12.0);
     ui.strong("MQTT");
     ui.horizontal(|ui| {
         ui.label("Max packet size");
-        let mut kb = settings.max_packet_kb() as u32;
+        let mut kb = draft.max_packet_kb() as u32;
         let min_kb = (MAX_PACKET_MIN / 1024) as u32;
         let max_kb = (MAX_PACKET_MAX / 1024) as u32;
-        let resp = ui.add(
-            egui::DragValue::new(&mut kb)
-                .range(min_kb..=max_kb)
-                .suffix(" KB")
-                .speed(1.0),
-        );
-        if resp.changed() {
-            settings.set_max_packet_kb(kb as usize);
-            dirty = true;
+        if ui
+            .add(
+                egui::DragValue::new(&mut kb)
+                    .range(min_kb..=max_kb)
+                    .suffix(" KB")
+                    .speed(1.0),
+            )
+            .changed()
+        {
+            draft.set_max_packet_kb(kb as usize);
         }
     });
-    ui.weak(
-        "Soft UI limit (2 KB–1 MB): larger payloads are skipped (placeholder in the tree) and the connection stays up. Applied on the next Connect. Wire decode allows up to 16 MB so oversize never kills the session.",
-    );
+    ui.weak("Soft skip limit (2 KB–1 MB). Applied on next Connect.");
 
     ui.add_space(12.0);
     ui.strong("Keyboard");
@@ -132,20 +151,5 @@ pub fn draw(
     {
         *open_shortcuts = true;
     }
-    ui.weak("Also F1 or ? (when not typing). Lists every binding.");
-
-    if dirty {
-        match settings.save() {
-            Ok(()) => *status = "Settings saved".into(),
-            Err(e) => *status = e,
-        }
-    }
-
-    ui.add_space(8.0);
-    if ui.button("Save settings").clicked() {
-        match settings.save() {
-            Ok(()) => *status = format!("Saved {}", AppSettings::path().display()),
-            Err(e) => *status = e,
-        }
-    }
+    ui.weak("Also F1 or ? when not typing.");
 }
