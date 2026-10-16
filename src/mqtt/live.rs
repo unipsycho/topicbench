@@ -48,8 +48,10 @@ pub struct LiveHandle {
 const MIN_BACKOFF: Duration = Duration::from_millis(500);
 const MAX_BACKOFF: Duration = Duration::from_secs(15);
 const STATUS_MIN_INTERVAL: Duration = Duration::from_millis(400);
-/// Cap MQTT-thread → egui wakeups; UI drains a bounded batch each frame.
+/// Cap MQTT-thread → egui wakeups while the window is focused.
 const REPAINT_MIN_INTERVAL: Duration = Duration::from_millis(16);
+/// While on another workspace / unfocused: wake rarely so present/swap cannot starve WM pings.
+const BACKGROUND_REPAINT_MIN_INTERVAL: Duration = Duration::from_millis(250);
 
 /// Build options + spawn event-loop thread.
 ///
@@ -61,6 +63,7 @@ pub fn spawn(
     soft_max_bytes: usize,
     event_tx: Sender<BrokerEvent>,
     ctx: Context,
+    ui_focused: Arc<AtomicBool>,
 ) -> Result<LiveHandle, String> {
     let mut opts = MqttOptions::new(&profile.client_id, &profile.host, profile.port);
     opts.set_keep_alive(Duration::from_secs(30));
@@ -211,7 +214,12 @@ pub fn spawn(
                                 ),
                             });
                         }
-                        if last_repaint.elapsed() >= REPAINT_MIN_INTERVAL {
+                        let min_gap = if ui_focused.load(Ordering::Relaxed) {
+                            REPAINT_MIN_INTERVAL
+                        } else {
+                            BACKGROUND_REPAINT_MIN_INTERVAL
+                        };
+                        if last_repaint.elapsed() >= min_gap {
                             last_repaint = Instant::now();
                             ctx.request_repaint();
                         }

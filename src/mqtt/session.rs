@@ -23,8 +23,17 @@ const MAX_EVENTS_PER_FRAME: usize = 96;
 /// Result of draining the broker event channel on the UI thread.
 pub struct PollOutcome {
     pub status: Option<String>,
-    /// True when messages were applied and/or the per-frame cap was hit (keep painting).
-    pub need_repaint: bool,
+    /// Messages were applied this drain (tree/traffic/pins updated).
+    pub had_messages: bool,
+    /// Hit [`MAX_EVENTS_PER_FRAME`] — channel may still have events.
+    pub hit_cap: bool,
+}
+
+impl PollOutcome {
+    /// Focused UI should keep painting (flash / catch-up).
+    pub fn need_repaint(&self) -> bool {
+        self.hit_cap || self.had_messages
+    }
 }
 
 /// Connection lifecycle for one profile.
@@ -80,6 +89,8 @@ pub struct SessionManager {
     pub open: BTreeMap<String, Session>,
     /// Process-lifetime MQTT payload byte counters (Stats ribbon).
     pub traffic_stats: TrafficStats,
+    /// Shared with MQTT workers — slows `request_repaint` while on another workspace.
+    pub ui_focused: Arc<AtomicBool>,
     event_tx: Sender<BrokerEvent>,
     event_rx: Receiver<BrokerEvent>,
 }
@@ -90,6 +101,7 @@ impl Default for SessionManager {
         Self {
             open: BTreeMap::new(),
             traffic_stats: TrafficStats::default(),
+            ui_focused: Arc::new(AtomicBool::new(true)),
             event_tx,
             event_rx,
         }
@@ -110,6 +122,7 @@ impl SessionManager {
             max_packet_bytes,
             self.event_tx.clone(),
             ctx.clone(),
+            self.ui_focused.clone(),
         )?;
         let mut subscriptions = if profile.subscriptions.is_empty() {
             self.open
@@ -379,7 +392,8 @@ impl SessionManager {
         let hit_cap = drained >= MAX_EVENTS_PER_FRAME;
         PollOutcome {
             status,
-            need_repaint: hit_cap || had_msgs,
+            had_messages: had_msgs,
+            hit_cap,
         }
     }
 
