@@ -12,7 +12,7 @@ use crate::ui::icons::{self, IconSet, CHROME_MUTED};
 use crate::ui::json_view;
 use crate::ui::search_bar::SearchFilter;
 use crate::ui::shortcuts;
-use eframe::egui::{self, Color32, RichText};
+use eframe::egui::{self, Color32, FontId, RichText};
 use std::time::Instant;
 
 /// Exclusive temp key for the one open tree payload/topic tip.
@@ -415,7 +415,11 @@ fn leaf_row(
     };
 
     let row = egui::Frame::NONE.fill(row_fill).show(ui, |ui| {
+        // Span the full panel width so payload truncates only at the true right edge.
+        let row_w = ui.available_width();
+        ui.set_min_width(row_w);
         ui.horizontal(|ui| {
+            ui.set_min_width(row_w);
             ui.spacing_mut().item_spacing.x = 4.0;
 
             // Left: copy-topic (topic_tags) + sticky toggle (always visible).
@@ -458,14 +462,20 @@ fn leaf_row(
 
             let payload = node.last_payload.as_deref().unwrap_or("");
             let show_copy_payload = !payload.is_empty();
-            let count_reserve = if node.message_count > 0 { 28.0 } else { 0.0 };
-            let width = (ui.available_width() - count_reserve).max(48.0);
+            let msg_count = node.message_count;
 
-            // Middle: gray topic · = · copy-payload · highlighted data (clip like icons).
-            ui.allocate_ui_with_layout(
-                egui::vec2(width, ui.spacing().interact_size.y),
-                egui::Layout::left_to_right(egui::Align::Center),
-                |ui| {
+            // Count first from the right so middle width is the true remainder.
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if msg_count > 0 {
+                    ui.label(
+                        RichText::new(format!("#{msg_count}"))
+                            .small()
+                            .color(CHROME_MUTED),
+                    );
+                }
+
+                // Middle: gray topic · = · copy-payload · highlighted data.
+                ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
                     ui.set_clip_rect(ui.clip_rect().intersect(ui.max_rect()));
                     ui.spacing_mut().item_spacing.x = 2.0;
 
@@ -494,17 +504,20 @@ fn leaf_row(
                         }
 
                         // Complex JSON → syntax highlight; simple values → profile accent.
+                        // available_width here is already after topic / = / copy icon.
                         let accent = profiles
                             .profiles
                             .get(profile_id)
                             .map(|p| p.color())
                             .unwrap_or(Color32::from_rgb(90, 190, 120));
-                        let used = label.len() as f32 * 7.0 + 36.0;
-                        let max_chars = ((ui.available_width() - used).max(40.0) / 7.0) as usize;
-                        let max_chars = max_chars.max(12);
+                        let font_size = ui.text_style_height(&egui::TextStyle::Monospace);
+                        let char_w = ui.fonts(|f| {
+                            f.glyph_width(&FontId::monospace(font_size), 'M').max(1.0)
+                        });
+                        let max_chars =
+                            ((ui.available_width() / char_w).floor() as usize).max(12);
                         let is_complex = json_view::try_pretty_json(payload).is_some();
                         let data_resp = if is_complex {
-                            let font_size = ui.text_style_height(&egui::TextStyle::Monospace);
                             let job = json_view::payload_preview_job(payload, max_chars, font_size);
                             ui.add(
                                 egui::Label::new(job)
@@ -533,16 +546,8 @@ fn leaf_row(
                             },
                         );
                     }
-                },
-            );
-
-            if node.message_count > 0 {
-                ui.label(
-                    RichText::new(format!("#{}", node.message_count))
-                        .small()
-                        .color(CHROME_MUTED),
-                );
-            }
+                });
+            });
         });
     });
     // Inset flash — same row size with or without pulse.
