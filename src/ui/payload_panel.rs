@@ -57,7 +57,7 @@ struct MatchHit {
 
 pub fn draw(
     ui: &mut egui::Ui,
-    sessions: &SessionManager,
+    sessions: &mut SessionManager,
     profiles: &mut ProfileStore,
     pins: &mut PinBoard,
     icons: &IconSet,
@@ -89,11 +89,34 @@ pub fn draw(
         .map(|p| p.color())
         .unwrap_or(Color32::from_rgb(90, 190, 120));
 
-    // Header: broker (accent) + full topic path (same mono typography as the tree list).
+    // Header: broker (accent) + topic path + red trash (delete hierarchy from session tree).
+    let mut delete_hierarchy = false;
     ui.horizontal(|ui| {
         ui.label(RichText::new(&profile_name).color(accent));
         ui.label(json_view::topic_path_text(&topic));
+        ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
+            if icons
+                .tiny(ui, "trash", false, "Delete topic hierarchy")
+                .clicked()
+            {
+                delete_hierarchy = true;
+            }
+        });
     });
+    // Drop selected topic + descendants from the in-memory display tree (not broker).
+    if delete_hierarchy {
+        pins.last_tree_focus = None;
+        if let Some(session) = sessions.open.get_mut(&profile_id) {
+            if session.topic_tree.remove_hierarchy(&topic) {
+                *status = format!("Deleted topic hierarchy: {topic}");
+            } else {
+                *status = format!("Topic not in tree: {topic}");
+            }
+        } else {
+            *status = format!("Broker not connected: {topic}");
+        }
+        return;
+    }
     ui.add_space(4.0);
 
     let node = sessions

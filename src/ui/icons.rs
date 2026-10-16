@@ -482,6 +482,7 @@ const ICONS: &[(&str, &[u8])] = &[
     ("topic_tags", include_bytes!("../../assets/icons/topic_tags.png")),
     ("topic_tree", include_bytes!("../../assets/icons/topic_tree.png")),
     ("topic_wildcards", include_bytes!("../../assets/icons/topic_wildcards.png")),
+    ("trash", include_bytes!("../../assets/icons/trash.png")),
     ("unsubscribe_topic", include_bytes!("../../assets/icons/unsubscribe_topic.png")),
     ("user_credentials", include_bytes!("../../assets/icons/user_credentials.png")),
     ("zoom_in", include_bytes!("../../assets/icons/zoom_in.png")),

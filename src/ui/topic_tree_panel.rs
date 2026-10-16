@@ -46,7 +46,6 @@ pub fn draw(
     // Set when a leaf/payload row is double-clicked → open Publish and fill form.
     publish_from_tree: &mut Option<PublishFromTree>,
 ) {
-    let mut delete_hierarchy = false;
     ui.horizontal(|ui| {
         if let Some(tex) = icons.get("topic_tree") {
             ui.add(
@@ -62,30 +61,7 @@ pub fn draw(
         if ui.small_button("Collapse all").clicked() {
             *expand_all_once = Some(false);
         }
-        // Red remove_x — only when a tree row is selected (Payload focus).
-        if pins.last_tree_focus.is_some() {
-            if icons
-                .tiny(ui, "remove_x", false, "Delete topic hierarchy")
-                .clicked()
-            {
-                delete_hierarchy = true;
-            }
-        }
     });
-    // Drop selected topic + descendants from the in-memory display tree (not broker).
-    if delete_hierarchy {
-        if let Some((profile_id, _, topic)) = pins.last_tree_focus.take() {
-            if let Some(session) = sessions.open.get_mut(&profile_id) {
-                if session.topic_tree.remove_hierarchy(&topic) {
-                    *status = format!("Deleted topic hierarchy: {topic}");
-                } else {
-                    *status = format!("Topic not in tree: {topic}");
-                }
-            } else {
-                *status = format!("Broker not connected: {topic}");
-            }
-        }
-    }
     ui.label("Per connected broker — colored heading, then that broker’s topics.");
     ui.weak("Single-click selects for Payload. Double-click a parent to expand/collapse. Double-click a topic/payload row to fill Publish.");
     ui.add_space(4.0);
