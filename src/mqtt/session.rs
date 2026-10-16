@@ -8,13 +8,24 @@ use crate::mqtt::topic_tree::TopicTree;
 use crate::mqtt::traffic_stats::TrafficStats;
 use eframe::egui::Context;
 use rumqttc::{Client, QoS};
-use std::collections::{BTreeMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 pub use crate::mqtt::topic_tree::FLASH_MS;
+
+/// Max broker events applied on the UI thread per egui frame.
+/// Unbounded drain + tree/traffic/pin work freezes the window under `#` floods.
+const MAX_EVENTS_PER_FRAME: usize = 96;
+
+/// Result of draining the broker event channel on the UI thread.
+pub struct PollOutcome {
+    pub status: Option<String>,
+    /// True when messages were applied and/or the per-frame cap was hit (keep painting).
+    pub need_repaint: bool,
+}
 
 /// Connection lifecycle for one profile.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -57,6 +68,13 @@ pub struct Session {
 }
 
 const TRAFFIC_CAP: usize = 80;
+
+/// Latest payload for one topic within a single UI-frame batch.
+struct CoalescedMsg {
+    payload: String,
+    retain: bool,
+    count: u64,
+}
 
 pub struct SessionManager {
     pub open: BTreeMap<String, Session>,
@@ -234,14 +252,21 @@ impl SessionManager {
         Ok(())
     }
 
-    pub fn poll_events(&mut self, pins: &mut PinBoard) -> Option<String> {
+    pub fn poll_events(&mut self, pins: &mut PinBoard) -> PollOutcome {
         let now = Instant::now();
         let mut status = None;
         let mut resub: Vec<(String, Vec<String>)> = Vec::new();
         // Same publish delivered once per overlapping subscription — count once.
         let mut seen_msgs: HashSet<(String, String, String)> = HashSet::new();
+        // Latest display state per topic this frame; Stats still count every unique delivery.
+        let mut coalesced: HashMap<(String, String), CoalescedMsg> = HashMap::new();
+        let mut drained = 0usize;
 
-        while let Ok(ev) = self.event_rx.try_recv() {
+        while drained < MAX_EVENTS_PER_FRAME {
+            let Ok(ev) = self.event_rx.try_recv() else {
+                break;
+            };
+            drained += 1;
             match ev {
                 BrokerEvent::State {
                     profile_id,
@@ -282,29 +307,24 @@ impl SessionManager {
                     if !seen_msgs.insert((profile_id.clone(), topic.clone(), payload.clone())) {
                         continue;
                     }
-                    let mut count_recv = false;
-                    if let Some(session) = self.open.get_mut(&profile_id) {
-                        if session.user_stopped {
-                            continue;
-                        }
-                        session.message_count = session.message_count.saturating_add(1);
-                        session.flash_until = Some(now + Duration::from_millis(FLASH_MS));
-                        session.topic_tree.observe(&topic, &payload, retain, now);
-                        session.traffic.push_front(TrafficLine {
-                            topic: topic.clone(),
-                            payload: payload.clone(),
-                        });
-                        while session.traffic.len() > TRAFFIC_CAP {
-                            session.traffic.pop_back();
-                        }
-                        let name = session.profile_name.clone();
-                        pins.on_message(&profile_id, &name, &topic, &payload, now);
-                        count_recv = true;
+                    if self
+                        .open
+                        .get(&profile_id)
+                        .map(|s| s.user_stopped)
+                        .unwrap_or(true)
+                    {
+                        continue;
                     }
                     // Deduped once — raw payload size (process-lifetime Stats).
-                    if count_recv {
-                        self.traffic_stats.record_recv(payload_bytes as u64);
-                    }
+                    self.traffic_stats.record_recv(payload_bytes as u64);
+                    let entry = coalesced.entry((profile_id, topic)).or_insert(CoalescedMsg {
+                        payload: String::new(),
+                        retain: false,
+                        count: 0,
+                    });
+                    entry.payload = payload;
+                    entry.retain = retain;
+                    entry.count = entry.count.saturating_add(1);
                 }
                 BrokerEvent::Notice { profile_id, detail } => {
                     if let Some(session) = self.open.get(&profile_id) {
@@ -314,6 +334,32 @@ impl SessionManager {
                     }
                 }
             }
+        }
+
+        // One tree/traffic/pin apply per topic this frame (latest payload).
+        let had_msgs = !coalesced.is_empty();
+        let flash = now + Duration::from_millis(FLASH_MS);
+        for ((profile_id, topic), msg) in coalesced {
+            let Some(session) = self.open.get_mut(&profile_id) else {
+                continue;
+            };
+            if session.user_stopped {
+                continue;
+            }
+            session.message_count = session.message_count.saturating_add(msg.count);
+            session.flash_until = Some(flash);
+            session
+                .topic_tree
+                .observe_n(&topic, &msg.payload, msg.retain, now, msg.count);
+            session.traffic.push_front(TrafficLine {
+                topic: topic.clone(),
+                payload: msg.payload.clone(),
+            });
+            while session.traffic.len() > TRAFFIC_CAP {
+                session.traffic.pop_back();
+            }
+            let name = session.profile_name.clone();
+            pins.on_message_n(&profile_id, &name, &topic, &msg.payload, now, msg.count);
         }
 
         for (id, filters) in resub {
@@ -329,7 +375,12 @@ impl SessionManager {
             }
         }
 
-        status
+        // Cap hit ⇒ backlog remains; keep frames flowing without draining forever.
+        let hit_cap = drained >= MAX_EVENTS_PER_FRAME;
+        PollOutcome {
+            status,
+            need_repaint: hit_cap || had_msgs,
+        }
     }
 
     pub fn sync_profile_name(&mut self, profile_id: &str, profile_name: &str) {

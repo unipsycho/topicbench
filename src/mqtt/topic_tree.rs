@@ -30,7 +30,13 @@ impl TopicNode {
 
     /// Insert/update `topic` with `payload` and MQTT `retain` flag.
     pub fn observe(&mut self, topic: &str, payload: &str, retain: bool, now: Instant) {
+        self.observe_n(topic, payload, retain, now, 1);
+    }
+
+    /// Like [`observe`], but bumps the leaf count by `n` (coalesced UI-frame batch).
+    pub fn observe_n(&mut self, topic: &str, payload: &str, retain: bool, now: Instant, n: u64) {
         let flash = now + Duration::from_millis(FLASH_MS);
+        let n = n.max(1);
         let parts: Vec<&str> = topic.split('/').collect();
         let mut node = self;
         for (i, part) in parts.iter().enumerate() {
@@ -38,7 +44,7 @@ impl TopicNode {
             if i + 1 == parts.len() {
                 node.last_payload = Some(payload.to_string());
                 node.last_retain = retain;
-                node.message_count = node.message_count.saturating_add(1);
+                node.message_count = node.message_count.saturating_add(n);
                 node.flash_until = Some(flash);
             }
         }
@@ -88,6 +94,10 @@ impl TopicTree {
         self.root.observe(topic, payload, retain, now);
     }
 
+    pub fn observe_n(&mut self, topic: &str, payload: &str, retain: bool, now: Instant, n: u64) {
+        self.root.observe_n(topic, payload, retain, now, n);
+    }
+
     /// Drop a topic path and all descendants from the session display tree (not the broker).
     pub fn remove_hierarchy(&mut self, topic: &str) -> bool {
         self.root.remove_hierarchy(topic)
@@ -117,6 +127,21 @@ mod tests {
             Some("21.5")
         );
         assert!(tree.root.node_at("missing").is_none());
+    }
+
+    #[test]
+    fn observe_n_keeps_latest_payload_and_count() {
+        let mut tree = TopicTree::default();
+        let now = Instant::now();
+        tree.observe_n("sensors/lab/temp", "21.5", false, now, 7);
+        let leaf = tree.root.node_at("sensors/lab/temp").unwrap();
+        assert_eq!(leaf.last_payload.as_deref(), Some("21.5"));
+        assert_eq!(leaf.message_count, 7);
+        tree.observe_n("sensors/lab/temp", "22.0", true, now, 3);
+        let leaf = tree.root.node_at("sensors/lab/temp").unwrap();
+        assert_eq!(leaf.last_payload.as_deref(), Some("22.0"));
+        assert!(leaf.last_retain);
+        assert_eq!(leaf.message_count, 10);
     }
 
     #[test]
