@@ -197,6 +197,9 @@ pub struct SessionManager {
     pub traffic_stats: TrafficStats,
     /// Shared with MQTT workers + inbox applier — gate egui wakeups.
     pub ui_focused: Arc<AtomicBool>,
+    /// Hyprland (etc.): false while our window is off the active workspace.
+    /// Cleared without waiting for egui `Focused(false)` so we stop wakes before present stalls.
+    pub ui_visible: Arc<AtomicBool>,
     event_tx: Sender<BrokerEvent>,
     inbox: Arc<SharedInbox>,
     /// Filled from `App::new` so the applier can wake egui only while focused.
@@ -208,6 +211,7 @@ impl Default for SessionManager {
         let (event_tx, event_rx) = mpsc::channel();
         let inbox = Arc::new(SharedInbox::default());
         let ui_focused = Arc::new(AtomicBool::new(true));
+        let ui_visible = Arc::new(AtomicBool::new(true));
         let egui_ctx = Arc::new(Mutex::new(None));
         spawn_inbox_applier(
             event_rx,
@@ -215,10 +219,12 @@ impl Default for SessionManager {
             ui_focused.clone(),
             egui_ctx.clone(),
         );
+        crate::mqtt::visibility::spawn_hyprland_visibility_watcher(ui_visible.clone());
         Self {
             open: BTreeMap::new(),
             traffic_stats: TrafficStats::default(),
             ui_focused,
+            ui_visible,
             event_tx,
             inbox,
             egui_ctx,
