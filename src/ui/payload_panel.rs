@@ -66,13 +66,7 @@ pub fn draw(
     status: &mut String,
 ) {
     icons::section_header_bar(ui, |ui| {
-        if let Some(tex) = icons.get("panel_undock") {
-            ui.add(
-                egui::Image::new(tex)
-                    .fit_to_exact_size(egui::vec2(20.0, 20.0))
-                    .sense(egui::Sense::hover()),
-            );
-        }
+        icons::section_icon(ui, icons, "panel_undock");
         ui.heading("Payload");
     });
     ui.label("Live Value view for the selected topic.");

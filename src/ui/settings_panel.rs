@@ -54,13 +54,7 @@ pub fn draw(
     open_shortcuts: &mut bool,
 ) {
     icons::section_header_bar(ui, |ui| {
-        if let Some(tex) = icons.get("configuration_sliders") {
-            ui.add(
-                egui::Image::new(tex)
-                    .fit_to_exact_size(egui::vec2(22.0, 22.0))
-                    .sense(egui::Sense::hover()),
-            );
-        }
+        icons::section_icon(ui, icons, "configuration_sliders");
         ui.heading("Settings");
     });
     ui.label("Persisted under ~/.config/mqtt-monitor/settings.json");
