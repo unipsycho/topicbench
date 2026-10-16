@@ -115,9 +115,11 @@ impl MqttMonitorApp {
             settings.search_query.clone(),
             settings.search_scope,
         );
+        let sessions = SessionManager::default();
+        sessions.bind_egui_ctx(&cc.egui_ctx);
         Self {
             profiles,
-            sessions: SessionManager::default(),
+            sessions,
             pins: PinBoard::default(),
             publish: PublishDraft::default(),
             publish_history: PublishHistory::load(),
@@ -886,28 +888,18 @@ impl eframe::App for MqttMonitorApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.run_auto_reconnect(ctx);
 
-        // Workspace switch / unfocus: continuous redraw+present can starve the WM
-        // (_NET_WM_PING / Wayland event pump) → Linux "Application Not Responding".
+        // Hyprland ANR = missed xdg_wm_base pings (misc:anr_missed_pings=3).
+        // Any paint/swap while off-workspace can block the event loop from ponging.
+        // Background inbox coalesces MQTT; we apply here and never schedule redraws unfocused.
         let focused = ctx.input(|i| i.focused);
         self.sessions
             .ui_focused
             .store(focused, std::sync::atomic::Ordering::Relaxed);
 
-        // Unfocused: drain several capped batches per wake so the channel cannot grow forever
-        // without chasing 60fps flash/paint while the surface is off-workspace.
-        let mut poll_hit_cap = false;
-        let mut poll_had_msgs = false;
-        let drain_passes = if focused { 1 } else { 8 };
-        for _ in 0..drain_passes {
-            let poll = self.sessions.poll_events(&mut self.pins);
-            if let Some(msg) = poll.status {
-                self.status = msg;
-            }
-            poll_had_msgs |= poll.had_messages;
-            poll_hit_cap = poll.hit_cap;
-            if !poll.hit_cap {
-                break;
-            }
+        let poll = self.sessions.poll_events(&mut self.pins);
+        let need_repaint = poll.need_repaint();
+        if let Some(msg) = poll.status {
+            self.status = msg;
         }
         // Stats ribbon labels: rebuild frozen snapshot at most once per second.
         let _ = self.sessions.traffic_stats.refresh_display_if_due();
@@ -927,25 +919,15 @@ impl eframe::App for MqttMonitorApp {
                 .values()
                 .any(|p| flash::flash_active(p.flash_until, now));
         if focused {
-            if poll_hit_cap || poll_had_msgs || flashing {
+            if need_repaint || flashing {
                 ctx.request_repaint();
             } else if self.sessions.traffic_stats.wants_periodic_refresh() {
                 // 1 Hz Stats refresh (Thru decay + frozen labels) — not every frame.
                 ctx.request_repaint_after(self.sessions.traffic_stats.time_until_display_refresh());
             }
-        } else {
-            // Background / other workspace: slow heartbeat only — drain MQTT, answer WM,
-            // avoid present storms that freeze the event loop.
-            let connected = self.sessions.open.values().any(|s| {
-                s.state == crate::mqtt::session::SessionState::Connected
-                    || s.state == crate::mqtt::session::SessionState::Connecting
-            });
-            if poll_hit_cap || poll_had_msgs || connected {
-                ctx.request_repaint_after(std::time::Duration::from_millis(250));
-            } else if self.sessions.traffic_stats.wants_periodic_refresh() {
-                ctx.request_repaint_after(self.sessions.traffic_stats.time_until_display_refresh());
-            }
         }
+        // Unfocused: schedule nothing. Winit Focused(true) will repaint on return;
+        // inbox keeps coalescing on the mqtt-inbox thread meanwhile.
 
         self.handle_shortcuts(ctx);
         // Suppress tips from panels under Settings / Keyboard Shortcuts overlays

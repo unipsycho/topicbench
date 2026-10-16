@@ -8,24 +8,26 @@ use crate::mqtt::topic_tree::TopicTree;
 use crate::mqtt::traffic_stats::TrafficStats;
 use eframe::egui::Context;
 use rumqttc::{Client, QoS};
-use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
+use std::thread;
 use std::time::{Duration, Instant};
 
 pub use crate::mqtt::topic_tree::FLASH_MS;
 
-/// Max broker events applied on the UI thread per egui frame.
-/// Unbounded drain + tree/traffic/pin work freezes the window under `#` floods.
-const MAX_EVENTS_PER_FRAME: usize = 96;
+/// Max coalesced topics applied on the UI thread per focused frame.
+const MAX_TOPICS_APPLY_PER_FRAME: usize = 128;
+/// While focused, wake egui at most this often from the inbox applier.
+const FOCUSED_WAKE_MIN: Duration = Duration::from_millis(16);
 
-/// Result of draining the broker event channel on the UI thread.
+/// Result of applying the background inbox on the UI thread.
 pub struct PollOutcome {
     pub status: Option<String>,
     /// Messages were applied this drain (tree/traffic/pins updated).
     pub had_messages: bool,
-    /// Hit [`MAX_EVENTS_PER_FRAME`] — channel may still have events.
+    /// Inbox still has coalesced topics — need another focused frame.
     pub hit_cap: bool,
 }
 
@@ -78,43 +80,203 @@ pub struct Session {
 
 const TRAFFIC_CAP: usize = 80;
 
-/// Latest payload for one topic within a single UI-frame batch.
+/// Latest payload for one topic (background inbox coalesces floods here).
 struct CoalescedMsg {
     payload: String,
     retain: bool,
     count: u64,
+    bytes: u64,
+}
+
+struct PendingState {
+    state: SessionState,
+    detail: String,
+}
+
+#[derive(Default)]
+struct InboxData {
+    status: Option<String>,
+    states: HashMap<String, PendingState>,
+    /// `(profile_id, topic)` → latest payload + aggregated counts/bytes.
+    messages: HashMap<(String, String), CoalescedMsg>,
+}
+
+/// Worker-thread inbox: drains MQTT events off the UI thread so workspace switches
+/// never leave the egui loop stuck in apply/present (Hyprland `xdg_wm_base` ANR).
+struct SharedInbox {
+    data: Mutex<InboxData>,
+    dirty: AtomicBool,
+}
+
+impl Default for SharedInbox {
+    fn default() -> Self {
+        Self {
+            data: Mutex::new(InboxData::default()),
+            dirty: AtomicBool::new(false),
+        }
+    }
+}
+
+impl SharedInbox {
+    fn fold_event(&self, ev: BrokerEvent) {
+        let mut g = self.data.lock().unwrap_or_else(|e| e.into_inner());
+        match ev {
+            BrokerEvent::State {
+                profile_id,
+                state,
+                detail,
+            } => {
+                g.status = Some(detail.clone());
+                g.states.insert(profile_id, PendingState { state, detail });
+            }
+            BrokerEvent::Message {
+                profile_id,
+                topic,
+                payload,
+                retain,
+                payload_bytes,
+            } => {
+                let entry = g
+                    .messages
+                    .entry((profile_id, topic))
+                    .or_insert(CoalescedMsg {
+                        payload: String::new(),
+                        retain: false,
+                        count: 0,
+                        bytes: 0,
+                    });
+                entry.payload = payload;
+                entry.retain = retain;
+                entry.count = entry.count.saturating_add(1);
+                entry.bytes = entry.bytes.saturating_add(payload_bytes as u64);
+            }
+            BrokerEvent::Notice { profile_id: _, detail } => {
+                g.status = Some(detail);
+            }
+        }
+        self.dirty.store(true, Ordering::Relaxed);
+    }
+
+    fn take_batch(&self, max_topics: usize) -> (InboxData, bool) {
+        let mut g = self.data.lock().unwrap_or_else(|e| e.into_inner());
+        let status = g.status.take();
+        let states = std::mem::take(&mut g.states);
+        let mut messages = HashMap::new();
+        if g.messages.len() <= max_topics {
+            messages = std::mem::take(&mut g.messages);
+        } else {
+            let keys: Vec<_> = g.messages.keys().take(max_topics).cloned().collect();
+            for k in keys {
+                if let Some(v) = g.messages.remove(&k) {
+                    messages.insert(k, v);
+                }
+            }
+        }
+        let more = !g.messages.is_empty();
+        if !more && g.states.is_empty() && g.status.is_none() {
+            self.dirty.store(false, Ordering::Relaxed);
+        }
+        (
+            InboxData {
+                status,
+                states,
+                messages,
+            },
+            more,
+        )
+    }
+
+    fn is_dirty(&self) -> bool {
+        self.dirty.load(Ordering::Relaxed)
+    }
 }
 
 pub struct SessionManager {
     pub open: BTreeMap<String, Session>,
     /// Process-lifetime MQTT payload byte counters (Stats ribbon).
     pub traffic_stats: TrafficStats,
-    /// Shared with MQTT workers — slows `request_repaint` while on another workspace.
+    /// Shared with MQTT workers + inbox applier — gate egui wakeups.
     pub ui_focused: Arc<AtomicBool>,
     event_tx: Sender<BrokerEvent>,
-    event_rx: Receiver<BrokerEvent>,
+    inbox: Arc<SharedInbox>,
+    /// Filled from `App::new` so the applier can wake egui only while focused.
+    egui_ctx: Arc<Mutex<Option<Context>>>,
 }
 
 impl Default for SessionManager {
     fn default() -> Self {
         let (event_tx, event_rx) = mpsc::channel();
+        let inbox = Arc::new(SharedInbox::default());
+        let ui_focused = Arc::new(AtomicBool::new(true));
+        let egui_ctx = Arc::new(Mutex::new(None));
+        spawn_inbox_applier(
+            event_rx,
+            inbox.clone(),
+            ui_focused.clone(),
+            egui_ctx.clone(),
+        );
         Self {
             open: BTreeMap::new(),
             traffic_stats: TrafficStats::default(),
-            ui_focused: Arc::new(AtomicBool::new(true)),
+            ui_focused,
             event_tx,
-            event_rx,
+            inbox,
+            egui_ctx,
         }
     }
 }
 
+/// Drain broker events off the UI thread; coalesce; wake egui only when focused.
+fn spawn_inbox_applier(
+    event_rx: Receiver<BrokerEvent>,
+    inbox: Arc<SharedInbox>,
+    ui_focused: Arc<AtomicBool>,
+    egui_ctx: Arc<Mutex<Option<Context>>>,
+) {
+    let _ = thread::Builder::new()
+        .name("mqtt-inbox".into())
+        .spawn(move || {
+            let mut last_wake = Instant::now()
+                .checked_sub(FOCUSED_WAKE_MIN)
+                .unwrap_or_else(Instant::now);
+            while let Ok(ev) = event_rx.recv() {
+                inbox.fold_event(ev);
+                // Unfocused / other workspace: never request_repaint — present/swap
+                // must not block Hyprland xdg_wm_base ping → pong.
+                if !ui_focused.load(Ordering::Relaxed) {
+                    continue;
+                }
+                if last_wake.elapsed() < FOCUSED_WAKE_MIN {
+                    continue;
+                }
+                let ctx = egui_ctx
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .clone();
+                if let Some(ctx) = ctx {
+                    last_wake = Instant::now();
+                    ctx.request_repaint();
+                }
+            }
+        });
+}
+
 impl SessionManager {
+    /// Provide egui context so the inbox applier can wake the UI while focused.
+    pub fn bind_egui_ctx(&self, ctx: &Context) {
+        *self
+            .egui_ctx
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = Some(ctx.clone());
+    }
+
     pub fn connect(
         &mut self,
         profile: &ConnectionProfile,
         max_packet_bytes: usize,
         ctx: &Context,
     ) -> Result<(), String> {
+        self.bind_egui_ctx(ctx);
         self.disconnect(&profile.id);
 
         let handle = live::spawn(
@@ -265,94 +427,43 @@ impl SessionManager {
         Ok(())
     }
 
+    /// Apply coalesced inbox updates produced by the background applier thread.
     pub fn poll_events(&mut self, pins: &mut PinBoard) -> PollOutcome {
         let now = Instant::now();
-        let mut status = None;
+        let (batch, more) = self.inbox.take_batch(MAX_TOPICS_APPLY_PER_FRAME);
+        let mut status = batch.status;
         let mut resub: Vec<(String, Vec<String>)> = Vec::new();
-        // Same publish delivered once per overlapping subscription — count once.
-        let mut seen_msgs: HashSet<(String, String, String)> = HashSet::new();
-        // Latest display state per topic this frame; Stats still count every unique delivery.
-        let mut coalesced: HashMap<(String, String), CoalescedMsg> = HashMap::new();
-        let mut drained = 0usize;
 
-        while drained < MAX_EVENTS_PER_FRAME {
-            let Ok(ev) = self.event_rx.try_recv() else {
-                break;
+        for (profile_id, pending) in batch.states {
+            let Some(session) = self.open.get_mut(&profile_id) else {
+                continue;
             };
-            drained += 1;
-            match ev {
-                BrokerEvent::State {
-                    profile_id,
-                    state,
-                    detail,
-                } => {
-                    if let Some(session) = self.open.get_mut(&profile_id) {
-                        // After intentional Disconnect, ignore reconnect chatter.
-                        if session.user_stopped {
-                            if state == SessionState::Disconnected {
-                                session.state = SessionState::Disconnected;
-                                session.detail = "Disconnected".into();
-                                status = Some(format!("{}: Disconnected", session.profile_name));
-                            }
-                            continue;
-                        }
-
-                        let became_connected =
-                            state == SessionState::Connected && session.state != SessionState::Connected;
-                        let changed = session.state != state || session.detail != detail;
-                        session.state = state;
-                        session.detail = detail.clone();
-                        if became_connected {
-                            resub.push((profile_id.clone(), session.subscriptions.clone()));
-                        }
-                        if changed {
-                            status = Some(format!("{}: {detail}", session.profile_name));
-                        }
-                    }
+            // After intentional Disconnect, ignore reconnect chatter.
+            if session.user_stopped {
+                if pending.state == SessionState::Disconnected {
+                    session.state = SessionState::Disconnected;
+                    session.detail = "Disconnected".into();
+                    status = Some(format!("{}: Disconnected", session.profile_name));
                 }
-                BrokerEvent::Message {
-                    profile_id,
-                    topic,
-                    payload,
-                    retain,
-                    payload_bytes,
-                } => {
-                    if !seen_msgs.insert((profile_id.clone(), topic.clone(), payload.clone())) {
-                        continue;
-                    }
-                    if self
-                        .open
-                        .get(&profile_id)
-                        .map(|s| s.user_stopped)
-                        .unwrap_or(true)
-                    {
-                        continue;
-                    }
-                    // Deduped once — raw payload size (process-lifetime Stats).
-                    self.traffic_stats.record_recv(payload_bytes as u64);
-                    let entry = coalesced.entry((profile_id, topic)).or_insert(CoalescedMsg {
-                        payload: String::new(),
-                        retain: false,
-                        count: 0,
-                    });
-                    entry.payload = payload;
-                    entry.retain = retain;
-                    entry.count = entry.count.saturating_add(1);
-                }
-                BrokerEvent::Notice { profile_id, detail } => {
-                    if let Some(session) = self.open.get(&profile_id) {
-                        if !session.user_stopped {
-                            status = Some(format!("{}: {detail}", session.profile_name));
-                        }
-                    }
-                }
+                continue;
+            }
+            let became_connected =
+                pending.state == SessionState::Connected && session.state != SessionState::Connected;
+            let changed = session.state != pending.state || session.detail != pending.detail;
+            session.state = pending.state;
+            session.detail = pending.detail.clone();
+            if became_connected {
+                resub.push((profile_id.clone(), session.subscriptions.clone()));
+            }
+            if changed {
+                status = Some(format!("{}: {}", session.profile_name, pending.detail));
             }
         }
 
-        // One tree/traffic/pin apply per topic this frame (latest payload).
-        let had_msgs = !coalesced.is_empty();
+        let had_msgs = !batch.messages.is_empty();
         let flash = now + Duration::from_millis(FLASH_MS);
-        for ((profile_id, topic), msg) in coalesced {
+        for ((profile_id, topic), msg) in batch.messages {
+            self.traffic_stats.record_recv(msg.bytes);
             let Some(session) = self.open.get_mut(&profile_id) else {
                 continue;
             };
@@ -388,12 +499,10 @@ impl SessionManager {
             }
         }
 
-        // Cap hit ⇒ backlog remains; keep frames flowing without draining forever.
-        let hit_cap = drained >= MAX_EVENTS_PER_FRAME;
         PollOutcome {
             status,
             had_messages: had_msgs,
-            hit_cap,
+            hit_cap: more || self.inbox.is_dirty(),
         }
     }
 
