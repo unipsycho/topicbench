@@ -40,7 +40,8 @@ pub fn draw(
     expand_mode: TopicTreeExpandMode,
     expand_all_once: &mut Option<bool>,
     icons: &IconSet,
-    filter: &SearchFilter,
+    filter: &mut SearchFilter,
+    focus_search: &mut bool,
     status: &mut String,
     // Set when a leaf/payload row is double-clicked → open Publish and fill form.
     publish_from_tree: &mut Option<PublishFromTree>,
@@ -61,6 +62,9 @@ pub fn draw(
             *expand_all_once = Some(false);
         }
     });
+    // Topic filter lives under the section header, above broker/tree rows.
+    crate::ui::search_bar::draw(ui, filter, focus_search);
+    ui.add_space(4.0);
     ui.label("Per connected broker — colored heading, then that broker’s topics.");
     ui.weak("Single-click selects for Payload. Double-click a parent to expand/collapse. Double-click a topic/payload row to fill Publish.");
     ui.add_space(4.0);

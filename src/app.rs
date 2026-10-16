@@ -19,7 +19,7 @@ use crate::ui::search_bar::SearchFilter;
 use crate::ui::shortcuts::{self, Action as ShortcutAction};
 use crate::ui::payload_panel::PayloadSearch;
 use crate::ui::{
-    payload_panel, pin_board, profiles, publish_panel, search_bar, settings_panel, stats_ribbon,
+    payload_panel, pin_board, profiles, publish_panel, settings_panel, stats_ribbon,
     topic_tree_panel, traffic_panel,
 };
 use crate::ui::flash;
@@ -1020,14 +1020,6 @@ impl eframe::App for MqttMonitorApp {
         }
 
         egui::CentralPanel::default().show(ctx, |ui| {
-            let search_before = (self.search.query.clone(), self.search.scope);
-            search_bar::draw(ui, &mut self.search, &mut self.focus_search);
-            if self.search.query != search_before.0 || self.search.scope != search_before.1 {
-                self.persist_search();
-            }
-            ui.add_space(6.0);
-            ui.separator();
-            ui.add_space(6.0);
             egui::ScrollArea::vertical().show(ui, |ui| {
                 if self.panels.live_traffic {
                     traffic_panel::draw(
@@ -1060,6 +1052,7 @@ impl eframe::App for MqttMonitorApp {
 
                 if self.panels.topic_tree {
                     let mut publish_from_tree: Option<PublishFromTree> = None;
+                    let search_before = (self.search.query.clone(), self.search.scope);
                     topic_tree_panel::draw(
                         ui,
                         &mut self.sessions,
@@ -1068,10 +1061,14 @@ impl eframe::App for MqttMonitorApp {
                         self.settings.topic_tree_expand,
                         &mut self.expand_all_once,
                         &self.icons,
-                        &self.search,
+                        &mut self.search,
+                        &mut self.focus_search,
                         &mut self.status,
                         &mut publish_from_tree,
                     );
+                    if self.search.query != search_before.0 || self.search.scope != search_before.1 {
+                        self.persist_search();
+                    }
                     // Leaf double-click → open Publish and fill broker / topic / payload.
                     if let Some(fill) = publish_from_tree {
                         self.publish.apply_from_tree(&fill);
