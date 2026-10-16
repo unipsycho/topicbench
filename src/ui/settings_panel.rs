@@ -3,7 +3,7 @@
 use crate::mqtt::settings::{
     AppSettings, StickyLayoutMode, TopicTreeExpandMode, MAX_PACKET_MAX, MAX_PACKET_MIN,
 };
-use crate::ui::icons::{IconSet, CHROME_ACCENT_BORDER};
+use crate::ui::icons::{self, IconSet, CHROME_ACCENT_BORDER};
 use crate::ui::shortcuts;
 use eframe::egui::{self, Sense};
 
@@ -53,7 +53,7 @@ pub fn draw(
     icons: &IconSet,
     open_shortcuts: &mut bool,
 ) {
-    ui.horizontal(|ui| {
+    icons::section_header_bar(ui, |ui| {
         if let Some(tex) = icons.get("configuration_sliders") {
             ui.add(
                 egui::Image::new(tex)

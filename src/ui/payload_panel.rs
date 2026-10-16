@@ -5,7 +5,7 @@ use crate::mqtt::profile::{ProfileStore, StickyViewMode};
 use crate::mqtt::session::SessionManager;
 use crate::mqtt::value_path;
 use crate::ui::hover_tip;
-use crate::ui::icons::IconSet;
+use crate::ui::icons::{self, IconSet};
 use crate::ui::json_view;
 use eframe::egui::{self, Align, Color32, Key, RichText};
 use std::time::Instant;
@@ -65,7 +65,7 @@ pub fn draw(
     open_stickies: &mut bool,
     status: &mut String,
 ) {
-    ui.horizontal(|ui| {
+    icons::section_header_bar(ui, |ui| {
         if let Some(tex) = icons.get("panel_undock") {
             ui.add(
                 egui::Image::new(tex)

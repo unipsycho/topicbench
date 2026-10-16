@@ -2,6 +2,7 @@
 
 use crate::mqtt::session::SessionManager;
 use crate::ui::clipboard;
+use crate::ui::icons;
 use crate::ui::search_bar::SearchFilter;
 use eframe::egui;
 
@@ -12,7 +13,10 @@ pub fn draw(
     filter: &SearchFilter,
     status: &mut String,
 ) {
-    ui.heading("Live traffic");
+    // No section icon asset — still use the chrome header bar for consistency.
+    icons::section_header_bar(ui, |ui| {
+        ui.heading("Live traffic");
+    });
     ui.label("Recent messages for the selected device (not the focus of the UI).");
     ui.add_space(4.0);
 

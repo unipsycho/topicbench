@@ -8,11 +8,10 @@ use crate::mqtt::settings::TopicTreeExpandMode;
 use crate::mqtt::topic_tree::TopicNode;
 use crate::ui::flash;
 use crate::ui::hover_tip;
-use crate::ui::icons::IconSet;
+use crate::ui::icons::{self, IconSet, CHROME_MUTED};
 use crate::ui::json_view;
 use crate::ui::search_bar::SearchFilter;
 use crate::ui::shortcuts;
-use crate::ui::icons::CHROME_MUTED;
 use eframe::egui::{self, Color32, RichText};
 use std::time::Instant;
 
@@ -46,7 +45,7 @@ pub fn draw(
     // Set when a leaf/payload row is double-clicked → open Publish and fill form.
     publish_from_tree: &mut Option<PublishFromTree>,
 ) {
-    ui.horizontal(|ui| {
+    icons::section_header_bar(ui, |ui| {
         if let Some(tex) = icons.get("topic_tree") {
             ui.add(
                 egui::Image::new(tex)
@@ -67,11 +66,16 @@ pub fn draw(
     ui.add_space(4.0);
 
     // Only currently connected brokers — disconnected sessions are cleared on Disconnect.
-    let connected_ids: Vec<String> = sessions
-        .open
-        .values()
-        .filter(|s| s.state == SessionState::Connected)
-        .map(|s| s.profile_id.clone())
+    // Broker roots follow Profiles list order (profiles.json array / ProfileStore.order).
+    let connected_ids: Vec<String> = profiles
+        .ids_in_order()
+        .into_iter()
+        .filter(|id| {
+            sessions
+                .open
+                .get(id)
+                .is_some_and(|s| s.state == SessionState::Connected)
+        })
         .collect();
 
     if connected_ids.is_empty() {

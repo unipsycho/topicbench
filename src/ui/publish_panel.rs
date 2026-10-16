@@ -4,7 +4,7 @@ use crate::mqtt::profile::ProfileStore;
 use crate::mqtt::publish::{PublishDraft, PublishHistory, RecentPublish, Qos};
 use crate::mqtt::session::{SessionManager, SessionState};
 use crate::ui::hover_tip;
-use crate::ui::icons::IconSet;
+use crate::ui::icons::{self, IconSet};
 use crate::ui::json_view;
 use eframe::egui::text::LayoutJob;
 use eframe::egui::{self, Color32, Stroke, TextFormat};
@@ -23,7 +23,7 @@ pub fn draw(
     icons: &IconSet,
     status: &mut String,
 ) {
-    ui.horizontal(|ui| {
+    icons::section_header_bar(ui, |ui| {
         if let Some(tex) = icons.get("publish_message") {
             ui.add(
                 egui::Image::new(tex)
