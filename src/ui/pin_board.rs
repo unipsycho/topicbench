@@ -6,7 +6,7 @@ use crate::mqtt::profile::ProfileStore;
 use crate::mqtt::session::{SessionManager, SessionState};
 use crate::mqtt::settings::{AppSettings, StickyLayoutMode};
 use crate::ui::flash;
-use crate::ui::icons::{IconSet, CHROME_MUTED};
+use crate::ui::icons::{self, IconSet, CHROME_MUTED};
 use crate::ui::json_view;
 use crate::ui::shortcuts;
 use crate::ui::search_bar::SearchFilter;
@@ -24,7 +24,7 @@ pub fn draw(
     filter: &SearchFilter,
     status: &mut String,
 ) {
-    ui.horizontal(|ui| {
+    icons::section_header_bar(ui, |ui| {
         if let Some(tex) = icons.get("sticky_topic") {
             ui.add(
                 egui::Image::new(tex)

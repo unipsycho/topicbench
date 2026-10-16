@@ -197,6 +197,8 @@ struct ProfilesFile {
 #[derive(Default)]
 pub struct ProfileStore {
     pub profiles: BTreeMap<String, ConnectionProfile>,
+    /// Display / save / topic-tree broker order (profile ids). IDs themselves never change.
+    pub order: Vec<String>,
     pub selected_id: Option<String>,
     /// Last save/load message for the status bar.
     pub last_io: String,
@@ -216,6 +218,7 @@ impl ProfileStore {
         let mut store = Self::default();
         for p in [ConnectionProfile::sample_local(), ConnectionProfile::sample_lab()] {
             store.selected_id.get_or_insert_with(|| p.id.clone());
+            store.order.push(p.id.clone());
             store.profiles.insert(p.id.clone(), p);
         }
         store
@@ -231,8 +234,13 @@ impl ProfileStore {
             Ok(text) => match serde_json::from_str::<ProfilesFile>(&text) {
                 Ok(file) if !file.profiles.is_empty() => {
                     let mut store = Self::default();
+                    // Array order in profiles.json is the user-facing list / topic-tree order.
                     for p in file.profiles {
+                        if store.profiles.contains_key(&p.id) {
+                            continue; // skip duplicate ids
+                        }
                         store.selected_id.get_or_insert_with(|| p.id.clone());
+                        store.order.push(p.id.clone());
                         store.profiles.insert(p.id.clone(), p);
                     }
                     store.last_io =
@@ -266,13 +274,56 @@ impl ProfileStore {
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent).map_err(|e| format!("mkdir {}: {e}", parent.display()))?;
         }
+        self.sync_order();
         let file = ProfilesFile {
-            profiles: self.profiles.values().cloned().collect(),
+            profiles: self
+                .order
+                .iter()
+                .filter_map(|id| self.profiles.get(id).cloned())
+                .collect(),
         };
         let text = serde_json::to_string_pretty(&file).map_err(|e| e.to_string())?;
         fs::write(path, text).map_err(|e| format!("write {}: {e}", path.display()))?;
         self.last_io = format!("Saved {} profile(s) → {}", self.profiles.len(), path.display());
         Ok(())
+    }
+
+    /// Keep `order` aligned with the map (drop missing, append orphans).
+    pub fn sync_order(&mut self) {
+        self.order.retain(|id| self.profiles.contains_key(id));
+        for id in self.profiles.keys() {
+            if !self.order.iter().any(|o| o == id) {
+                self.order.push(id.clone());
+            }
+        }
+    }
+
+    /// Profile ids in display order (only those still in the map).
+    pub fn ids_in_order(&self) -> Vec<String> {
+        self.order
+            .iter()
+            .filter(|id| self.profiles.contains_key(id.as_str()))
+            .cloned()
+            .collect()
+    }
+
+    /// Move `dragged` before or after `target` in the display order. Returns true if changed.
+    pub fn reorder(&mut self, dragged: &str, target: &str, after: bool) -> bool {
+        if dragged == target || !self.profiles.contains_key(dragged) || !self.profiles.contains_key(target)
+        {
+            return false;
+        }
+        let Some(from) = self.order.iter().position(|x| x == dragged) else {
+            return false;
+        };
+        self.order.remove(from);
+        let Some(to) = self.order.iter().position(|x| x == target) else {
+            self.order.push(dragged.to_string());
+            return true;
+        };
+        let idx = if after { to + 1 } else { to };
+        self.order.insert(idx, dragged.to_string());
+        true
     }
 
     /// Insert a new blank profile and select it.
@@ -287,6 +338,7 @@ impl ProfileStore {
         };
         let profile = ConnectionProfile::new_blank(id.clone());
         self.profiles.insert(id.clone(), profile);
+        self.order.push(id.clone());
         self.selected_id = Some(id.clone());
         id
     }
@@ -294,7 +346,8 @@ impl ProfileStore {
     pub fn delete_selected(&mut self) -> Option<String> {
         let id = self.selected_id.take()?;
         self.profiles.remove(&id);
-        self.selected_id = self.profiles.keys().next().cloned();
+        self.order.retain(|x| x != &id);
+        self.selected_id = self.order.first().cloned();
         Some(id)
     }
 
@@ -345,6 +398,7 @@ mod tests {
         let loaded = ProfileStore::load_from(&path);
         assert_eq!(loaded.profiles["local"].host, "10.0.0.5");
         assert_eq!(loaded.profiles.len(), 2);
+        assert_eq!(loaded.order, vec!["local".to_string(), "lab".to_string()]);
         assert!(loaded.profiles["local"].stickies.is_empty());
 
         store.profiles.get_mut("local").unwrap().set_sticky("sensors/temp", true);
@@ -372,6 +426,27 @@ mod tests {
             legacy_store.profiles["x"].stickies,
             vec![StickyPref::new("a/b", StickyViewMode::Raw)]
         );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn reorder_persists_array_order() {
+        let dir = std::env::temp_dir().join(format!("mqtt-monitor-order-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        let path = dir.join("profiles.json");
+
+        let mut store = ProfileStore::with_samples();
+        assert!(store.reorder("lab", "local", false)); // lab before local
+        assert_eq!(store.order, vec!["lab".to_string(), "local".to_string()]);
+        store.save_to(&path).unwrap();
+
+        let loaded = ProfileStore::load_from(&path);
+        assert_eq!(loaded.order, vec!["lab".to_string(), "local".to_string()]);
+        // profiles.json array order matches
+        let text = fs::read_to_string(&path).unwrap();
+        let lab_pos = text.find("\"id\": \"lab\"").unwrap();
+        let local_pos = text.find("\"id\": \"local\"").unwrap();
+        assert!(lab_pos < local_pos);
         let _ = fs::remove_dir_all(&dir);
     }
 }

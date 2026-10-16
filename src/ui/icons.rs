@@ -37,6 +37,10 @@ pub const CHROME_SEP: Color32 = Color32::from_rgb(70, 74, 84);
 pub const CHROME_HOVER: Color32 = Color32::from_rgb(58, 62, 72);
 pub const CHROME_ACCENT_SOFT: Color32 = Color32::from_rgb(48, 78, 112);
 pub const CHROME_ACCENT_BORDER: Color32 = Color32::from_rgb(100, 160, 220);
+/// Selectable list-row idle fill — clearly lifted from [`CHROME_BG`] (was nearly invisible).
+pub const CHROME_ROW: Color32 = Color32::from_rgb(46, 50, 58);
+/// Quiet strip behind section icon+title rows (stronger than list rows).
+pub const CHROME_SECTION: Color32 = Color32::from_rgb(52, 56, 66);
 /// Ribbon captions + topic-path gray (readable on CHROME_BG).
 pub const CHROME_CAPTION: Color32 = Color32::from_rgb(190, 196, 208);
 /// Secondary chrome labels / counts (`#n`, hints) — brighter than egui default `.weak()`.
@@ -239,6 +243,18 @@ impl IconSet {
         }
         response
     }
+}
+
+/// Full-width chrome bar behind a section icon+title row (and optional trailing widgets).
+pub fn section_header_bar(ui: &mut egui::Ui, add_contents: impl FnOnce(&mut egui::Ui)) {
+    egui::Frame::NONE
+        .fill(CHROME_SECTION)
+        .corner_radius(3.0)
+        .inner_margin(egui::Margin::symmetric(8, 5))
+        .show(ui, |ui| {
+            ui.set_min_width(ui.available_width());
+            ui.horizontal(add_contents);
+        });
 }
 
 /// Estimated width of a full (icon+caption) ribbon group with `n` commands.

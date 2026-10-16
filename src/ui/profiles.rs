@@ -10,10 +10,17 @@ use crate::ui::shortcuts;
 use crate::mqtt::subscribe;
 use crate::ui::clipboard;
 use crate::ui::flash;
-use crate::ui::icons::{IconSet, CHROME_CAPTION};
-use eframe::egui::{self, Color32, RichText};
+use crate::ui::icons::{
+    self, IconSet, CHROME_ACCENT_BORDER, CHROME_ACCENT_SOFT, CHROME_CAPTION, CHROME_HOVER,
+    CHROME_ROW, CHROME_SECTION,
+};
+use eframe::egui::{self, Color32, CursorIcon, RichText};
 use std::path::Path;
 use std::time::Instant;
+
+/// DnD payload for reordering the Profiles list (profile id only — never mutates ids).
+#[derive(Clone)]
+struct ProfileDnd(String);
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum ProfileListFilter {
@@ -78,7 +85,7 @@ pub fn draw(
     request_editor_focus: &mut bool,
     show_password: &mut bool,
 ) {
-    ui.horizontal(|ui| {
+    icons::section_header_bar(ui, |ui| {
         if let Some(tex) = icons.get("profile") {
             ui.add(
                 egui::Image::new(tex)
@@ -92,7 +99,7 @@ pub fn draw(
 
     // Filter sits above the list, visually distinct (chrome strip, not a list row).
     egui::Frame::NONE
-        .fill(Color32::from_rgb(48, 52, 60))
+        .fill(CHROME_SECTION)
         .corner_radius(3.0)
         .inner_margin(egui::Margin::symmetric(8, 5))
         .show(ui, |ui| {
@@ -104,11 +111,12 @@ pub fn draw(
         });
     ui.add_space(6.0);
 
-    // Selectable full-width list rows (name + status + count).
+    // Selectable full-width list rows (name + status + count); drag to reorder.
     let now = Instant::now();
-    let ids: Vec<String> = profiles.profiles.keys().cloned().collect();
-    let row_bg = Color32::from_rgb(36, 38, 44);
-    let row_bg_sel = Color32::from_rgb(48, 78, 112);
+    let ids: Vec<String> = profiles.ids_in_order();
+    let row_bg = CHROME_ROW;
+    let row_bg_sel = CHROME_ACCENT_SOFT;
+    let mut pending_reorder: Option<(String, String, bool)> = None;
     for id in &ids {
         let Some(profile) = profiles.profiles.get(id) else {
             continue;
@@ -123,53 +131,104 @@ pub fn draw(
         let state = session.map(|s| s.state);
         let msg_count = session.map(|s| s.message_count).unwrap_or(0);
         let flash_until = session.and_then(|s| s.flash_until);
+        let name = profile.name.clone();
 
         let fill = if selected { row_bg_sel } else { row_bg };
-        // Full-width row: click selects profile; name/count text is selectable for copy.
         let row_h = 28.0;
-        let (rect, row_response) =
-            ui.allocate_exact_size(egui::vec2(ui.available_width(), row_h), egui::Sense::click());
-        ui.painter().rect_filled(rect, 2.0, fill);
-        // Update pulse: inset border only (no fill wash; layout size unchanged).
-        flash::paint_inset(ui, rect, flash::flash_stroke(flash_until, now));
-        let mut name_clicked = false;
-        ui.allocate_new_ui(egui::UiBuilder::new().max_rect(rect.shrink2(egui::vec2(8.0, 4.0))), |ui| {
-            ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                ui.spacing_mut().item_spacing.x = 6.0;
-                // Selectable so Mike can drag-select / Ctrl+C the profile name.
-                let name_resp = ui.add(
-                    egui::Label::new(
-                        RichText::new(&profile.name)
-                            .strong()
-                            .color(if selected {
-                                Color32::from_rgb(210, 225, 255)
-                            } else {
-                                Color32::from_rgb(230, 232, 238)
-                            }),
-                    )
-                    .selectable(true)
-                    .sense(egui::Sense::click()),
+        let dnd_id = egui::Id::new(("profile_dnd", id.as_str()));
+        // Drag source paints the row; short click still selects.
+        let row_response = ui
+            .dnd_drag_source(dnd_id, ProfileDnd(id.clone()), |ui| {
+                let (rect, _) = ui.allocate_exact_size(
+                    egui::vec2(ui.available_width(), row_h),
+                    egui::Sense::hover(),
                 );
-                if name_resp.clicked() {
-                    name_clicked = true;
-                }
-                draw_session_status(ui, icons, state);
-                if msg_count > 0 {
-                    ui.add(
-                        egui::Label::new(RichText::new(format!("#{msg_count}")).strong())
-                            .selectable(true),
-                    );
-                }
-            });
-        });
-        // Row click (or name click) selects the profile — text drag-select still works.
-        if row_response.clicked() || name_clicked {
+                ui.painter().rect_filled(rect, 2.0, fill);
+                flash::paint_inset(ui, rect, flash::flash_stroke(flash_until, now));
+                ui.allocate_new_ui(
+                    egui::UiBuilder::new().max_rect(rect.shrink2(egui::vec2(8.0, 4.0))),
+                    |ui| {
+                        ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                            ui.spacing_mut().item_spacing.x = 6.0;
+                            ui.add(
+                                egui::Label::new(
+                                    RichText::new(&name)
+                                        .strong()
+                                        .color(if selected {
+                                            Color32::from_rgb(210, 225, 255)
+                                        } else {
+                                            Color32::from_rgb(230, 232, 238)
+                                        }),
+                                )
+                                .selectable(false),
+                            );
+                            draw_session_status(ui, icons, state);
+                            if msg_count > 0 {
+                                ui.label(RichText::new(format!("#{msg_count}")).strong());
+                            }
+                        });
+                    },
+                );
+            })
+            .response
+            .on_hover_cursor(CursorIcon::Grab);
+
+        // Drop target: insert before/after based on pointer Y within this row.
+        if let Some(payload) = row_response.dnd_hover_payload::<ProfileDnd>() {
+            if payload.0.as_str() != id.as_str() {
+                let after = row_response
+                    .hover_pos()
+                    .map(|p| p.y > row_response.rect.center().y)
+                    .unwrap_or(false);
+                let y = if after {
+                    row_response.rect.bottom()
+                } else {
+                    row_response.rect.top()
+                };
+                ui.painter().hline(
+                    row_response.rect.x_range(),
+                    y,
+                    egui::Stroke::new(2.0, CHROME_ACCENT_BORDER),
+                );
+                // Quiet hover wash so the drop target reads clearly.
+                ui.painter().rect_filled(
+                    row_response.rect,
+                    2.0,
+                    Color32::from_rgba_unmultiplied(
+                        CHROME_HOVER.r(),
+                        CHROME_HOVER.g(),
+                        CHROME_HOVER.b(),
+                        80,
+                    ),
+                );
+            }
+        }
+        if let Some(payload) = row_response.dnd_release_payload::<ProfileDnd>() {
+            if payload.0.as_str() != id.as_str() {
+                let after = row_response
+                    .interact_pointer_pos()
+                    .or_else(|| row_response.hover_pos())
+                    .map(|p| p.y > row_response.rect.center().y)
+                    .unwrap_or(false);
+                pending_reorder = Some((payload.0.clone(), id.clone(), after));
+            }
+        }
+
+        if row_response.clicked() {
             if profiles.selected_id.as_deref() != Some(id.as_str()) {
-                *show_password = false; // hide password when switching profiles
+                *show_password = false;
             }
             profiles.selected_id = Some(id.clone());
         }
         ui.add_space(2.0);
+    }
+    if let Some((dragged, target, after)) = pending_reorder {
+        if profiles.reorder(&dragged, &target, after) {
+            match profiles.save() {
+                Ok(()) => *status = format!("Reordered profiles ({})", profiles.last_io),
+                Err(e) => *status = format!("Reorder saved in memory; disk: {e}"),
+            }
+        }
     }
 
     ui.add_space(8.0);
@@ -179,7 +238,9 @@ pub fn draw(
     let selected_id = profiles.selected_id.clone();
     if let Some(id) = selected_id {
         if profiles.profiles.contains_key(&id) {
-            ui.heading("Edit");
+            icons::section_header_bar(ui, |ui| {
+                ui.heading("Edit");
+            });
             if let Some(profile) = profiles.profiles.get_mut(&id) {
                 ui.horizontal(|ui| {
                     hover_tip::attach(
@@ -200,10 +261,13 @@ pub fn draw(
                 ui.horizontal(|ui| {
                     ui.label("Color");
                     let mut rgb = profile.color_rgb;
-                    if ui.color_edit_button_srgb(&mut rgb).changed() {
+                    let color_resp = hover_tip::attach(
+                        ui.color_edit_button_srgb(&mut rgb),
+                        "Topic tree + sticky labels",
+                    );
+                    if color_resp.changed() {
                         profile.color_rgb = rgb;
                     }
-                    ui.weak("Topic tree + sticky labels");
                 });
                 ui.horizontal(|ui| {
                     ui.label("Host");
@@ -304,7 +368,7 @@ pub fn draw(
             // Profile subscriptions (saved with profile; applied on connect)
             ui.add_space(8.0);
             ui.separator();
-            ui.horizontal(|ui| {
+            icons::section_header_bar(ui, |ui| {
                 if let Some(tex) = icons.get("subscribe_topic") {
                     ui.add(
                         egui::Image::new(tex)
@@ -318,7 +382,7 @@ pub fn draw(
 
             // Topic filters as a Profiles-style list (row strip + red X remove).
             let mut remove_at: Option<usize> = None;
-            let sub_row_bg = Color32::from_rgb(36, 38, 44);
+            let sub_row_bg = CHROME_ROW;
             if let Some(profile) = profiles.profiles.get(&id) {
                 if profile.subscriptions.is_empty() {
                     ui.weak("No filters yet.");

@@ -346,7 +346,7 @@ impl MqttMonitorApp {
     }
 
     fn move_profile_selection(&mut self, delta: i32) {
-        let ids: Vec<String> = self.profiles.profiles.keys().cloned().collect();
+        let ids = self.profiles.ids_in_order();
         if ids.is_empty() {
             return;
         }
