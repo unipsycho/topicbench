@@ -65,38 +65,38 @@ pub fn draw(
     open_stickies: &mut bool,
     status: &mut String,
 ) {
+    // Stay within the side-panel width — long topic paths wrap; they must not widen the column.
+    let panel_w = ui.available_width();
+    ui.set_max_width(panel_w);
+
     icons::section_header_bar(ui, |ui| {
         icons::section_icon(ui, icons, "panel_undock");
         icons::section_title(ui, "Payload");
     });
-    ui.label("Live Value view for the selected topic.");
+
+    // Caption + trash on one row (trash top-right of Payload, not beside the topic path).
+    let focus = pins.last_tree_focus.clone();
+    let mut delete_hierarchy = false;
+    ui.horizontal(|ui| {
+        ui.label("Live Value view for the selected topic.");
+        if focus.is_some() {
+            ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
+                if icons
+                    .tiny(ui, "trash", false, "Delete topic hierarchy")
+                    .clicked()
+                {
+                    delete_hierarchy = true;
+                }
+            });
+        }
+    });
     ui.add_space(4.0);
 
-    let Some((profile_id, profile_name, topic)) = pins.last_tree_focus.clone() else {
+    let Some((profile_id, profile_name, topic)) = focus else {
         ui.weak("Select a topic in the tree.");
         return;
     };
 
-    let accent = profiles
-        .profiles
-        .get(&profile_id)
-        .map(|p| p.color())
-        .unwrap_or(Color32::from_rgb(90, 190, 120));
-
-    // Header: broker (accent) + topic path + red trash (delete hierarchy from session tree).
-    let mut delete_hierarchy = false;
-    ui.horizontal(|ui| {
-        ui.label(RichText::new(&profile_name).color(accent));
-        ui.label(json_view::topic_path_text(&topic));
-        ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
-            if icons
-                .tiny(ui, "trash", false, "Delete topic hierarchy")
-                .clicked()
-            {
-                delete_hierarchy = true;
-            }
-        });
-    });
     // Drop selected topic + descendants from the in-memory display tree (not broker).
     if delete_hierarchy {
         pins.last_tree_focus = None;
@@ -111,6 +111,20 @@ pub fn draw(
         }
         return;
     }
+
+    let accent = profiles
+        .profiles
+        .get(&profile_id)
+        .map(|p| p.color())
+        .unwrap_or(Color32::from_rgb(90, 190, 120));
+
+    // Stacked header: profile name, then wrapping topic path on its own line.
+    ui.label(RichText::new(&profile_name).color(accent));
+    ui.add(
+        egui::Label::new(json_view::topic_path_text(&topic))
+            .wrap()
+            .selectable(true),
+    );
     ui.add_space(4.0);
 
     let node = sessions
