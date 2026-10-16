@@ -34,38 +34,95 @@ pub enum ProfileListFilter {
 /// Id salt for the profile Name field (Ctrl+E / F2 focus).
 pub const PROFILE_NAME_ID: &str = "profile_edit_name";
 
-/// Colored status chip + icon beside each profile name.
-fn draw_session_status(ui: &mut egui::Ui, icons: &IconSet, state: Option<SessionState>) {
-    let (label, color, icon) = match state {
-        Some(SessionState::Connected) => (
-            "Connected",
-            Color32::from_rgb(90, 190, 120),
-            "connect",
-        ),
-        Some(SessionState::Connecting) => (
-            "Connecting",
-            Color32::from_rgb(220, 180, 80),
-            "connection_status",
-        ),
-        Some(SessionState::Disconnected) => (
-            "Disconnected",
-            Color32::from_rgb(180, 110, 110),
-            "disconnect",
-        ),
-        None => (
-            "Closed",
-            Color32::from_rgb(140, 145, 155),
-            "disconnect",
-        ),
-    };
-    // Prefer specific icon; fall back to connection_status if missing.
+fn session_status_parts(state: Option<SessionState>) -> (&'static str, Color32, &'static str) {
+    match state {
+        Some(SessionState::Connected) => ("Connected", Color32::from_rgb(90, 190, 120), "connect"),
+        Some(SessionState::Connecting) => {
+            ("Connecting", Color32::from_rgb(220, 180, 80), "connection_status")
+        }
+        Some(SessionState::Disconnected) => {
+            ("Disconnected", Color32::from_rgb(180, 110, 110), "disconnect")
+        }
+        None => ("Closed", Color32::from_rgb(140, 145, 155), "disconnect"),
+    }
+}
+
+/// Paint name + status into `body_rect` with the painter only (no widgets → no click steal).
+fn paint_profile_row_body(
+    ui: &mut egui::Ui,
+    icons: &IconSet,
+    body_rect: egui::Rect,
+    name: &str,
+    selected: bool,
+    state: Option<SessionState>,
+    msg_count: u64,
+) {
+    let (status_label, status_color, icon) = session_status_parts(state);
     let icon_name = if icons.get(icon).is_some() {
         icon
     } else {
         "connection_status"
     };
-    icons::tiny_image(ui, icons, icon_name);
-    ui.label(RichText::new(label).small().strong().color(color));
+    let name_color = if selected {
+        Color32::from_rgb(210, 225, 255)
+    } else {
+        Color32::from_rgb(230, 232, 238)
+    };
+    let fonts = ui.fonts(|f| f.clone());
+    let name_galley = fonts.layout_no_wrap(
+        name.to_owned(),
+        egui::FontId::proportional(14.0),
+        name_color,
+    );
+    let status_galley = fonts.layout_no_wrap(
+        status_label.to_owned(),
+        egui::FontId::proportional(12.0),
+        status_color,
+    );
+    let count_galley = if msg_count > 0 {
+        Some(fonts.layout_no_wrap(
+            format!("#{msg_count}"),
+            egui::FontId::proportional(14.0),
+            Color32::from_rgb(230, 232, 238),
+        ))
+    } else {
+        None
+    };
+
+    let mut x = body_rect.left() + 4.0;
+    let mid_y = body_rect.center().y;
+    let painter = ui.painter();
+
+    // Profile name
+    painter.galley(
+        egui::pos2(x, mid_y - name_galley.size().y * 0.5),
+        name_galley.clone(),
+        name_color,
+    );
+    x += name_galley.size().x + 6.0;
+
+    // Status icon (decorative)
+    if let Some(tex) = icons.get(icon_name) {
+        let icon_r = egui::Rect::from_center_size(
+            egui::pos2(x + TINY_ICON * 0.5, mid_y),
+            egui::vec2(TINY_ICON, TINY_ICON),
+        );
+        egui::Image::new(tex)
+            .fit_to_exact_size(egui::vec2(TINY_ICON, TINY_ICON))
+            .paint_at(ui, icon_r);
+        x += TINY_ICON + 4.0;
+    }
+
+    painter.galley(
+        egui::pos2(x, mid_y - status_galley.size().y * 0.5),
+        status_galley.clone(),
+        status_color,
+    );
+    x += status_galley.size().x + 6.0;
+
+    if let Some(g) = count_galley {
+        painter.galley(egui::pos2(x, mid_y - g.size().y * 0.5), g, name_color);
+    }
 }
 
 pub fn draw(
@@ -84,7 +141,7 @@ pub fn draw(
 ) {
     icons::section_header_bar(ui, |ui| {
         icons::section_icon(ui, icons, "profile");
-        ui.heading("Profiles");
+        icons::section_title(ui, "Profiles");
     });
     ui.add_space(4.0);
 
@@ -175,37 +232,12 @@ pub fn draw(
             }
         }
 
+        // Painter-only body content — no Labels/Images that steal the select click.
+        paint_profile_row_body(ui, icons, body_rect, &name, selected, state, msg_count);
         let body_response = ui.interact(
             body_rect,
             egui::Id::new(("profile_body", id.as_str())),
             Sense::click(),
-        );
-        ui.allocate_new_ui(
-            egui::UiBuilder::new().max_rect(body_rect.shrink2(egui::vec2(4.0, 2.0))),
-            |ui| {
-                ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                    ui.spacing_mut().item_spacing.x = 6.0;
-                    ui.add(
-                        egui::Label::new(
-                            RichText::new(&name)
-                                .strong()
-                                .color(if selected {
-                                    Color32::from_rgb(210, 225, 255)
-                                } else {
-                                    Color32::from_rgb(230, 232, 238)
-                                }),
-                        )
-                        .selectable(true),
-                    );
-                    draw_session_status(ui, icons, state);
-                    if msg_count > 0 {
-                        ui.add(
-                            egui::Label::new(RichText::new(format!("#{msg_count}")).strong())
-                                .selectable(true),
-                        );
-                    }
-                });
-            },
         );
 
         // Drop target = whole row (insert before/after by pointer Y).
@@ -273,7 +305,7 @@ pub fn draw(
     if let Some(id) = selected_id {
         if profiles.profiles.contains_key(&id) {
             icons::section_header_bar(ui, |ui| {
-                ui.heading("Edit");
+                icons::section_title(ui, "Edit");
             });
             if let Some(profile) = profiles.profiles.get_mut(&id) {
                 ui.horizontal(|ui| {
@@ -398,7 +430,7 @@ pub fn draw(
             ui.separator();
             icons::section_header_bar(ui, |ui| {
                 icons::section_icon(ui, icons, "subscribe_topic");
-                ui.strong("Subscriptions");
+                icons::section_title(ui, "Subscriptions");
             });
             ui.weak("Topic filters for this profile (`+` / `#` OK). Saved with the profile.");
 

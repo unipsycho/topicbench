@@ -47,7 +47,7 @@ pub fn draw(
 ) {
     icons::section_header_bar(ui, |ui| {
         icons::section_icon(ui, icons, "topic_tree");
-        ui.heading("Topic tree");
+        icons::section_title(ui, "Topic tree");
         if ui.small_button("Expand all").clicked() {
             *expand_all_once = Some(true);
         }

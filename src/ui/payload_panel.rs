@@ -67,7 +67,7 @@ pub fn draw(
 ) {
     icons::section_header_bar(ui, |ui| {
         icons::section_icon(ui, icons, "panel_undock");
-        ui.heading("Payload");
+        icons::section_title(ui, "Payload");
     });
     ui.label("Live Value view for the selected topic.");
     ui.add_space(4.0);

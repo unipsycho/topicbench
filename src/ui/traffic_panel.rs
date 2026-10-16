@@ -15,7 +15,7 @@ pub fn draw(
 ) {
     // No section icon asset — still use the chrome header bar for consistency.
     icons::section_header_bar(ui, |ui| {
-        ui.heading("Live traffic");
+        icons::section_title(ui, "Live traffic");
     });
     ui.label("Recent messages for the selected device (not the focus of the UI).");
     ui.add_space(4.0);
