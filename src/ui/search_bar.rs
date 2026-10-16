@@ -1,4 +1,4 @@
-//! Search / filter bar: All | Topics | Payloads.
+//! Topic-tree search / filter bar: All | Topics | Payloads (drawn under Topic Tree header).
 
 use crate::ui::hover_tip;
 use crate::ui::shortcuts;

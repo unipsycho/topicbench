@@ -242,5 +242,5 @@ pub fn draw_help(ui: &mut egui::Ui) {
     });
     ui.add_space(6.0);
     ui.weak("Ctrl chords work while typing; Delete / arrows / ? only when not in a text field.");
-    ui.weak("Tab / Shift+Tab walks ribbon → profiles → search → panels in draw order.");
+    ui.weak("Tab / Shift+Tab walks ribbon → profiles → Topic Tree search → panels in draw order.");
 }
