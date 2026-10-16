@@ -12,15 +12,18 @@ use crate::ui::clipboard;
 use crate::ui::flash;
 use crate::ui::icons::{
     self, IconSet, CHROME_ACCENT_BORDER, CHROME_ACCENT_SOFT, CHROME_CAPTION, CHROME_HOVER,
-    CHROME_ROW, CHROME_SECTION,
+    CHROME_ROW, CHROME_SECTION, TINY_ICON,
 };
-use eframe::egui::{self, Color32, CursorIcon, RichText};
+use eframe::egui::{self, Color32, CursorIcon, RichText, Sense};
 use std::path::Path;
 use std::time::Instant;
 
 /// DnD payload for reordering the Profiles list (profile id only — never mutates ids).
 #[derive(Clone)]
 struct ProfileDnd(String);
+
+const ROW_H: f32 = 26.0;
+const GRIP_W: f32 = 16.0;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum ProfileListFilter {
@@ -61,13 +64,7 @@ fn draw_session_status(ui: &mut egui::Ui, icons: &IconSet, state: Option<Session
     } else {
         "connection_status"
     };
-    if let Some(tex) = icons.get(icon_name) {
-        ui.add(
-            egui::Image::new(tex)
-                .fit_to_exact_size(egui::vec2(14.0, 14.0))
-                .sense(egui::Sense::hover()),
-        );
-    }
+    icons::tiny_image(ui, icons, icon_name);
     ui.label(RichText::new(label).small().strong().color(color));
 }
 
@@ -86,13 +83,7 @@ pub fn draw(
     show_password: &mut bool,
 ) {
     icons::section_header_bar(ui, |ui| {
-        if let Some(tex) = icons.get("profile") {
-            ui.add(
-                egui::Image::new(tex)
-                    .fit_to_exact_size(egui::vec2(20.0, 20.0))
-                    .sense(egui::Sense::hover()),
-            );
-        }
+        icons::section_icon(ui, icons, "profile");
         ui.heading("Profiles");
     });
     ui.add_space(4.0);
@@ -111,7 +102,7 @@ pub fn draw(
         });
     ui.add_space(6.0);
 
-    // Selectable full-width list rows (name + status + count); drag to reorder.
+    // Selectable full-width list rows; drag-reorder only from the left grip handle.
     let now = Instant::now();
     let ids: Vec<String> = profiles.ids_in_order();
     let row_bg = CHROME_ROW;
@@ -132,67 +123,110 @@ pub fn draw(
         let msg_count = session.map(|s| s.message_count).unwrap_or(0);
         let flash_until = session.and_then(|s| s.flash_until);
         let name = profile.name.clone();
-
         let fill = if selected { row_bg_sel } else { row_bg };
-        let row_h = 28.0;
-        let dnd_id = egui::Id::new(("profile_dnd", id.as_str()));
-        // Drag source paints the row; short click still selects.
-        let row_response = ui
-            .dnd_drag_source(dnd_id, ProfileDnd(id.clone()), |ui| {
-                let (rect, _) = ui.allocate_exact_size(
-                    egui::vec2(ui.available_width(), row_h),
-                    egui::Sense::hover(),
-                );
-                ui.painter().rect_filled(rect, 2.0, fill);
-                flash::paint_inset(ui, rect, flash::flash_stroke(flash_until, now));
-                ui.allocate_new_ui(
-                    egui::UiBuilder::new().max_rect(rect.shrink2(egui::vec2(8.0, 4.0))),
-                    |ui| {
-                        ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                            ui.spacing_mut().item_spacing.x = 6.0;
-                            ui.add(
-                                egui::Label::new(
-                                    RichText::new(&name)
-                                        .strong()
-                                        .color(if selected {
-                                            Color32::from_rgb(210, 225, 255)
-                                        } else {
-                                            Color32::from_rgb(230, 232, 238)
-                                        }),
-                                )
-                                .selectable(false),
-                            );
-                            draw_session_status(ui, icons, state);
-                            if msg_count > 0 {
-                                ui.label(RichText::new(format!("#{msg_count}")).strong());
-                            }
-                        });
-                    },
-                );
-            })
-            .response
-            .on_hover_cursor(CursorIcon::Grab);
 
-        // Drop target: insert before/after based on pointer Y within this row.
-        if let Some(payload) = row_response.dnd_hover_payload::<ProfileDnd>() {
+        // One layout slot for the row; sub-rects handle grip drag vs body click.
+        let (row_rect, drop_response) =
+            ui.allocate_exact_size(egui::vec2(ui.available_width(), ROW_H), Sense::hover());
+        ui.painter().rect_filled(row_rect, 2.0, fill);
+        flash::paint_inset(ui, row_rect, flash::flash_stroke(flash_until, now));
+
+        let grip_rect = egui::Rect::from_min_size(
+            egui::pos2(row_rect.left() + 2.0, row_rect.top()),
+            egui::vec2(GRIP_W, ROW_H),
+        );
+        let body_rect = egui::Rect::from_min_max(
+            egui::pos2(grip_rect.right() + 2.0, row_rect.top()),
+            row_rect.right_bottom(),
+        );
+
+        icons::paint_drag_grip(ui, grip_rect);
+        let grip_id = egui::Id::new(("profile_grip", id.as_str()));
+        let grip_response = hover_tip::attach(
+            ui.interact(grip_rect, grip_id, Sense::drag())
+                .on_hover_cursor(CursorIcon::Grab),
+            "Drag to reorder",
+        );
+        // Payload only while the grip is dragged — body clicks never start reorder.
+        if grip_response.dragged() {
+            grip_response.dnd_set_drag_payload(ProfileDnd(id.clone()));
+        }
+        if ui.ctx().is_being_dragged(grip_id) {
+            if let Some(pos) = ui.ctx().pointer_interact_pos() {
+                let layer = egui::LayerId::new(egui::Order::Tooltip, grip_id);
+                let preview = egui::Rect::from_center_size(pos, egui::vec2(GRIP_W, ROW_H));
+                ui.ctx()
+                    .layer_painter(layer)
+                    .rect_filled(preview, 2.0, CHROME_HOVER);
+                // Grip dots on the floating preview.
+                let color = icons::CHROME_MUTED;
+                let r = 1.2_f32;
+                let cx = preview.center().x;
+                let cy = preview.center().y;
+                for col in [-1.0_f32, 1.0] {
+                    for row in [-1.0_f32, 0.0, 1.0] {
+                        ui.ctx().layer_painter(layer).circle_filled(
+                            egui::pos2(cx + col * 3.0, cy + row * 3.5),
+                            r,
+                            color,
+                        );
+                    }
+                }
+            }
+        }
+
+        let body_response = ui.interact(
+            body_rect,
+            egui::Id::new(("profile_body", id.as_str())),
+            Sense::click(),
+        );
+        ui.allocate_new_ui(
+            egui::UiBuilder::new().max_rect(body_rect.shrink2(egui::vec2(4.0, 2.0))),
+            |ui| {
+                ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                    ui.spacing_mut().item_spacing.x = 6.0;
+                    ui.add(
+                        egui::Label::new(
+                            RichText::new(&name)
+                                .strong()
+                                .color(if selected {
+                                    Color32::from_rgb(210, 225, 255)
+                                } else {
+                                    Color32::from_rgb(230, 232, 238)
+                                }),
+                        )
+                        .selectable(true),
+                    );
+                    draw_session_status(ui, icons, state);
+                    if msg_count > 0 {
+                        ui.add(
+                            egui::Label::new(RichText::new(format!("#{msg_count}")).strong())
+                                .selectable(true),
+                        );
+                    }
+                });
+            },
+        );
+
+        // Drop target = whole row (insert before/after by pointer Y).
+        if let Some(payload) = drop_response.dnd_hover_payload::<ProfileDnd>() {
             if payload.0.as_str() != id.as_str() {
-                let after = row_response
+                let after = drop_response
                     .hover_pos()
-                    .map(|p| p.y > row_response.rect.center().y)
+                    .map(|p| p.y > drop_response.rect.center().y)
                     .unwrap_or(false);
                 let y = if after {
-                    row_response.rect.bottom()
+                    drop_response.rect.bottom()
                 } else {
-                    row_response.rect.top()
+                    drop_response.rect.top()
                 };
                 ui.painter().hline(
-                    row_response.rect.x_range(),
+                    drop_response.rect.x_range(),
                     y,
                     egui::Stroke::new(2.0, CHROME_ACCENT_BORDER),
                 );
-                // Quiet hover wash so the drop target reads clearly.
                 ui.painter().rect_filled(
-                    row_response.rect,
+                    drop_response.rect,
                     2.0,
                     Color32::from_rgba_unmultiplied(
                         CHROME_HOVER.r(),
@@ -203,24 +237,24 @@ pub fn draw(
                 );
             }
         }
-        if let Some(payload) = row_response.dnd_release_payload::<ProfileDnd>() {
+        if let Some(payload) = drop_response.dnd_release_payload::<ProfileDnd>() {
             if payload.0.as_str() != id.as_str() {
-                let after = row_response
+                let after = drop_response
                     .interact_pointer_pos()
-                    .or_else(|| row_response.hover_pos())
-                    .map(|p| p.y > row_response.rect.center().y)
+                    .or_else(|| drop_response.hover_pos())
+                    .map(|p| p.y > drop_response.rect.center().y)
                     .unwrap_or(false);
                 pending_reorder = Some((payload.0.clone(), id.clone(), after));
             }
         }
 
-        if row_response.clicked() {
+        if body_response.clicked() {
             if profiles.selected_id.as_deref() != Some(id.as_str()) {
                 *show_password = false;
             }
             profiles.selected_id = Some(id.clone());
         }
-        ui.add_space(2.0);
+        // No inter-row gap — tighter Profiles list.
     }
     if let Some((dragged, target, after)) = pending_reorder {
         if profiles.reorder(&dragged, &target, after) {
@@ -305,13 +339,7 @@ pub fn draw(
                 ui.checkbox(&mut profile.use_tls, "Use TLS");
                 // Optional certs folder for AWS IoT–style CA + client cert + key.
                 ui.horizontal(|ui| {
-                    if let Some(tex) = icons.get("tls_security") {
-                        ui.add(
-                            egui::Image::new(tex)
-                                .fit_to_exact_size(egui::vec2(14.0, 14.0))
-                                .sense(egui::Sense::hover()),
-                        );
-                    }
+                    icons::tiny_image(ui, icons, "tls_security");
                     ui.label("Certs folder");
                     ui.add(
                         egui::TextEdit::singleline(&mut profile.certs_dir)
@@ -369,13 +397,7 @@ pub fn draw(
             ui.add_space(8.0);
             ui.separator();
             icons::section_header_bar(ui, |ui| {
-                if let Some(tex) = icons.get("subscribe_topic") {
-                    ui.add(
-                        egui::Image::new(tex)
-                            .fit_to_exact_size(egui::vec2(18.0, 18.0))
-                            .sense(egui::Sense::hover()),
-                    );
-                }
+                icons::section_icon(ui, icons, "subscribe_topic");
                 ui.strong("Subscriptions");
             });
             ui.weak("Topic filters for this profile (`+` / `#` OK). Saved with the profile.");
@@ -478,7 +500,7 @@ pub fn draw(
                 hover_tip::attach(
                     ui.add(
                         egui::Button::image_and_text(
-                            egui::Image::new(tex).fit_to_exact_size(egui::vec2(18.0, 18.0)),
+                            egui::Image::new(tex).fit_to_exact_size(egui::vec2(TINY_ICON, TINY_ICON)),
                             label,
                         )
                         .min_size(egui::vec2(120.0, 28.0)),

@@ -15,6 +15,8 @@ use std::f32::consts::FRAC_PI_2;
 
 /// Large ribbon glyph (logical px — same for New/Save/Delete/Settings/Panels).
 const CMD_ICON: f32 = 36.0;
+/// Section header icons (Profiles / Topic tree / …) — same visual weight as ribbon CMD.
+pub const SECTION_ICON: f32 = 36.0;
 /// Slightly tighter horizontal; taller cell for caption bottom clearance.
 const CMD_W: f32 = 52.0;
 pub const CMD_H: f32 = 64.0;
@@ -22,8 +24,8 @@ pub const CMD_H: f32 = 64.0;
 const COMPACT_ICON: f32 = 20.0;
 pub const COMPACT_W: f32 = 28.0;
 const COMPACT_H: f32 = 30.0;
-/// Dense topic-tree / inline action icons.
-const TINY_ICON: f32 = 14.0;
+/// Dense inline action icons (Profiles body, tree copy/sticky, etc.).
+pub const TINY_ICON: f32 = 18.0;
 /// Uploaded texture edge: 2× [`CMD_ICON`] for sharp HiDPI + clean half-scale at 1×.
 const ICON_TEX_PX: u32 = 72;
 /// Left rail width for rotated section labels.
@@ -255,6 +257,44 @@ pub fn section_header_bar(ui: &mut egui::Ui, add_contents: impl FnOnce(&mut egui
             ui.set_min_width(ui.available_width());
             ui.horizontal(add_contents);
         });
+}
+
+/// Section-header icon at [`SECTION_ICON`] (36px).
+pub fn section_icon(ui: &mut egui::Ui, icons: &IconSet, name: &str) {
+    if let Some(tex) = icons.get(name) {
+        ui.add(
+            egui::Image::new(tex)
+                .fit_to_exact_size(Vec2::splat(SECTION_ICON))
+                .sense(Sense::hover()),
+        );
+    }
+}
+
+/// Tiny inline image at [`TINY_ICON`] (18px) — decorative, not a button.
+pub fn tiny_image(ui: &mut egui::Ui, icons: &IconSet, name: &str) {
+    if let Some(tex) = icons.get(name) {
+        ui.add(
+            egui::Image::new(tex)
+                .fit_to_exact_size(Vec2::splat(TINY_ICON))
+                .sense(Sense::hover()),
+        );
+    }
+}
+
+/// Paint a 2×3 grip (drag handle) centered in `rect`.
+pub fn paint_drag_grip(ui: &mut egui::Ui, rect: egui::Rect) {
+    let color = CHROME_MUTED;
+    let r = 1.2_f32;
+    let cx = rect.center().x;
+    let cy = rect.center().y;
+    let dx = 3.0_f32;
+    let dy = 3.5_f32;
+    for col in [-1.0_f32, 1.0] {
+        for row in [-1.0_f32, 0.0, 1.0] {
+            ui.painter()
+                .circle_filled(egui::pos2(cx + col * dx, cy + row * dy), r, color);
+        }
+    }
 }
 
 /// Estimated width of a full (icon+caption) ribbon group with `n` commands.

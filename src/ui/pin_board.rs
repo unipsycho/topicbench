@@ -25,13 +25,7 @@ pub fn draw(
     status: &mut String,
 ) {
     icons::section_header_bar(ui, |ui| {
-        if let Some(tex) = icons.get("sticky_topic") {
-            ui.add(
-                egui::Image::new(tex)
-                    .fit_to_exact_size(egui::vec2(20.0, 20.0))
-                    .sense(egui::Sense::hover()),
-            );
-        }
+        icons::section_icon(ui, icons, "sticky_topic");
         ui.heading("Sticky topics");
         ui.label(
             RichText::new(match settings.sticky_layout {

@@ -46,13 +46,7 @@ pub fn draw(
     publish_from_tree: &mut Option<PublishFromTree>,
 ) {
     icons::section_header_bar(ui, |ui| {
-        if let Some(tex) = icons.get("topic_tree") {
-            ui.add(
-                egui::Image::new(tex)
-                    .fit_to_exact_size(egui::vec2(20.0, 20.0))
-                    .sense(egui::Sense::hover()),
-            );
-        }
+        icons::section_icon(ui, icons, "topic_tree");
         ui.heading("Topic tree");
         if ui.small_button("Expand all").clicked() {
             *expand_all_once = Some(true);

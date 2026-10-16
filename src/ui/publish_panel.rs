@@ -24,13 +24,7 @@ pub fn draw(
     status: &mut String,
 ) {
     icons::section_header_bar(ui, |ui| {
-        if let Some(tex) = icons.get("publish_message") {
-            ui.add(
-                egui::Image::new(tex)
-                    .fit_to_exact_size(egui::vec2(20.0, 20.0))
-                    .sense(egui::Sense::hover()),
-            );
-        }
+        icons::section_icon(ui, icons, "publish_message");
         ui.heading("Publish");
     });
     ui.label("Send to a topic on a connected broker.");
