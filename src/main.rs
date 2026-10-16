@@ -14,13 +14,18 @@ fn main() -> eframe::Result<()> {
     let icon = load_window_icon();
     let mut viewport = egui::ViewportBuilder::default()
         .with_inner_size([1200.0, 760.0])
-        .with_title("MQTT Master");
+        .with_title("MQTT Master")
+        // Wayland app_id — Hyprland ANR was showing "MQTT Master - (unknown)" with empty class.
+        .with_app_id("com.agileautomation.mqtt-master");
     if let Some(icon) = icon {
         viewport = viewport.with_icon(icon);
     }
 
     let options = eframe::NativeOptions {
         viewport,
+        // Vsync Wait + off-workspace frame callbacks = swap_buffers can stall the
+        // event loop so Hyprland xdg_wm_base pings miss → ANR on desktop switch.
+        vsync: false,
         ..Default::default()
     };
 

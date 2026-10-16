@@ -11,3 +11,4 @@ pub mod subscribe;
 pub mod topic_tree;
 pub mod traffic_stats;
 pub mod value_path;
+pub mod visibility;

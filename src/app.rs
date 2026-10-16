@@ -889,12 +889,21 @@ impl eframe::App for MqttMonitorApp {
         self.run_auto_reconnect(ctx);
 
         // Hyprland ANR = missed xdg_wm_base pings (misc:anr_missed_pings=3).
-        // Any paint/swap while off-workspace can block the event loop from ponging.
-        // Background inbox coalesces MQTT; we apply here and never schedule redraws unfocused.
-        let focused = ctx.input(|i| i.focused);
+        // `ui_visible` comes from a Hyprland poller — clears before egui Focused(false)
+        // so we stop inbox wakes even if keyboard leave is delayed.
+        let compositor_visible = self
+            .sessions
+            .ui_visible
+            .load(std::sync::atomic::Ordering::Relaxed);
+        let focused = ctx.input(|i| i.focused) && compositor_visible;
         self.sessions
             .ui_focused
             .store(focused, std::sync::atomic::Ordering::Relaxed);
+
+        // Off-workspace: do not apply/draw/chase frames — leave the event loop free to pong.
+        if !compositor_visible {
+            return;
+        }
 
         let poll = self.sessions.poll_events(&mut self.pins);
         let need_repaint = poll.need_repaint();
@@ -926,7 +935,7 @@ impl eframe::App for MqttMonitorApp {
                 ctx.request_repaint_after(self.sessions.traffic_stats.time_until_display_refresh());
             }
         }
-        // Unfocused: schedule nothing. Winit Focused(true) will repaint on return;
+        // Unfocused-but-visible: schedule nothing. Focused(true) repaints on return;
         // inbox keeps coalescing on the mqtt-inbox thread meanwhile.
 
         self.handle_shortcuts(ctx);
