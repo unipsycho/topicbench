@@ -26,7 +26,7 @@ pub fn draw(
 ) {
     icons::section_header_bar(ui, |ui| {
         icons::section_icon(ui, icons, "sticky_topic");
-        ui.heading("Sticky topics");
+        icons::section_title(ui, "Sticky topics");
         ui.label(
             RichText::new(match settings.sticky_layout {
                 StickyLayoutMode::Rows => "· rows".into(),

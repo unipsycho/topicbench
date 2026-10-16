@@ -25,7 +25,7 @@ pub fn draw(
 ) {
     icons::section_header_bar(ui, |ui| {
         icons::section_icon(ui, icons, "publish_message");
-        ui.heading("Publish");
+        icons::section_title(ui, "Publish");
     });
     ui.label("Send to a topic on a connected broker.");
     ui.weak("Double-click a topic in the tree to fill profile, topic, and payload.");

@@ -55,7 +55,7 @@ pub fn draw(
 ) {
     icons::section_header_bar(ui, |ui| {
         icons::section_icon(ui, icons, "configuration_sliders");
-        ui.heading("Settings");
+        icons::section_title(ui, "Settings");
     });
     ui.label("Persisted under ~/.config/mqtt-monitor/settings.json");
 

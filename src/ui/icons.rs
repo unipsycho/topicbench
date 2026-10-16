@@ -43,6 +43,8 @@ pub const CHROME_ACCENT_BORDER: Color32 = Color32::from_rgb(100, 160, 220);
 pub const CHROME_ROW: Color32 = Color32::from_rgb(46, 50, 58);
 /// Quiet strip behind section icon+title rows (stronger than list rows).
 pub const CHROME_SECTION: Color32 = Color32::from_rgb(52, 56, 66);
+/// Shared accent for all section heading labels (Profiles / Topic tree / …).
+pub const CHROME_HEADING: Color32 = Color32::from_rgb(130, 185, 245);
 /// Ribbon captions + topic-path gray (readable on CHROME_BG).
 pub const CHROME_CAPTION: Color32 = Color32::from_rgb(190, 196, 208);
 /// Secondary chrome labels / counts (`#n`, hints) — brighter than egui default `.weak()`.
@@ -252,11 +254,24 @@ pub fn section_header_bar(ui: &mut egui::Ui, add_contents: impl FnOnce(&mut egui
     egui::Frame::NONE
         .fill(CHROME_SECTION)
         .corner_radius(3.0)
-        .inner_margin(egui::Margin::symmetric(8, 5))
+        // Tight around 36px icons — was (8,5) and looked oversized.
+        .inner_margin(egui::Margin::symmetric(4, 1))
         .show(ui, |ui| {
             ui.set_min_width(ui.available_width());
+            ui.spacing_mut().item_spacing.x = 4.0;
+            ui.spacing_mut().item_spacing.y = 0.0;
             ui.horizontal(add_contents);
         });
+}
+
+/// Section title in the shared [`CHROME_HEADING`] accent (not muted gray).
+pub fn section_title(ui: &mut egui::Ui, text: &str) {
+    ui.label(
+        egui::RichText::new(text)
+            .heading()
+            .strong()
+            .color(CHROME_HEADING),
+    );
 }
 
 /// Section-header icon at [`SECTION_ICON`] (36px).
