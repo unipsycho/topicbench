@@ -21,6 +21,8 @@ pub use crate::mqtt::topic_tree::FLASH_MS;
 const MAX_TOPICS_APPLY_PER_FRAME: usize = 128;
 /// While focused, wake egui at most this often from the inbox applier.
 const FOCUSED_WAKE_MIN: Duration = Duration::from_millis(16);
+/// Off-focus / off-workspace: keep Stats/counts alive without ANR present storms.
+pub const BACKGROUND_UI_HZ_INTERVAL: Duration = Duration::from_secs(1);
 
 /// Result of applying the background inbox on the UI thread.
 pub struct PollOutcome {
@@ -219,7 +221,10 @@ impl Default for SessionManager {
             ui_focused.clone(),
             egui_ctx.clone(),
         );
-        crate::mqtt::visibility::spawn_hyprland_visibility_watcher(ui_visible.clone());
+        crate::mqtt::visibility::spawn_hyprland_visibility_watcher(
+            ui_visible.clone(),
+            ui_focused.clone(),
+        );
         Self {
             open: BTreeMap::new(),
             traffic_stats: TrafficStats::default(),
@@ -232,7 +237,7 @@ impl Default for SessionManager {
     }
 }
 
-/// Drain broker events off the UI thread; coalesce; wake egui only when focused.
+/// Drain broker events off the UI thread; coalesce; wake egui (fast when focused, 1 Hz otherwise).
 fn spawn_inbox_applier(
     event_rx: Receiver<BrokerEvent>,
     inbox: Arc<SharedInbox>,
@@ -243,16 +248,18 @@ fn spawn_inbox_applier(
         .name("mqtt-inbox".into())
         .spawn(move || {
             let mut last_wake = Instant::now()
-                .checked_sub(FOCUSED_WAKE_MIN)
+                .checked_sub(BACKGROUND_UI_HZ_INTERVAL)
                 .unwrap_or_else(Instant::now);
             while let Ok(ev) = event_rx.recv() {
                 inbox.fold_event(ev);
-                // Unfocused / other workspace: never request_repaint — present/swap
-                // must not block Hyprland xdg_wm_base ping → pong.
-                if !ui_focused.load(Ordering::Relaxed) {
-                    continue;
-                }
-                if last_wake.elapsed() < FOCUSED_WAKE_MIN {
+                let focused = ui_focused.load(Ordering::Relaxed);
+                let min_gap = if focused {
+                    FOCUSED_WAKE_MIN
+                } else {
+                    // Background: one wake/sec so Stats/counts still move; not 60fps.
+                    BACKGROUND_UI_HZ_INTERVAL
+                };
+                if last_wake.elapsed() < min_gap {
                     continue;
                 }
                 let ctx = egui_ctx

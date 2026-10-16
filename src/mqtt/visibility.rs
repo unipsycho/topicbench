@@ -11,8 +11,12 @@ use std::thread;
 use std::time::Duration;
 
 /// Poll Hyprland (when present) and clear `ui_visible` while our window is off the
-/// active workspace. No-op outside Hyprland.
-pub fn spawn_hyprland_visibility_watcher(ui_visible: Arc<AtomicBool>) {
+/// active workspace. Also clears `ui_focused` immediately so the inbox drops to 1 Hz
+/// without waiting for egui `Focused(false)`. No-op outside Hyprland.
+pub fn spawn_hyprland_visibility_watcher(
+    ui_visible: Arc<AtomicBool>,
+    ui_focused: Arc<AtomicBool>,
+) {
     if std::env::var_os("HYPRLAND_INSTANCE_SIGNATURE").is_none() {
         return;
     }
@@ -25,7 +29,13 @@ pub fn spawn_hyprland_visibility_watcher(ui_visible: Arc<AtomicBool>) {
             loop {
                 thread::sleep(Duration::from_millis(100));
                 match window_on_active_workspace(pid) {
-                    Some(on_active) => ui_visible.store(on_active, Ordering::Relaxed),
+                    Some(on_active) => {
+                        ui_visible.store(on_active, Ordering::Relaxed);
+                        if !on_active {
+                            // Stop 16ms inbox wakes before egui processes keyboard leave.
+                            ui_focused.store(false, Ordering::Relaxed);
+                        }
+                    }
                     None => {
                         // hyprctl failed (reload etc.) — do not force-hide.
                     }

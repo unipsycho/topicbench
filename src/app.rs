@@ -890,7 +890,7 @@ impl eframe::App for MqttMonitorApp {
 
         // Hyprland ANR = missed xdg_wm_base pings (misc:anr_missed_pings=3).
         // `ui_visible` comes from a Hyprland poller — clears before egui Focused(false)
-        // so we stop inbox wakes even if keyboard leave is delayed.
+        // so inbox drops to 1 Hz even if keyboard leave is delayed.
         let compositor_visible = self
             .sessions
             .ui_visible
@@ -900,11 +900,7 @@ impl eframe::App for MqttMonitorApp {
             .ui_focused
             .store(focused, std::sync::atomic::Ordering::Relaxed);
 
-        // Off-workspace: do not apply/draw/chase frames — leave the event loop free to pong.
-        if !compositor_visible {
-            return;
-        }
-
+        // Always apply a capped inbox batch so Stats/counts stay alive (even off-workspace).
         let poll = self.sessions.poll_events(&mut self.pins);
         let need_repaint = poll.need_repaint();
         if let Some(msg) = poll.status {
@@ -934,9 +930,10 @@ impl eframe::App for MqttMonitorApp {
                 // 1 Hz Stats refresh (Thru decay + frozen labels) — not every frame.
                 ctx.request_repaint_after(self.sessions.traffic_stats.time_until_display_refresh());
             }
+        } else {
+            // Unfocused / other workspace: ~1 Hz heartbeat — alive, not ANR-prone.
+            ctx.request_repaint_after(crate::mqtt::session::BACKGROUND_UI_HZ_INTERVAL);
         }
-        // Unfocused-but-visible: schedule nothing. Focused(true) repaints on return;
-        // inbox keeps coalescing on the mqtt-inbox thread meanwhile.
 
         self.handle_shortcuts(ctx);
         // Suppress tips from panels under Settings / Keyboard Shortcuts overlays
