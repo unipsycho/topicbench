@@ -7,7 +7,7 @@ use crate::ui::hover_tip;
 use crate::ui::icons::{self, IconSet};
 use crate::ui::json_view;
 use eframe::egui::text::LayoutJob;
-use eframe::egui::{self, Color32, Stroke, TextFormat};
+use eframe::egui::{self, Color32, Sense, Stroke, TextFormat, UiBuilder};
 use std::sync::Arc;
 
 /// Warning chrome when intended JSON is invalid.
@@ -27,8 +27,7 @@ pub fn draw(
         icons::section_icon(ui, icons, "publish_message");
         icons::section_title(ui, "Publish");
     });
-    ui.label("Send to a topic on a connected broker.");
-    ui.weak("Double-click a topic in the tree to fill profile, topic, and payload.");
+    ui.label("Send to a topic on a connected broker. Double-click to populate.");
     ui.add_space(4.0);
 
     let connected: Vec<(String, String)> = sessions
@@ -139,40 +138,48 @@ pub fn draw(
         return;
     }
 
-    egui::ScrollArea::vertical()
-        .id_salt("publish-recent")
-        .max_height(160.0)
-        .show(ui, |ui| {
-            for (i, entry) in history.recent.iter().enumerate() {
-                let accent = profiles
-                    .profiles
-                    .get(&entry.profile_id)
-                    .map(|p| p.color())
-                    .unwrap_or(Color32::from_rgb(90, 190, 120));
-                let job = recent_row_job(ui, entry, accent);
-                if hover_tip::attach(
-                    ui.selectable_label(false, job),
-                    format!(
-                        "broker={} topic={} qos={} retain={}\n{}",
-                        entry.profile_name,
-                        entry.topic,
-                        entry.qos.as_u8(),
-                        entry.retain,
-                        entry.payload
-                    ),
-                )
-                .clicked()
-                {
-                    draft.apply_recent(entry);
-                    *status = format!(
-                        "Restored recent #{}: {} · {}",
-                        i + 1,
-                        entry.profile_name,
-                        entry.topic
-                    );
+    // Claim leftover SidePanel height permanently (allocate_exact_size), then fill it.
+    // Prior attempt only set ScrollArea::max_height(available_height) — that still left a
+    // short list when tip binaries kept max_height(160), and max_height alone does not
+    // reserve space in the parent placer the way allocate_exact_size does.
+    let remaining = ui.available_size();
+    let (rect, _) = ui.allocate_exact_size(remaining, Sense::hover());
+    ui.allocate_new_ui(UiBuilder::new().max_rect(rect), |ui| {
+        egui::ScrollArea::vertical()
+            .id_salt("publish-recent")
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                for (i, entry) in history.recent.iter().enumerate() {
+                    let accent = profiles
+                        .profiles
+                        .get(&entry.profile_id)
+                        .map(|p| p.color())
+                        .unwrap_or(Color32::from_rgb(90, 190, 120));
+                    let job = recent_row_job(ui, entry, accent);
+                    if hover_tip::attach(
+                        ui.selectable_label(false, job),
+                        format!(
+                            "broker={} topic={} qos={} retain={}\n{}",
+                            entry.profile_name,
+                            entry.topic,
+                            entry.qos.as_u8(),
+                            entry.retain,
+                            entry.payload
+                        ),
+                    )
+                    .clicked()
+                    {
+                        draft.apply_recent(entry);
+                        *status = format!(
+                            "Restored recent #{}: {} · {}",
+                            i + 1,
+                            entry.profile_name,
+                            entry.topic
+                        );
+                    }
                 }
-            }
-        });
+            });
+    });
 }
 
 /// Editable multiline payload with JSON syntax highlight + invalid warning frame.
@@ -212,7 +219,7 @@ fn draw_payload_editor(ui: &mut egui::Ui, payload: &mut String, json_invalid: bo
     });
 }
 
-/// Broker name in profile accent; rest of the row at normal body/monospace size.
+/// Broker in profile accent; topic bright (primary scan); qos/payload muted.
 fn recent_row_job(ui: &egui::Ui, entry: &RecentPublish, accent: Color32) -> LayoutJob {
     let broker = if entry.profile_name.is_empty() {
         "…"
@@ -221,6 +228,9 @@ fn recent_row_job(ui: &egui::Ui, entry: &RecentPublish, accent: Color32) -> Layo
     };
     let body = ui.style().text_styles[&egui::TextStyle::Body].clone();
     let mono = ui.style().text_styles[&egui::TextStyle::Monospace].clone();
+    let muted = ui.visuals().weak_text_color();
+    // Bright topic — stands out vs muted qos/payload (tree C_TOPIC is too quiet here).
+    const TOPIC: Color32 = Color32::from_rgb(210, 225, 255);
     let mut job = LayoutJob::default();
     job.append(
         broker,
@@ -232,9 +242,26 @@ fn recent_row_job(ui: &egui::Ui, entry: &RecentPublish, accent: Color32) -> Layo
         },
     );
     job.append(
+        " · ",
+        0.0,
+        TextFormat {
+            font_id: mono.clone(),
+            color: muted,
+            ..Default::default()
+        },
+    );
+    job.append(
+        &entry.topic,
+        0.0,
+        TextFormat {
+            font_id: mono.clone(),
+            color: TOPIC,
+            ..Default::default()
+        },
+    );
+    job.append(
         &format!(
-            " · {}  qos={}{}  {}",
-            entry.topic,
+            "  qos={}{}  {}",
             entry.qos.as_u8(),
             if entry.retain { " retain" } else { "" },
             entry.payload_preview()
@@ -242,7 +269,7 @@ fn recent_row_job(ui: &egui::Ui, entry: &RecentPublish, accent: Color32) -> Layo
         0.0,
         TextFormat {
             font_id: mono,
-            color: ui.visuals().text_color(),
+            color: muted,
             ..Default::default()
         },
     );
