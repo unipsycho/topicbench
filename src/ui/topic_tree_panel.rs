@@ -38,7 +38,6 @@ pub fn draw(
     profiles: &mut ProfileStore,
     pins: &mut PinBoard,
     expand_mode: TopicTreeExpandMode,
-    expand_all_once: &mut Option<bool>,
     icons: &IconSet,
     filter: &mut SearchFilter,
     focus_search: &mut bool,
@@ -55,12 +54,6 @@ pub fn draw(
             );
         }
         ui.heading("Topic tree");
-        if ui.small_button("Expand all").clicked() {
-            *expand_all_once = Some(true);
-        }
-        if ui.small_button("Collapse all").clicked() {
-            *expand_all_once = Some(false);
-        }
     });
     // Topic filter lives under the section header, above broker/tree rows.
     crate::ui::search_bar::draw(ui, filter, focus_search);
@@ -87,7 +80,6 @@ pub fn draw(
         return;
     }
 
-    let force_open = expand_all_once.take();
     let now = Instant::now();
 
     for profile_id in connected_ids {
@@ -135,7 +127,7 @@ pub fn draw(
             pins,
             now,
             expand_mode,
-            force_open,
+            None, // no toolbar Expand/Collapse — double-click parents instead
             0,
             icons,
             filter,

@@ -81,7 +81,6 @@ pub struct MqttMonitorApp {
     focus_profile_editor: bool,
     /// Profiles panel was opened by New (auto-close on next Save).
     profiles_auto_opened: bool,
-    expand_all_once: Option<bool>,
     auto_reconnect_done: bool,
     /// Find-in-payload query / match cursor for the Payload side panel.
     payload_search: PayloadSearch,
@@ -136,7 +135,6 @@ impl MqttMonitorApp {
             focus_search: false,
             focus_profile_editor: false,
             profiles_auto_opened: false,
-            expand_all_once: None,
             auto_reconnect_done: false,
             payload_search: PayloadSearch::default(),
             show_profile_password: false,
@@ -1019,7 +1017,14 @@ impl eframe::App for MqttMonitorApp {
             }
         }
 
-        egui::CentralPanel::default().show(ctx, |ui| {
+        // Match SidePanel vertical margin (2) — default CentralPanel uses 8 and drops the header.
+        egui::CentralPanel::default()
+            .frame(
+                egui::Frame::NONE
+                    .fill(CHROME_BG)
+                    .inner_margin(egui::Margin::symmetric(8, 2)),
+            )
+            .show(ctx, |ui| {
             egui::ScrollArea::vertical().show(ui, |ui| {
                 if self.panels.live_traffic {
                     traffic_panel::draw(
@@ -1059,7 +1064,6 @@ impl eframe::App for MqttMonitorApp {
                         &mut self.profiles,
                         &mut self.pins,
                         self.settings.topic_tree_expand,
-                        &mut self.expand_all_once,
                         &self.icons,
                         &mut self.search,
                         &mut self.focus_search,
