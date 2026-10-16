@@ -48,10 +48,6 @@ pub struct LiveHandle {
 const MIN_BACKOFF: Duration = Duration::from_millis(500);
 const MAX_BACKOFF: Duration = Duration::from_secs(15);
 const STATUS_MIN_INTERVAL: Duration = Duration::from_millis(400);
-/// Cap MQTT-thread → egui wakeups while the window is focused.
-const REPAINT_MIN_INTERVAL: Duration = Duration::from_millis(16);
-/// While on another workspace / unfocused: wake rarely so present/swap cannot starve WM pings.
-const BACKGROUND_REPAINT_MIN_INTERVAL: Duration = Duration::from_millis(250);
 
 /// Build options + spawn event-loop thread.
 ///
@@ -111,6 +107,7 @@ pub fn spawn(
     emit_state(
         &tx,
         &ctx,
+        &ui_focused,
         &profile_id,
         SessionState::Connecting,
         format!("Connecting to {host}:{port}…"),
@@ -128,10 +125,6 @@ pub fn spawn(
             let mut last_key: Option<(SessionState, String)> = None;
             let mut last_emit = Instant::now()
                 .checked_sub(STATUS_MIN_INTERVAL)
-                .unwrap_or_else(Instant::now);
-            // Throttle egui wakeups under `#` floods (UI drains ≤96 events/frame).
-            let mut last_repaint = Instant::now()
-                .checked_sub(REPAINT_MIN_INTERVAL)
                 .unwrap_or_else(Instant::now);
             // Keep the real failure reason — generic "Session ended" must not overwrite it.
             let mut fatal_detail: Option<String> = None;
@@ -152,6 +145,7 @@ pub fn spawn(
                             emit_state(
                                 &tx,
                                 &ctx,
+                                &ui_focused,
                                 &profile_id,
                                 SessionState::Connected,
                                 format!("Connected to {host}:{port}"),
@@ -163,6 +157,7 @@ pub fn spawn(
                             emit_state(
                                 &tx,
                                 &ctx,
+                                &ui_focused,
                                 &profile_id,
                                 SessionState::Disconnected,
                                 format!(
@@ -198,6 +193,8 @@ pub fn spawn(
                         } else {
                             (String::from_utf8_lossy(&p.payload).into_owned(), false)
                         };
+                        // Inbox applier coalesces + wakes egui only while focused.
+                        // Never request_repaint here — present-while-hidden misses Hyprland ANR pongs.
                         let _ = tx.send(BrokerEvent::Message {
                             profile_id: profile_id.clone(),
                             topic: topic.clone(),
@@ -214,15 +211,6 @@ pub fn spawn(
                                 ),
                             });
                         }
-                        let min_gap = if ui_focused.load(Ordering::Relaxed) {
-                            REPAINT_MIN_INTERVAL
-                        } else {
-                            BACKGROUND_REPAINT_MIN_INTERVAL
-                        };
-                        if last_repaint.elapsed() >= min_gap {
-                            last_repaint = Instant::now();
-                            ctx.request_repaint();
-                        }
                     }
                     Ok(Event::Incoming(Packet::Disconnect)) => {
                         if stop_w.load(Ordering::SeqCst) {
@@ -233,6 +221,7 @@ pub fn spawn(
                         emit_state(
                             &tx,
                             &ctx,
+                            &ui_focused,
                             &profile_id,
                             SessionState::Disconnected,
                             detail,
@@ -252,6 +241,7 @@ pub fn spawn(
                         emit_state(
                             &tx,
                             &ctx,
+                            &ui_focused,
                             &profile_id,
                             SessionState::Connecting,
                             format!("Reconnecting in {}s… ({err})", backoff.as_secs().max(1)),
@@ -286,6 +276,7 @@ pub fn spawn(
             emit_state(
                 &tx,
                 &ctx,
+                &ui_focused,
                 &profile_id,
                 SessionState::Disconnected,
                 detail,
@@ -303,6 +294,7 @@ pub fn spawn(
 fn emit_state(
     tx: &Sender<BrokerEvent>,
     ctx: &Context,
+    ui_focused: &AtomicBool,
     profile_id: &str,
     state: SessionState,
     detail: String,
@@ -328,7 +320,10 @@ fn emit_state(
         state,
         detail,
     });
-    ctx.request_repaint();
+    // Inbox applier also wakes while focused; skip present storms when unfocused.
+    if ui_focused.load(Ordering::Relaxed) {
+        ctx.request_repaint();
+    }
 }
 
 pub fn to_qos(q: crate::mqtt::publish::Qos) -> QoS {
