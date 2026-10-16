@@ -182,7 +182,13 @@ pub fn draw(
     });
 }
 
+/// Leave room below the editor for QoS, Publish, separator, Recent header, and a usable list.
+const RESERVE_BELOW_PAYLOAD: f32 = 240.0;
+/// Floor so a short payload still shows ~8 monospace rows.
+const PAYLOAD_MIN_H: f32 = 120.0;
+
 /// Editable multiline payload with JSON syntax highlight + invalid warning frame.
+/// Cap height to leftover panel space (minus reserve for controls/Recent) and scroll inside.
 fn draw_payload_editor(ui: &mut egui::Ui, payload: &mut String, json_invalid: bool) {
     let font_size = ui.text_style_height(&egui::TextStyle::Monospace);
     let mut layouter = |ui: &egui::Ui, text: &str, wrap_width: f32| -> Arc<egui::Galley> {
@@ -207,15 +213,25 @@ fn draw_payload_editor(ui: &mut egui::Ui, payload: &mut String, json_invalid: bo
             .corner_radius(4.0)
     };
 
+    // TextEdit grows with galley height; ScrollArea max_height keeps it in-viewport.
+    // Recent still claims whatever is left after QoS/Publish via allocate_exact_size.
+    let max_h = (ui.available_height() - RESERVE_BELOW_PAYLOAD).max(PAYLOAD_MIN_H);
+
     frame.show(ui, |ui| {
-        ui.add(
-            egui::TextEdit::multiline(payload)
-                .id_salt("publish_payload")
-                .desired_width(ui.available_width())
-                .desired_rows(8)
-                .font(egui::TextStyle::Monospace)
-                .layouter(&mut layouter),
-        );
+        egui::ScrollArea::vertical()
+            .id_salt("publish_payload_scroll")
+            .max_height(max_h)
+            .auto_shrink([false, true])
+            .show(ui, |ui| {
+                ui.add(
+                    egui::TextEdit::multiline(payload)
+                        .id_salt("publish_payload")
+                        .desired_width(ui.available_width())
+                        .desired_rows(8)
+                        .font(egui::TextStyle::Monospace)
+                        .layouter(&mut layouter),
+                );
+            });
     });
 }
 
