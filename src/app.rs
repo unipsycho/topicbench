@@ -1025,7 +1025,10 @@ impl eframe::App for MqttMonitorApp {
                     .inner_margin(egui::Margin::symmetric(8, 2)),
             )
             .show(ctx, |ui| {
-            egui::ScrollArea::vertical().show(ui, |ui| {
+            // Keep full panel width (default auto_shrink follows content → early ellipsis).
+            egui::ScrollArea::vertical()
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
                 if self.panels.live_traffic {
                     traffic_panel::draw(
                         ui,
