@@ -161,7 +161,21 @@ impl PinBoard {
         payload: &str,
         now: Instant,
     ) {
+        self.on_message_n(profile_id, profile_name, topic, payload, now, 1);
+    }
+
+    /// Like [`on_message`], but credits `n` deliveries (coalesced UI-frame batch).
+    pub fn on_message_n(
+        &mut self,
+        profile_id: &str,
+        profile_name: &str,
+        topic: &str,
+        payload: &str,
+        now: Instant,
+        n: u64,
+    ) {
         let flash = now + Duration::from_millis(FLASH_MS);
+        let n = n.max(1);
         for sticky in self.items.values_mut() {
             if sticky.profile_id != profile_id {
                 continue;
@@ -181,7 +195,7 @@ impl PinBoard {
             let numeric = crate::mqtt::value_path::sample_numeric(&extracted);
             sticky.profile_name = profile_name.to_string();
             sticky.last_payload = extracted.clone();
-            sticky.message_count = sticky.message_count.saturating_add(1);
+            sticky.message_count = sticky.message_count.saturating_add(n);
             sticky.flash_until = Some(flash);
             sticky.history.push_back(HistorySample {
                 at: now,

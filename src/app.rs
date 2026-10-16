@@ -886,23 +886,28 @@ impl eframe::App for MqttMonitorApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.run_auto_reconnect(ctx);
 
-        if let Some(msg) = self.sessions.poll_events(&mut self.pins) {
+        let poll = self.sessions.poll_events(&mut self.pins);
+        if let Some(msg) = poll.status {
             self.status = msg;
         }
         // Stats ribbon labels: rebuild frozen snapshot at most once per second.
         let _ = self.sessions.traffic_stats.refresh_display_if_due();
 
         // egui idles without input — keep frames flowing while any fade is live.
+        // Session/pin flash_until already covers tree pulses (set on the same apply).
+        // Do not walk the whole topic tree here — that alone ANRs under large trees.
         let now = Instant::now();
-        let flashing = self.sessions.open.values().any(|s| {
-            flash::flash_active(s.flash_until, now)
-                || flash::tree_flash_active(&s.topic_tree.root, now)
-        }) || self
-            .pins
-            .items
+        let flashing = self
+            .sessions
+            .open
             .values()
-            .any(|p| flash::flash_active(p.flash_until, now));
-        if flashing {
+            .any(|s| flash::flash_active(s.flash_until, now))
+            || self
+                .pins
+                .items
+                .values()
+                .any(|p| flash::flash_active(p.flash_until, now));
+        if poll.need_repaint || flashing {
             ctx.request_repaint();
         } else if self.sessions.traffic_stats.wants_periodic_refresh() {
             // 1 Hz Stats refresh (Thru decay + frozen labels) — not every frame.

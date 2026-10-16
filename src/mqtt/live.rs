@@ -48,6 +48,8 @@ pub struct LiveHandle {
 const MIN_BACKOFF: Duration = Duration::from_millis(500);
 const MAX_BACKOFF: Duration = Duration::from_secs(15);
 const STATUS_MIN_INTERVAL: Duration = Duration::from_millis(400);
+/// Cap MQTT-thread → egui wakeups; UI drains a bounded batch each frame.
+const REPAINT_MIN_INTERVAL: Duration = Duration::from_millis(16);
 
 /// Build options + spawn event-loop thread.
 ///
@@ -123,6 +125,10 @@ pub fn spawn(
             let mut last_key: Option<(SessionState, String)> = None;
             let mut last_emit = Instant::now()
                 .checked_sub(STATUS_MIN_INTERVAL)
+                .unwrap_or_else(Instant::now);
+            // Throttle egui wakeups under `#` floods (UI drains ≤96 events/frame).
+            let mut last_repaint = Instant::now()
+                .checked_sub(REPAINT_MIN_INTERVAL)
                 .unwrap_or_else(Instant::now);
             // Keep the real failure reason — generic "Session ended" must not overwrite it.
             let mut fatal_detail: Option<String> = None;
@@ -205,7 +211,10 @@ pub fn spawn(
                                 ),
                             });
                         }
-                        ctx.request_repaint();
+                        if last_repaint.elapsed() >= REPAINT_MIN_INTERVAL {
+                            last_repaint = Instant::now();
+                            ctx.request_repaint();
+                        }
                     }
                     Ok(Event::Incoming(Packet::Disconnect)) => {
                         if stop_w.load(Ordering::SeqCst) {

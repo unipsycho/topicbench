@@ -13,6 +13,9 @@ pub fn flash_active(until: Option<Instant>, now: Instant) -> bool {
 }
 
 /// Any node in the topic tree still fading (quiet single-topic case).
+/// Not used on the hot path — walking a large tree every frame caused ANRs;
+/// session/pin `flash_until` already cover continuous inbound traffic.
+#[allow(dead_code)]
 pub fn tree_flash_active(node: &TopicNode, now: Instant) -> bool {
     if flash_active(node.flash_until, now) {
         return true;
