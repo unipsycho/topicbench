@@ -12,7 +12,7 @@ use crate::ui::icons::{self, IconSet, CHROME_MUTED};
 use crate::ui::json_view;
 use crate::ui::search_bar::SearchFilter;
 use crate::ui::shortcuts;
-use eframe::egui::{self, Color32, RichText};
+use eframe::egui::{self, Color32, FontId, RichText};
 use std::time::Instant;
 
 /// Exclusive temp key for the one open tree payload/topic tip.
@@ -38,23 +38,27 @@ pub fn draw(
     profiles: &mut ProfileStore,
     pins: &mut PinBoard,
     expand_mode: TopicTreeExpandMode,
-    expand_all_once: &mut Option<bool>,
     icons: &IconSet,
-    filter: &SearchFilter,
+    filter: &mut SearchFilter,
+    focus_search: &mut bool,
     status: &mut String,
     // Set when a leaf/payload row is double-clicked → open Publish and fill form.
     publish_from_tree: &mut Option<PublishFromTree>,
 ) {
     icons::section_header_bar(ui, |ui| {
-        icons::section_icon(ui, icons, "topic_tree");
-        icons::section_title(ui, "Topic tree");
-        if ui.small_button("Expand all").clicked() {
-            *expand_all_once = Some(true);
+        // Match topic-tree tip: aligned icon+heading; Expand/Collapse dropped (9cc4818).
+        if let Some(tex) = icons.get("topic_tree") {
+            ui.add(
+                egui::Image::new(tex)
+                    .fit_to_exact_size(egui::vec2(20.0, 20.0))
+                    .sense(egui::Sense::hover()),
+            );
         }
-        if ui.small_button("Collapse all").clicked() {
-            *expand_all_once = Some(false);
-        }
+        ui.heading("Topic tree");
     });
+    // Topic filter lives under the section header, above broker/tree rows.
+    crate::ui::search_bar::draw(ui, filter, focus_search);
+    ui.add_space(4.0);
     ui.label("Per connected broker — colored heading, then that broker’s topics.");
     ui.weak("Single-click selects for Payload. Double-click a parent to expand/collapse. Double-click a topic/payload row to fill Publish.");
     ui.add_space(4.0);
@@ -77,7 +81,6 @@ pub fn draw(
         return;
     }
 
-    let force_open = expand_all_once.take();
     let now = Instant::now();
 
     for profile_id in connected_ids {
@@ -125,7 +128,7 @@ pub fn draw(
             pins,
             now,
             expand_mode,
-            force_open,
+            None, // no toolbar Expand/Collapse — double-click parents instead
             0,
             icons,
             filter,
@@ -413,7 +416,11 @@ fn leaf_row(
     };
 
     let row = egui::Frame::NONE.fill(row_fill).show(ui, |ui| {
+        // Span the full panel width so payload truncates only at the true right edge.
+        let row_w = ui.available_width();
+        ui.set_min_width(row_w);
         ui.horizontal(|ui| {
+            ui.set_min_width(row_w);
             ui.spacing_mut().item_spacing.x = 4.0;
 
             // Left: copy-topic (topic_tags) + sticky toggle (always visible).
@@ -456,14 +463,20 @@ fn leaf_row(
 
             let payload = node.last_payload.as_deref().unwrap_or("");
             let show_copy_payload = !payload.is_empty();
-            let count_reserve = if node.message_count > 0 { 28.0 } else { 0.0 };
-            let width = (ui.available_width() - count_reserve).max(48.0);
+            let msg_count = node.message_count;
 
-            // Middle: gray topic · = · copy-payload · highlighted data (clip like icons).
-            ui.allocate_ui_with_layout(
-                egui::vec2(width, ui.spacing().interact_size.y),
-                egui::Layout::left_to_right(egui::Align::Center),
-                |ui| {
+            // Count first from the right so middle width is the true remainder.
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if msg_count > 0 {
+                    ui.label(
+                        RichText::new(format!("#{msg_count}"))
+                            .small()
+                            .color(CHROME_MUTED),
+                    );
+                }
+
+                // Middle: gray topic · = · copy-payload · highlighted data.
+                ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
                     ui.set_clip_rect(ui.clip_rect().intersect(ui.max_rect()));
                     ui.spacing_mut().item_spacing.x = 2.0;
 
@@ -492,17 +505,20 @@ fn leaf_row(
                         }
 
                         // Complex JSON → syntax highlight; simple values → profile accent.
+                        // available_width here is already after topic / = / copy icon.
                         let accent = profiles
                             .profiles
                             .get(profile_id)
                             .map(|p| p.color())
                             .unwrap_or(Color32::from_rgb(90, 190, 120));
-                        let used = label.len() as f32 * 7.0 + 36.0;
-                        let max_chars = ((ui.available_width() - used).max(40.0) / 7.0) as usize;
-                        let max_chars = max_chars.max(12);
+                        let font_size = ui.text_style_height(&egui::TextStyle::Monospace);
+                        let char_w = ui.fonts(|f| {
+                            f.glyph_width(&FontId::monospace(font_size), 'M').max(1.0)
+                        });
+                        let max_chars =
+                            ((ui.available_width() / char_w).floor() as usize).max(12);
                         let is_complex = json_view::try_pretty_json(payload).is_some();
                         let data_resp = if is_complex {
-                            let font_size = ui.text_style_height(&egui::TextStyle::Monospace);
                             let job = json_view::payload_preview_job(payload, max_chars, font_size);
                             ui.add(
                                 egui::Label::new(job)
@@ -531,16 +547,8 @@ fn leaf_row(
                             },
                         );
                     }
-                },
-            );
-
-            if node.message_count > 0 {
-                ui.label(
-                    RichText::new(format!("#{}", node.message_count))
-                        .small()
-                        .color(CHROME_MUTED),
-                );
-            }
+                });
+            });
         });
     });
     // Inset flash — same row size with or without pulse.

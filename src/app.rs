@@ -19,7 +19,7 @@ use crate::ui::search_bar::SearchFilter;
 use crate::ui::shortcuts::{self, Action as ShortcutAction};
 use crate::ui::payload_panel::PayloadSearch;
 use crate::ui::{
-    payload_panel, pin_board, profiles, publish_panel, search_bar, settings_panel, stats_ribbon,
+    payload_panel, pin_board, profiles, publish_panel, settings_panel, stats_ribbon,
     topic_tree_panel, traffic_panel,
 };
 use crate::ui::flash;
@@ -81,7 +81,6 @@ pub struct MqttMonitorApp {
     focus_profile_editor: bool,
     /// Profiles panel was opened by New (auto-close on next Save).
     profiles_auto_opened: bool,
-    expand_all_once: Option<bool>,
     auto_reconnect_done: bool,
     /// Find-in-payload query / match cursor for the Payload side panel.
     payload_search: PayloadSearch,
@@ -136,7 +135,6 @@ impl MqttMonitorApp {
             focus_search: false,
             focus_profile_editor: false,
             profiles_auto_opened: false,
-            expand_all_once: None,
             auto_reconnect_done: false,
             payload_search: PayloadSearch::default(),
             show_profile_password: false,
@@ -1016,16 +1014,18 @@ impl eframe::App for MqttMonitorApp {
             }
         }
 
-        egui::CentralPanel::default().show(ctx, |ui| {
-            let search_before = (self.search.query.clone(), self.search.scope);
-            search_bar::draw(ui, &mut self.search, &mut self.focus_search);
-            if self.search.query != search_before.0 || self.search.scope != search_before.1 {
-                self.persist_search();
-            }
-            ui.add_space(6.0);
-            ui.separator();
-            ui.add_space(6.0);
-            egui::ScrollArea::vertical().show(ui, |ui| {
+        // Match SidePanel vertical margin (2) — default CentralPanel uses 8 and drops the header.
+        egui::CentralPanel::default()
+            .frame(
+                egui::Frame::NONE
+                    .fill(CHROME_BG)
+                    .inner_margin(egui::Margin::symmetric(8, 2)),
+            )
+            .show(ctx, |ui| {
+            // Keep full panel width (default auto_shrink follows content → early ellipsis).
+            egui::ScrollArea::vertical()
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
                 if self.panels.live_traffic {
                     traffic_panel::draw(
                         ui,
@@ -1057,18 +1057,22 @@ impl eframe::App for MqttMonitorApp {
 
                 if self.panels.topic_tree {
                     let mut publish_from_tree: Option<PublishFromTree> = None;
+                    let search_before = (self.search.query.clone(), self.search.scope);
                     topic_tree_panel::draw(
                         ui,
                         &mut self.sessions,
                         &mut self.profiles,
                         &mut self.pins,
                         self.settings.topic_tree_expand,
-                        &mut self.expand_all_once,
                         &self.icons,
-                        &self.search,
+                        &mut self.search,
+                        &mut self.focus_search,
                         &mut self.status,
                         &mut publish_from_tree,
                     );
+                    if self.search.query != search_before.0 || self.search.scope != search_before.1 {
+                        self.persist_search();
+                    }
                     // Leaf double-click → open Publish and fill broker / topic / payload.
                     if let Some(fill) = publish_from_tree {
                         self.publish.apply_from_tree(&fill);
