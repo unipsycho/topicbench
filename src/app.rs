@@ -975,7 +975,7 @@ impl eframe::App for MqttMonitorApp {
                 .show(ctx, |ui| {
                     payload_panel::draw(
                         ui,
-                        &self.sessions,
+                        &mut self.sessions,
                         &mut self.profiles,
                         &mut self.pins,
                         &self.icons,
