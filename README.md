@@ -18,8 +18,8 @@ GUI stack: **egui / eframe** — same toolkit used by ArtCraft Crafting Apps ([P
 ## Run
 
 ```bash
-git clone https://gitlab.com/agileautomation/mqtt-master.git
-cd mqtt-master
+git clone https://github.com/unipsycho/topicbench.git
+cd topicbench   # or mqtt-master if cloned from GitLab / existing folder
 cargo run
 ```
 
