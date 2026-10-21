@@ -1,5 +1,9 @@
 //! Connection profiles — editable in UI, persisted as JSON on disk.
+//!
+//! Passwords live in the OS keyring ([`crate::mqtt::secrets`]); `profiles.json`
+//! never writes them (legacy plaintext is migrated on load).
 
+use crate::mqtt::secrets;
 use eframe::egui::Color32;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -9,6 +13,29 @@ use std::path::PathBuf;
 /// Default accent (same green as Connected status).
 fn default_profile_color() -> [u8; 3] {
     [90, 190, 120]
+}
+
+/// Default WebSocket path used by Mosquitto / HiveMQ / many brokers.
+fn default_ws_path() -> String {
+    "/mqtt".into()
+}
+
+/// TCP MQTT vs MQTT-over-WebSocket (TLS / WSS via [`ConnectionProfile::use_tls`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ProfileTransport {
+    #[default]
+    Mqtt,
+    WebSocket,
+}
+
+impl ProfileTransport {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Mqtt => "MQTT",
+            Self::WebSocket => "WebSocket",
+        }
+    }
 }
 
 /// How a sticky topic renders (persisted per sticky on the profile).
@@ -80,8 +107,15 @@ pub struct ConnectionProfile {
     pub client_id: String,
     #[serde(default)]
     pub username: String,
-    #[serde(default)]
+    /// In-memory only — never written to profiles.json (OS keyring).
+    #[serde(default, skip_serializing)]
     pub password: String,
+    /// MQTT (TCP) or WebSocket; secure via [`Self::use_tls`] (TLS / WSS).
+    #[serde(default)]
+    pub transport: ProfileTransport,
+    /// Path for WebSocket brokers (e.g. `/mqtt`). Ignored for MQTT TCP.
+    #[serde(default = "default_ws_path")]
+    pub ws_path: String,
     #[serde(default)]
     pub use_tls: bool,
     /// Optional folder with CA + client cert + private key (AWS IoT–style).
@@ -103,6 +137,41 @@ impl ConnectionProfile {
         Color32::from_rgb(self.color_rgb[0], self.color_rgb[1], self.color_rgb[2])
     }
 
+    /// TLS for MQTT TCP, or WSS when transport is WebSocket.
+    pub fn want_tls(&self) -> bool {
+        self.use_tls || !self.certs_dir.trim().is_empty()
+    }
+
+    /// Short protocol badge: MQTT / MQTTS / WS / WSS.
+    pub fn protocol_badge(&self) -> &'static str {
+        match (self.transport, self.want_tls()) {
+            (ProfileTransport::Mqtt, false) => "MQTT",
+            (ProfileTransport::Mqtt, true) => "MQTTS",
+            (ProfileTransport::WebSocket, false) => "WS",
+            (ProfileTransport::WebSocket, true) => "WSS",
+        }
+    }
+
+    /// Host:port for TCP, or `ws(s)://host:port/path` for WebSocket (rumqttc broker_addr).
+    pub fn broker_addr(&self) -> String {
+        match self.transport {
+            ProfileTransport::Mqtt => self.host.clone(),
+            ProfileTransport::WebSocket => {
+                let scheme = if self.want_tls() { "wss" } else { "ws" };
+                let path = normalize_ws_path(&self.ws_path);
+                format!("{scheme}://{}:{}{path}", self.host.trim(), self.port)
+            }
+        }
+    }
+
+    /// Human-readable endpoint for status lines.
+    pub fn endpoint_label(&self) -> String {
+        match self.transport {
+            ProfileTransport::Mqtt => format!("{}:{}", self.host.trim(), self.port),
+            ProfileTransport::WebSocket => self.broker_addr(),
+        }
+    }
+
     pub fn new_blank(id: String) -> Self {
         Self {
             id: id.clone(),
@@ -112,6 +181,8 @@ impl ConnectionProfile {
             client_id: format!("mqtt-master-{id}"),
             username: String::new(),
             password: String::new(),
+            transport: ProfileTransport::Mqtt,
+            ws_path: default_ws_path(),
             use_tls: false,
             certs_dir: String::new(),
             subscriptions: Vec::new(),
@@ -129,6 +200,8 @@ impl ConnectionProfile {
             client_id: "mqtt-master".into(),
             username: String::new(),
             password: String::new(),
+            transport: ProfileTransport::Mqtt,
+            ws_path: default_ws_path(),
             use_tls: false,
             certs_dir: String::new(),
             subscriptions: vec!["sensors/#".into()],
@@ -146,6 +219,8 @@ impl ConnectionProfile {
             client_id: "mqtt-master-lab".into(),
             username: String::new(),
             password: String::new(),
+            transport: ProfileTransport::Mqtt,
+            ws_path: default_ws_path(),
             use_tls: false,
             certs_dir: String::new(),
             subscriptions: vec!["devices/+/telemetry".into()],
@@ -243,8 +318,12 @@ impl ProfileStore {
                         store.order.push(p.id.clone());
                         store.profiles.insert(p.id.clone(), p);
                     }
-                    store.last_io =
-                        format!("Loaded {} profile(s) from {}", store.profiles.len(), path.display());
+                    let n = store.profiles.len();
+                    let migrate_note = store.hydrate_and_migrate_passwords(path);
+                    store.last_io = format!("Loaded {n} profile(s) from {}", path.display());
+                    if let Some(note) = migrate_note {
+                        store.last_io = format!("{} · {note}", store.last_io);
+                    }
                     store
                 }
                 Ok(_) => {
@@ -266,6 +345,58 @@ impl ProfileStore {
         }
     }
 
+    /// Pull passwords from the OS keyring; migrate any legacy plaintext out of JSON.
+    /// Returns an optional status note (migration / keyring warnings).
+    fn hydrate_and_migrate_passwords(&mut self, path: &std::path::Path) -> Option<String> {
+        let mut migrated = 0usize;
+        let mut warnings = Vec::new();
+        for p in self.profiles.values_mut() {
+            if !p.password.is_empty() {
+                // Legacy plaintext in profiles.json → keyring, then strip on resave.
+                match secrets::store_password(&p.id, &p.password) {
+                    Ok(()) => migrated += 1,
+                    Err(e) => warnings.push(format!("{}: {e}", p.id)),
+                }
+            } else {
+                match secrets::load_password(&p.id) {
+                    Ok(Some(pw)) => p.password = pw,
+                    Ok(None) => {}
+                    Err(e) => warnings.push(format!("{}: {e}", p.id)),
+                }
+            }
+        }
+        let mut notes = Vec::new();
+        if migrated > 0 {
+            match self.save_to(path) {
+                Ok(()) => notes.push(format!(
+                    "moved {migrated} password(s) to OS keyring"
+                )),
+                Err(e) => notes.push(format!("keyring migrate save failed: {e}")),
+            }
+        }
+        if !warnings.is_empty() {
+            notes.push(format!("keyring: {}", warnings.join("; ")));
+        }
+        if notes.is_empty() {
+            None
+        } else {
+            Some(notes.join(" · "))
+        }
+    }
+
+    /// Sync in-memory passwords into the OS keyring (empty → delete entry).
+    fn sync_passwords_to_keyring(&self) -> Vec<String> {
+        let mut warnings = Vec::new();
+        for p in self.profiles.values() {
+            if let Err(e) = secrets::store_password(&p.id, &p.password) {
+                if !p.password.is_empty() {
+                    warnings.push(format!("{}: {e}", p.name));
+                }
+            }
+        }
+        warnings
+    }
+
     pub fn save(&mut self) -> Result<(), String> {
         self.save_to(&Self::path())
     }
@@ -274,7 +405,9 @@ impl ProfileStore {
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent).map_err(|e| format!("mkdir {}: {e}", parent.display()))?;
         }
+        let keyring_warn = self.sync_passwords_to_keyring();
         self.sync_order();
+        // `password` is skip_serializing — JSON never contains secrets.
         let file = ProfilesFile {
             profiles: self
                 .order
@@ -284,7 +417,15 @@ impl ProfileStore {
         };
         let text = serde_json::to_string_pretty(&file).map_err(|e| e.to_string())?;
         fs::write(path, text).map_err(|e| format!("write {}: {e}", path.display()))?;
+        restrict_config_permissions(path);
         self.last_io = format!("Saved {} profile(s) → {}", self.profiles.len(), path.display());
+        if !keyring_warn.is_empty() {
+            self.last_io = format!(
+                "{} · password not in keyring ({}) — won’t survive restart",
+                self.last_io,
+                keyring_warn.join("; ")
+            );
+        }
         Ok(())
     }
 
@@ -347,6 +488,7 @@ impl ProfileStore {
         let id = self.selected_id.take()?;
         self.profiles.remove(&id);
         self.order.retain(|x| x != &id);
+        secrets::delete_password(&id);
         self.selected_id = self.order.first().cloned();
         Some(id)
     }
@@ -381,9 +523,54 @@ impl ProfileStore {
     }
 }
 
+/// Ensure WebSocket path starts with `/` (empty → `/mqtt`).
+fn normalize_ws_path(path: &str) -> String {
+    let trimmed = path.trim();
+    if trimmed.is_empty() {
+        return default_ws_path();
+    }
+    if trimmed.starts_with('/') {
+        trimmed.to_string()
+    } else {
+        format!("/{trimmed}")
+    }
+}
+
+/// Owner-only file mode so config isn’t world-readable (defense in depth).
+fn restrict_config_permissions(path: &std::path::Path) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = fs::set_permissions(path, fs::Permissions::from_mode(0o600));
+    }
+    let _ = path;
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn password_never_written_to_json() {
+        let dir = std::env::temp_dir().join(format!("mqtt-monitor-pw-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("profiles.json");
+
+        let mut store = ProfileStore::with_samples();
+        store.profiles.get_mut("local").unwrap().password = "s3cret".into();
+        store.profiles.get_mut("local").unwrap().username = "alice".into();
+        // Save strips password from JSON even if keyring sync fails in CI.
+        let file = ProfilesFile {
+            profiles: store.profiles.values().cloned().collect(),
+        };
+        let text = serde_json::to_string_pretty(&file).unwrap();
+        assert!(!text.contains("s3cret"), "password must not serialize: {text}");
+        assert!(!text.contains("\"password\""), "password field omitted: {text}");
+        assert!(text.contains("alice"));
+        let _ = path;
+        let _ = fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn save_and_load_roundtrip() {
@@ -448,5 +635,35 @@ mod tests {
         let local_pos = text.find("\"id\": \"local\"").unwrap();
         assert!(lab_pos < local_pos);
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn legacy_profiles_default_to_mqtt_transport() {
+        let json = r#"{"profiles":[{"id":"x","name":"X","host":"h","port":1883,"client_id":"c"}]}"#;
+        let file: ProfilesFile = serde_json::from_str(json).unwrap();
+        let p = &file.profiles[0];
+        assert_eq!(p.transport, ProfileTransport::Mqtt);
+        assert_eq!(p.ws_path, "/mqtt");
+        assert_eq!(p.broker_addr(), "h");
+        assert_eq!(p.endpoint_label(), "h:1883");
+        assert_eq!(p.protocol_badge(), "MQTT");
+    }
+
+    #[test]
+    fn websocket_broker_addr_builds_ws_and_wss_urls() {
+        let mut p = ConnectionProfile::new_blank("ws".into());
+        p.host = "broker.example".into();
+        p.port = 8083;
+        p.transport = ProfileTransport::WebSocket;
+        p.ws_path = "mqtt".into(); // missing leading slash
+        assert_eq!(p.broker_addr(), "ws://broker.example:8083/mqtt");
+        assert_eq!(p.protocol_badge(), "WS");
+
+        p.use_tls = true;
+        p.port = 443;
+        p.ws_path = "/mqtt".into();
+        assert_eq!(p.broker_addr(), "wss://broker.example:443/mqtt");
+        assert_eq!(p.protocol_badge(), "WSS");
+        assert_eq!(p.endpoint_label(), p.broker_addr());
     }
 }

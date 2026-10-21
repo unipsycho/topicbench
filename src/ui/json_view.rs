@@ -296,13 +296,15 @@ fn push_bg(
 const SEARCH_HIT_BG: Color32 = Color32::from_rgb(70, 65, 35);
 const SEARCH_CURRENT_BG: Color32 = Color32::from_rgb(120, 100, 40);
 
-/// One pretty-JSON / Value line with optional search-span backgrounds.
-/// `hits` and `current` are byte ranges relative to `line`.
+/// One pretty-JSON / Value line with optional change + search backgrounds.
+/// Ranges are byte offsets relative to `line`. Search wins over change highlight.
 pub fn line_job_with_search(
     line: &str,
     font_size: f32,
     hits: &[(usize, usize)],
     current: Option<(usize, usize)>,
+    change_hits: &[(usize, usize)],
+    change_bg: Color32,
 ) -> LayoutJob {
     let font = FontId::monospace(font_size);
     let mut base = LayoutJob {
@@ -312,16 +314,18 @@ pub fn line_job_with_search(
         ..Default::default()
     };
     highlight_range(&mut base, line, 0, line.len(), &font);
-    apply_search_backgrounds(&mut base, line.len(), hits, current);
+    apply_span_backgrounds(&mut base, line.len(), hits, current, change_hits, change_bg);
     base
 }
 
-/// Plain monospace line with search-span backgrounds (non-JSON Value).
+/// Plain monospace line with change + search backgrounds (non-JSON Value).
 pub fn plain_line_job_with_search(
     line: &str,
     font_size: f32,
     hits: &[(usize, usize)],
     current: Option<(usize, usize)>,
+    change_hits: &[(usize, usize)],
+    change_bg: Color32,
 ) -> LayoutJob {
     let font = FontId::monospace(font_size);
     let mut job = LayoutJob {
@@ -331,18 +335,20 @@ pub fn plain_line_job_with_search(
         ..Default::default()
     };
     push(&mut job, 0, line.len(), C_DEFAULT, font);
-    apply_search_backgrounds(&mut job, line.len(), hits, current);
+    apply_span_backgrounds(&mut job, line.len(), hits, current, change_hits, change_bg);
     job
 }
 
-/// Split existing colored sections so match spans get a background.
-fn apply_search_backgrounds(
+/// Split colored sections so change / search spans get backgrounds.
+fn apply_span_backgrounds(
     job: &mut LayoutJob,
     len: usize,
     hits: &[(usize, usize)],
     current: Option<(usize, usize)>,
+    change_hits: &[(usize, usize)],
+    change_bg: Color32,
 ) {
-    if hits.is_empty() || job.sections.is_empty() {
+    if (hits.is_empty() && change_hits.is_empty()) || job.sections.is_empty() {
         return;
     }
     let old = std::mem::take(&mut job.sections);
@@ -351,7 +357,7 @@ fn apply_search_backgrounds(
         let end = sec.byte_range.end.min(len);
         // Collect cut points inside this section from hit edges.
         let mut cuts = vec![cursor, end];
-        for &(hs, he) in hits {
+        for &(hs, he) in hits.iter().chain(change_hits.iter()) {
             if he <= cursor || hs >= end {
                 continue;
             }
@@ -371,6 +377,10 @@ fn apply_search_backgrounds(
                 fmt.background = SEARCH_CURRENT_BG;
             } else if hits.iter().any(|&(hs, he)| a < he && b > hs) {
                 fmt.background = SEARCH_HIT_BG;
+            } else if change_bg.a() > 0
+                && change_hits.iter().any(|&(hs, he)| a < he && b > hs)
+            {
+                fmt.background = change_bg;
             }
             job.sections.push(LayoutSection {
                 leading_space: 0.0,

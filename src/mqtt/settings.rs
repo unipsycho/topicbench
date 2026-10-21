@@ -140,6 +140,9 @@ pub struct AppSettings {
     /// Search scope dropdown — restored on reload.
     #[serde(default)]
     pub search_scope: SearchScope,
+    /// When true, the search filter also hides non-matching sticky topics.
+    #[serde(default = "default_true")]
+    pub search_apply_to_stickies: bool,
 }
 
 fn default_true() -> bool {
@@ -172,6 +175,7 @@ impl Default for AppSettings {
             show_topic_tree: true,
             search_query: String::new(),
             search_scope: SearchScope::All,
+            search_apply_to_stickies: true,
         }
     }
 }
@@ -289,10 +293,11 @@ impl AppSettings {
         self.show_topic_tree = topic_tree;
     }
 
-    /// Snapshot search bar query + scope (call before save).
-    pub fn set_search(&mut self, query: &str, scope: SearchScope) {
+    /// Snapshot search bar query + scope + stickies apply (call before save).
+    pub fn set_search(&mut self, query: &str, scope: SearchScope, apply_to_stickies: bool) {
         self.search_query = query.to_string();
         self.search_scope = scope;
+        self.search_apply_to_stickies = apply_to_stickies;
     }
 
     pub fn remember_connected(&mut self, profile_id: &str, connected: bool) {

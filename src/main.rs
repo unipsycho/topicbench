@@ -16,7 +16,10 @@ fn main() -> eframe::Result<()> {
         .with_inner_size([1200.0, 760.0])
         .with_title("MQTT Master")
         // Wayland app_id — Hyprland ANR was showing "MQTT Master - (unknown)" with empty class.
-        .with_app_id("com.agileautomation.mqtt-master");
+        .with_app_id("com.agileautomation.mqtt-master")
+        // Splash starts as a floating AA logo; decorations + opacity restored when it ends.
+        .with_transparent(true)
+        .with_decorations(false);
     if let Some(icon) = icon {
         viewport = viewport.with_icon(icon);
     }
