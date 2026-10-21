@@ -1,9 +1,9 @@
-//! GitHub Releases API for public repo `agileautomation/mqtt-master`.
+//! GitHub Releases API for public repo `unipsycho/topicbench`.
 
 use serde::Deserialize;
 
 /// Owner/repo used for Releases API + HTML fallback links.
-pub const GITHUB_REPO: &str = "agileautomation/mqtt-master";
+pub const GITHUB_REPO: &str = "unipsycho/topicbench";
 
 const USER_AGENT: &str = concat!("MQTT-Master/", env!("CARGO_PKG_VERSION"));
 const API_TIMEOUT_SECS: u64 = 20;
