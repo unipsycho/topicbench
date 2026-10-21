@@ -1,57 +1,54 @@
-# TopicBench (MQTT Master)
+# TopicBench
 
-**TopicBench** is the free/OSS product name for this Rust + egui MQTT monitor (Explorer-style). The local crate/binary still use the MQTT Master name until a later rename pass.
+Free, open-source MQTT explorer and monitor for builders and testers.
 
-**GitHub (canonical for releases / updates):** https://github.com/unipsycho/topicbench  
-**Clone:** `git clone https://github.com/unipsycho/topicbench.git`  
-**GitLab mirror:** `https://gitlab.com/agileautomation/mqtt-master.git`
+<p align="center">
+  <img src="docs/images/topicbench.png" alt="TopicBench main window" width="900">
+</p>
 
-Rust desktop app for multi-broker MQTT monitoring: connection profiles, wildcard subscribe, shared sticky board, topic tree, and publish.
+## Why TopicBench
 
-GUI stack: **egui / eframe** — same toolkit used by ArtCraft Crafting Apps ([PhotoCraft](https://github.com/storytold/photocraft), DesignCraft, FilmCraft). MQTT client dependency: **rumqttc** (worker-thread `EventLoop` + channels into the UI; not wired yet).
+- **Multi-broker profiles** — save hosts, TLS/WSS options, and credentials (passwords in the OS keyring)
+- **Live topic tree** — subscribe with wildcards and browse traffic as it arrives
+- **Publish & recent** — send messages quickly and keep recent payloads handy
+- **Payload inspect** — clear views for JSON and plain text
+- **Stickies & graphs** — pin important topics and watch values over time
+- **Search** — find topics and payloads without leaving the desktop UI
+- **Dark desktop UX** — egui/eframe chrome built for long monitoring sessions
+- **Free & open source** — use it, fork it, ship it
+- **Updates via GitHub Releases** — in-app check when releases are published
 
-## Requirements
+## Features
 
-- Rust stable ≥ 1.80 (`rustup update stable`)
-- Linux GUI libs for egui (X11 and/or Wayland): typically `libxcb`, `libxkbcommon`, and a Vulkan/GL stack for wgpu
+- Connection profiles (MQTT TCP / WebSocket, optional TLS)
+- Concurrent sessions across brokers
+- Topic subscriptions with `+` / `#`
+- Shared sticky board across profiles
+- Publish with QoS and retain
+- Compact ribbon layout that adapts to window width
+- Settings for panels, fonts, and update preferences
 
-## Run
+## Download
+
+Grab builds from **[GitHub Releases](https://github.com/unipsycho/topicbench/releases)** when published.
+
+Repo: [github.com/unipsycho/topicbench](https://github.com/unipsycho/topicbench)
+
+## Build from source
+
+**Requirements:** Rust stable ≥ 1.80 (`rustup update stable`), plus Linux GUI libs for egui (typically `libxcb`, `libxkbcommon`, and a Vulkan/GL stack).
 
 ```bash
 git clone https://github.com/unipsycho/topicbench.git
-cd topicbench   # or mqtt-master if cloned from GitLab / existing folder
-cargo run
+cd topicbench
+cargo run --release
 ```
 
-Profiles save to `~/.config/mqtt-monitor/profiles.json` (passwords go to the OS keyring — Secret Service / Credential Manager / Keychain — not the JSON file).  
-Settings save to `~/.config/mqtt-monitor/settings.json`.
+Profiles: `~/.config/mqtt-monitor/profiles.json`  
+Settings: `~/.config/mqtt-monitor/settings.json`
 
-Each profile chooses **MQTT** (TCP) or **WebSocket** beside the port. **Use TLS** enables MQTTS or WSS (HTTPS-style encryption). WebSocket profiles also have a path (default `/mqtt`).
+**Windows:** native `cargo build --release` on Windows works; the Windows icon is embedded via `winres` (MinGW `windres` when cross-compiling from Linux).
 
-Release build: `cargo build --release`  
-Unit tests: `cargo test`.
+## License
 
-Builds are **local only** — there is no GitLab CI / pipeline config in this repo.
-
-## Package (optional)
-
-[cargo-packager](https://crates.io/crates/cargo-packager) metadata lives in `Cargo.toml` (`[package.metadata.packager]`).
-
-```bash
-cargo install cargo-packager --locked
-cargo packager --release
-```
-
-## Layout
-
-| Path | Role |
-|------|------|
-| `src/app.rs` | eframe shell layout |
-| `src/mqtt/profile.rs` | Connection profiles |
-| `src/mqtt/session.rs` | Multi-profile open/connected sessions |
-| `src/mqtt/subscribe.rs` | Topic filters + `+` / `#` validation |
-| `src/mqtt/pins.rs` | Shared pin board across profiles |
-| `src/mqtt/publish.rs` | Publish draft (QoS / retain) |
-| `src/ui/*` | egui panels |
-
-Profiles are editable and persisted; subscriptions pick an open device/profile. Next: rumqttc connect/subscribe/publish per session, and live pin updates.
+MIT OR Apache-2.0 (see `Cargo.toml`).
