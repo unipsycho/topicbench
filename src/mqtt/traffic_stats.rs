@@ -50,11 +50,16 @@ impl Default for StatsDisplay {
 pub struct TrafficStats {
     pub bytes_recv: u64,
     pub bytes_sent: u64,
+    /// Inbound MQTT publish count (process lifetime).
+    pub msgs_recv: u64,
     /// Last sample used to derive an instantaneous rate for the EMA.
     last_sample_at: Instant,
     last_sample_total: u64,
+    last_sample_msgs: u64,
     /// Exponential moving average of combined in+out bytes/sec.
     ema_bps: f64,
+    /// EMA of inbound messages/sec (status strip msgs/min).
+    ema_mps: f64,
     ema_ready: bool,
     /// Last time [`Self::display`] was rebuilt.
     last_display: Instant,
@@ -71,9 +76,12 @@ impl Default for TrafficStats {
         Self {
             bytes_recv: 0,
             bytes_sent: 0,
+            msgs_recv: 0,
             last_sample_at: now,
             last_sample_total: 0,
+            last_sample_msgs: 0,
             ema_bps: 0.0,
+            ema_mps: 0.0,
             ema_ready: false,
             last_display,
             display: StatsDisplay::default(),
@@ -90,6 +98,11 @@ impl TrafficStats {
     /// Outbound MQTT publish payload bytes.
     pub fn record_sent(&mut self, n: u64) {
         self.bytes_sent = self.bytes_sent.saturating_add(n);
+    }
+
+    /// Inbound MQTT publish count (coalesced batches may be > 1).
+    pub fn record_msgs(&mut self, n: u64) {
+        self.msgs_recv = self.msgs_recv.saturating_add(n);
     }
 
     /// Frozen ribbon labels (Recv / Sent / Thru / projections).
@@ -121,8 +134,29 @@ impl TrafficStats {
     pub fn wants_periodic_refresh(&self) -> bool {
         self.bytes_recv > 0
             || self.bytes_sent > 0
+            || self.msgs_recv > 0
             || self.ema_ready
             || self.ema_bps > 0.0
+            || self.ema_mps > 0.0
+    }
+
+    /// Smoothed inbound messages per minute (same EMA τ as Thru).
+    pub fn msgs_per_min(&self) -> f64 {
+        if self.ema_ready && self.ema_mps.is_finite() && self.ema_mps > 0.0 {
+            self.ema_mps * 60.0
+        } else {
+            0.0
+        }
+    }
+
+    /// Status-strip label, e.g. `12 msg/min` or `3.4 msg/min`.
+    pub fn format_msgs_per_min(&self) -> String {
+        let m = self.msgs_per_min();
+        if m < 10.0 {
+            format!("{m:.1} msg/min")
+        } else {
+            format!("{} msg/min", m.round() as u64)
+        }
     }
 
     /// Delay until the next display refresh is due (for `request_repaint_after`).
@@ -138,23 +172,31 @@ impl TrafficStats {
     fn update_ema(&mut self) {
         let now = Instant::now();
         let total = self.total_bytes();
+        let msgs = self.msgs_recv;
         let dt = now.duration_since(self.last_sample_at).as_secs_f64();
         if dt < 0.001 {
             return;
         }
-        let instant = (total.saturating_sub(self.last_sample_total) as f64) / dt;
+        let instant_bps = (total.saturating_sub(self.last_sample_total) as f64) / dt;
+        let instant_mps = (msgs.saturating_sub(self.last_sample_msgs) as f64) / dt;
         if !self.ema_ready {
-            self.ema_bps = instant.max(0.0);
+            self.ema_bps = instant_bps.max(0.0);
+            self.ema_mps = instant_mps.max(0.0);
             self.ema_ready = true;
         } else {
             let alpha = 1.0 - (-dt / EMA_TAU_SECS).exp();
-            self.ema_bps = alpha * instant.max(0.0) + (1.0 - alpha) * self.ema_bps;
+            self.ema_bps = alpha * instant_bps.max(0.0) + (1.0 - alpha) * self.ema_bps;
+            self.ema_mps = alpha * instant_mps.max(0.0) + (1.0 - alpha) * self.ema_mps;
             if !self.ema_bps.is_finite() || self.ema_bps < 0.0 {
                 self.ema_bps = 0.0;
+            }
+            if !self.ema_mps.is_finite() || self.ema_mps < 0.0 {
+                self.ema_mps = 0.0;
             }
         }
         self.last_sample_at = now;
         self.last_sample_total = total;
+        self.last_sample_msgs = msgs;
     }
 
     /// Smoothed combined in+out bytes/sec (EMA).

@@ -4,7 +4,7 @@ use crate::mqtt::profile::ProfileStore;
 use crate::mqtt::publish::{PublishDraft, PublishHistory, RecentPublish, Qos};
 use crate::mqtt::session::{SessionManager, SessionState};
 use crate::ui::hover_tip;
-use crate::ui::icons::{self, IconSet};
+use crate::ui::icons::{self, IconSet, TINY_ICON};
 use crate::ui::json_view;
 use eframe::egui::text::LayoutJob;
 use eframe::egui::{self, Color32, Sense, Stroke, TextFormat, UiBuilder};
@@ -85,7 +85,21 @@ pub fn draw(
         ui.checkbox(&mut draft.retain, "Retain");
     });
 
-    if ui.button("Publish").clicked() {
+    // Same chrome as Profiles Connect/Disconnect — icon + label.
+    let publish_clicked = if let Some(tex) = icons.get("publish_message") {
+        ui.add(
+            egui::Button::image_and_text(
+                egui::Image::new(tex).fit_to_exact_size(egui::vec2(TINY_ICON, TINY_ICON)),
+                "Publish",
+            )
+            .min_size(egui::vec2(120.0, 28.0)),
+        )
+        .clicked()
+    } else {
+        ui.add(egui::Button::new("Publish").min_size(egui::vec2(120.0, 28.0)))
+            .clicked()
+    };
+    if publish_clicked {
         if json_view::json_edit_invalid(&draft.payload) {
             *status = "Publish blocked: payload looks like JSON but is invalid — fix or clear braces.".into();
         } else {
@@ -125,9 +139,13 @@ pub fn draw(
         }
     }
 
-    ui.add_space(10.0);
+    ui.add_space(8.0);
     ui.separator();
-    ui.strong("Recent");
+    ui.add_space(4.0);
+    // Match Profiles “Edit” subsection chrome.
+    icons::section_header_bar(ui, |ui| {
+        icons::section_title(ui, "Recent");
+    });
     ui.weak(format!(
         "Last {} publishes — click to restore form.",
         crate::mqtt::publish::RECENT_CAP

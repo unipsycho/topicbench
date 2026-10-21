@@ -74,6 +74,8 @@ pub struct Session {
     /// Set on intentional Disconnect — worker must not reconnect.
     pub stop: Option<Arc<AtomicBool>>,
     pub user_stopped: bool,
+    /// Bumped on each `connect()` — worker events must match to apply.
+    pub generation: u64,
     pub message_count: u64,
     pub flash_until: Option<Instant>,
     pub traffic: VecDeque<TrafficLine>,
@@ -84,6 +86,7 @@ const TRAFFIC_CAP: usize = 80;
 
 /// Latest payload for one topic (background inbox coalesces floods here).
 struct CoalescedMsg {
+    generation: u64,
     payload: String,
     retain: bool,
     count: u64,
@@ -91,6 +94,7 @@ struct CoalescedMsg {
 }
 
 struct PendingState {
+    generation: u64,
     state: SessionState,
     detail: String,
 }
@@ -125,34 +129,65 @@ impl SharedInbox {
         match ev {
             BrokerEvent::State {
                 profile_id,
+                generation,
                 state,
                 detail,
             } => {
-                g.status = Some(detail.clone());
-                g.states.insert(profile_id, PendingState { state, detail });
+                // Newer (or same) generation wins; older reconnect chatter is dropped.
+                let keep = g
+                    .states
+                    .get(&profile_id)
+                    .map(|p| generation >= p.generation)
+                    .unwrap_or(true);
+                if keep {
+                    g.status = Some(detail.clone());
+                    g.states.insert(
+                        profile_id,
+                        PendingState {
+                            generation,
+                            state,
+                            detail,
+                        },
+                    );
+                }
             }
             BrokerEvent::Message {
                 profile_id,
+                generation,
                 topic,
                 payload,
                 retain,
                 payload_bytes,
             } => {
-                let entry = g
-                    .messages
-                    .entry((profile_id, topic))
-                    .or_insert(CoalescedMsg {
-                        payload: String::new(),
-                        retain: false,
-                        count: 0,
-                        bytes: 0,
-                    });
+                let key = (profile_id, topic);
+                if let Some(entry) = g.messages.get(&key) {
+                    if generation < entry.generation {
+                        return;
+                    }
+                }
+                let entry = g.messages.entry(key).or_insert(CoalescedMsg {
+                    generation,
+                    payload: String::new(),
+                    retain: false,
+                    count: 0,
+                    bytes: 0,
+                });
+                // Reset counts when a newer generation replaces a stale topic slot.
+                if entry.generation != generation {
+                    entry.count = 0;
+                    entry.bytes = 0;
+                    entry.generation = generation;
+                }
                 entry.payload = payload;
                 entry.retain = retain;
                 entry.count = entry.count.saturating_add(1);
                 entry.bytes = entry.bytes.saturating_add(payload_bytes as u64);
             }
-            BrokerEvent::Notice { profile_id: _, detail } => {
+            BrokerEvent::Notice {
+                profile_id: _,
+                generation: _,
+                detail,
+            } => {
                 g.status = Some(detail);
             }
         }
@@ -290,11 +325,18 @@ impl SessionManager {
         ctx: &Context,
     ) -> Result<(), String> {
         self.bind_egui_ctx(ctx);
+        // Bump generation before stopping the old worker so late Disconnected events are stale.
+        let generation = self
+            .open
+            .get(&profile.id)
+            .map(|s| s.generation.wrapping_add(1))
+            .unwrap_or(1);
         self.disconnect(&profile.id);
 
         let handle = live::spawn(
             profile,
             max_packet_bytes,
+            generation,
             self.event_tx.clone(),
             ctx.clone(),
             self.ui_focused.clone(),
@@ -316,11 +358,12 @@ impl SessionManager {
                 profile_id: profile.id.clone(),
                 profile_name: profile.name.clone(),
                 state: SessionState::Connecting,
-                detail: format!("Connecting to {}:{}…", profile.host, profile.port),
+                detail: format!("Connecting to {}…", profile.endpoint_label()),
                 subscriptions,
                 client: Some(handle.client),
                 stop: Some(handle.stop),
                 user_stopped: false,
+                generation,
                 message_count: 0,
                 flash_until: None,
                 traffic: VecDeque::new(),
@@ -451,6 +494,10 @@ impl SessionManager {
             let Some(session) = self.open.get_mut(&profile_id) else {
                 continue;
             };
+            // Stale worker from a prior reconnect — never apply.
+            if pending.generation != session.generation {
+                continue;
+            }
             // After intentional Disconnect, ignore reconnect chatter.
             if session.user_stopped {
                 if pending.state == SessionState::Disconnected {
@@ -473,16 +520,18 @@ impl SessionManager {
             }
         }
 
-        let had_msgs = !batch.messages.is_empty();
         let flash = now + Duration::from_millis(FLASH_MS);
+        let mut had_msgs = false;
         for ((profile_id, topic), msg) in batch.messages {
-            self.traffic_stats.record_recv(msg.bytes);
             let Some(session) = self.open.get_mut(&profile_id) else {
                 continue;
             };
-            if session.user_stopped {
+            if msg.generation != session.generation || session.user_stopped {
                 continue;
             }
+            had_msgs = true;
+            self.traffic_stats.record_recv(msg.bytes);
+            self.traffic_stats.record_msgs(msg.count);
             session.message_count = session.message_count.saturating_add(msg.count);
             session.flash_until = Some(flash);
             session
@@ -528,5 +577,159 @@ impl SessionManager {
     pub fn close(&mut self, profile_id: &str) {
         self.disconnect(profile_id);
         self.open.remove(profile_id);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::mqtt::pins::PinBoard;
+    use crate::mqtt::profile::ConnectionProfile;
+    use crate::mqtt::publish::Qos;
+    use crate::mqtt::settings::MAX_PACKET_DEFAULT;
+    use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+
+    /// Public Mosquitto sandbox — anonymous MQTT on 1883.
+    const MOSQUITTO_HOST: &str = "test.mosquitto.org";
+    const MOSQUITTO_PORT: u16 = 1883;
+
+    fn unique_id(prefix: &str) -> String {
+        let ns = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        format!("{prefix}-{ns}")
+    }
+
+    fn mosquitto_profile(id: &str, subscriptions: Vec<String>) -> ConnectionProfile {
+        let mut p = ConnectionProfile::new_blank(id.to_string());
+        p.name = "Mosquitto session".into();
+        p.host = MOSQUITTO_HOST.into();
+        p.port = MOSQUITTO_PORT;
+        p.client_id = unique_id("mqtt-master-sess");
+        p.subscriptions = subscriptions;
+        p
+    }
+
+    /// Poll inbox until `pred` or timeout.
+    fn wait_until(
+        sessions: &mut SessionManager,
+        pins: &mut PinBoard,
+        timeout: Duration,
+        mut pred: impl FnMut(&SessionManager) -> bool,
+    ) -> bool {
+        let deadline = Instant::now() + timeout;
+        while Instant::now() < deadline {
+            sessions.poll_events(pins);
+            if pred(sessions) {
+                return true;
+            }
+            thread::sleep(Duration::from_millis(50));
+        }
+        false
+    }
+
+    #[test]
+    fn connect_subscribe_hash_publish_roundtrip() {
+        let ctx = Context::default();
+        let mut sessions = SessionManager::default();
+        sessions.bind_egui_ctx(&ctx);
+        let mut pins = PinBoard::default();
+
+        // Root `#` — public traffic piles in; we still publish our own topic for a firm assert.
+        let profile = mosquitto_profile("sess-hash", vec!["#".into()]);
+        sessions
+            .connect(&profile, MAX_PACKET_DEFAULT, &ctx)
+            .expect("connect");
+
+        assert!(
+            wait_until(&mut sessions, &mut pins, Duration::from_secs(20), |s| {
+                s.open
+                    .get(&profile.id)
+                    .map(|sess| sess.state == SessionState::Connected)
+                    .unwrap_or(false)
+            }),
+            "expected Connected via SessionManager"
+        );
+
+        let topic = format!("mqtt-master/session/{}", unique_id("rt"));
+        let payload = format!("{{\"n\":{}}}", unique_id("v"));
+        sessions
+            .publish_live(&profile.id, &topic, &payload, Qos::AtLeastOnce, false)
+            .expect("publish");
+
+        let saw = wait_until(&mut sessions, &mut pins, Duration::from_secs(15), |s| {
+            s.open
+                .get(&profile.id)
+                .map(|sess| {
+                    sess.traffic
+                        .iter()
+                        .any(|line| line.topic == topic && line.payload == payload)
+                        || sess.message_count > 0
+                })
+                .unwrap_or(false)
+        });
+        assert!(saw, "expected roundtrip or `#` traffic in session inbox");
+
+        let count_before = sessions
+            .open
+            .get(&profile.id)
+            .map(|s| s.message_count)
+            .unwrap_or(0);
+        assert!(count_before > 0, "message_count should advance under `#`");
+
+        sessions.disconnect(&profile.id);
+        assert!(
+            wait_until(&mut sessions, &mut pins, Duration::from_secs(10), |s| {
+                s.open
+                    .get(&profile.id)
+                    .map(|sess| sess.state == SessionState::Disconnected && sess.user_stopped)
+                    .unwrap_or(false)
+            }),
+            "expected user-stopped Disconnected"
+        );
+
+        // Stay disconnected — no reconnect chatter applied after intentional stop.
+        thread::sleep(Duration::from_secs(2));
+        sessions.poll_events(&mut pins);
+        let sess = sessions.open.get(&profile.id).expect("session retained");
+        assert_eq!(sess.state, SessionState::Disconnected);
+        assert!(sess.user_stopped);
+        // disconnect() clears tree + traffic counters for the stopped session.
+        assert_eq!(sess.message_count, 0);
+        assert!(sess.traffic.is_empty());
+    }
+
+    #[test]
+    fn toggle_connect_then_disconnect() {
+        let ctx = Context::default();
+        let mut sessions = SessionManager::default();
+        sessions.bind_egui_ctx(&ctx);
+        let mut pins = PinBoard::default();
+
+        let profile = mosquitto_profile("sess-toggle", vec!["mqtt-master/toggle/#".into()]);
+        let msg = sessions
+            .toggle(&profile, MAX_PACKET_DEFAULT, &ctx, &mut pins)
+            .expect("toggle connect");
+        assert!(msg.contains("Connecting"));
+
+        assert!(
+            wait_until(&mut sessions, &mut pins, Duration::from_secs(20), |s| {
+                s.open
+                    .get(&profile.id)
+                    .map(|sess| sess.state == SessionState::Connected)
+                    .unwrap_or(false)
+            }),
+            "toggle should reach Connected"
+        );
+
+        let msg = sessions
+            .toggle(&profile, MAX_PACKET_DEFAULT, &ctx, &mut pins)
+            .expect("toggle disconnect");
+        assert!(msg.contains("Disconnected"));
+        assert_eq!(
+            sessions.open.get(&profile.id).map(|s| s.state),
+            Some(SessionState::Disconnected)
+        );
     }
 }

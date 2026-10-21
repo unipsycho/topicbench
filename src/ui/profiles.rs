@@ -2,7 +2,7 @@
 
 use crate::mqtt::certs;
 use crate::mqtt::pins::PinBoard;
-use crate::mqtt::profile::ProfileStore;
+use crate::mqtt::profile::{ConnectionProfile, ProfileStore, ProfileTransport};
 use crate::mqtt::session::{SessionManager, SessionState};
 use crate::mqtt::settings::AppSettings;
 use crate::ui::hover_tip;
@@ -339,10 +339,41 @@ pub fn draw(
                     ui.label("Host");
                     ui.text_edit_singleline(&mut profile.host);
                 });
+                // Port + MQTT / WebSocket beside it; TLS turns MQTT→MQTTS and WS→WSS.
                 ui.horizontal(|ui| {
                     ui.label("Port");
                     ui.add(egui::DragValue::new(&mut profile.port).range(1..=65535));
+                    let prev = profile.transport;
+                    egui::ComboBox::from_id_salt(("profile_transport", id.as_str()))
+                        .selected_text(profile.transport.label())
+                        .width(100.0)
+                        .show_ui(ui, |ui| {
+                            ui.selectable_value(
+                                &mut profile.transport,
+                                ProfileTransport::Mqtt,
+                                "MQTT",
+                            );
+                            ui.selectable_value(
+                                &mut profile.transport,
+                                ProfileTransport::WebSocket,
+                                "WebSocket",
+                            );
+                        });
+                    if profile.transport != prev {
+                        nudge_port_for_transport(profile, prev);
+                    }
+                    ui.weak(profile.protocol_badge());
                 });
+                if profile.transport == ProfileTransport::WebSocket {
+                    ui.horizontal(|ui| {
+                        ui.label("WS path");
+                        ui.add(
+                            egui::TextEdit::singleline(&mut profile.ws_path)
+                                .desired_width(160.0)
+                                .hint_text("/mqtt"),
+                        );
+                    });
+                }
                 ui.horizontal(|ui| {
                     ui.label("Client ID");
                     ui.text_edit_singleline(&mut profile.client_id);
@@ -368,7 +399,15 @@ pub fn draw(
                         *show_password = !*show_password;
                     }
                 });
-                ui.checkbox(&mut profile.use_tls, "Use TLS");
+                let tls_label = if profile.transport == ProfileTransport::WebSocket {
+                    "Use TLS (WSS)"
+                } else {
+                    "Use TLS"
+                };
+                hover_tip::attach(
+                    ui.checkbox(&mut profile.use_tls, tls_label),
+                    "TLS for MQTT TCP, or WSS for WebSocket (HTTPS-style encryption)",
+                );
                 // Optional certs folder for AWS IoT–style CA + client cert + key.
                 ui.horizontal(|ui| {
                     icons::tiny_image(ui, icons, "tls_security");
@@ -383,7 +422,7 @@ pub fn draw(
                         .clicked()
                     {
                         if let Some(path) = rfd::FileDialog::new()
-                            .set_title("MQTT TLS certs folder")
+                            .set_title("MQTT TLS / WSS certs folder")
                             .pick_folder()
                         {
                             profile.certs_dir = path.display().to_string();
@@ -409,7 +448,7 @@ pub fn draw(
                                 resolved.cert_name(),
                                 resolved.key_name()
                             ));
-                            if profile.port == 1883 {
+                            if profile.transport == ProfileTransport::Mqtt && profile.port == 1883 {
                                 ui.weak("Tip: AWS IoT typically uses port 8883 with TLS.");
                             }
                         }
@@ -582,5 +621,22 @@ pub fn draw(
         }
     } else {
         ui.weak("No profile selected.");
+    }
+}
+
+/// Soft-nudge common default ports when switching MQTT ↔ WebSocket.
+fn nudge_port_for_transport(profile: &mut ConnectionProfile, prev: ProfileTransport) {
+    match (prev, profile.transport) {
+        (ProfileTransport::Mqtt, ProfileTransport::WebSocket) => {
+            if profile.port == 1883 || profile.port == 8883 {
+                profile.port = if profile.want_tls() { 8084 } else { 8083 };
+            }
+        }
+        (ProfileTransport::WebSocket, ProfileTransport::Mqtt) => {
+            if matches!(profile.port, 8000 | 8083 | 8084 | 9001) {
+                profile.port = if profile.want_tls() { 8883 } else { 1883 };
+            }
+        }
+        _ => {}
     }
 }

@@ -21,8 +21,10 @@ cd mqtt-master
 cargo run
 ```
 
-Profiles save to `~/.config/mqtt-monitor/profiles.json`.  
+Profiles save to `~/.config/mqtt-monitor/profiles.json` (passwords go to the OS keyring — Secret Service / Credential Manager / Keychain — not the JSON file).  
 Settings save to `~/.config/mqtt-monitor/settings.json`.
+
+Each profile chooses **MQTT** (TCP) or **WebSocket** beside the port. **Use TLS** enables MQTTS or WSS (HTTPS-style encryption). WebSocket profiles also have a path (default `/mqtt`).
 
 Release build: `cargo build --release`  
 Unit tests: `cargo test`.

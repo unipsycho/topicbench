@@ -38,9 +38,9 @@ impl Default for RibbonPlan {
     }
 }
 
-fn section_w(mode: SectionMode, n: usize) -> f32 {
+fn section_w(mode: SectionMode, n: usize, zoom: f32) -> f32 {
     match mode {
-        SectionMode::Full => estimate_group_full_w(n),
+        SectionMode::Full => estimate_group_full_w(n, zoom),
         SectionMode::Compact => estimate_group_compact_w(n),
     }
 }
@@ -55,12 +55,12 @@ fn brand_w(logo_w: f32, title_w: f32, show_title: bool) -> f32 {
 }
 
 /// Total ribbon content width for a plan.
-pub fn plan_width(logo_w: f32, title_w: f32, stats_w: f32, plan: RibbonPlan) -> f32 {
+pub fn plan_width(logo_w: f32, title_w: f32, stats_w: f32, plan: RibbonPlan, zoom: f32) -> f32 {
     let sep = estimate_separator_w();
     let mut w = brand_w(logo_w, title_w, plan.show_title) + sep;
-    w += section_w(plan.profiles, 4) + sep;
-    w += section_w(plan.panels, 5) + sep;
-    w += section_w(plan.app, 3);
+    w += section_w(plan.profiles, 4, zoom) + sep;
+    w += section_w(plan.panels, 5, zoom) + sep;
+    w += section_w(plan.app, 3, zoom);
     if plan.show_stats {
         w += sep + stats_w;
     }
@@ -71,25 +71,32 @@ pub fn plan_width(logo_w: f32, title_w: f32, stats_w: f32, plan: RibbonPlan) -> 
 /// Choose the least-collapsed layout that fits `avail_w`.
 ///
 /// Steps: App compact → Profiles compact → Panels compact → hide title → hide Stats.
-pub fn plan_for_width(avail_w: f32, logo_w: f32, title_w: f32, stats_w: f32) -> RibbonPlan {
+/// `zoom` is the font-zoom factor (widens full caption cells when > 1).
+pub fn plan_for_width(
+    avail_w: f32,
+    logo_w: f32,
+    title_w: f32,
+    stats_w: f32,
+    zoom: f32,
+) -> RibbonPlan {
     let mut plan = RibbonPlan::default();
-    if plan_width(logo_w, title_w, stats_w, plan) <= avail_w {
+    if plan_width(logo_w, title_w, stats_w, plan, zoom) <= avail_w {
         return plan;
     }
     plan.app = SectionMode::Compact;
-    if plan_width(logo_w, title_w, stats_w, plan) <= avail_w {
+    if plan_width(logo_w, title_w, stats_w, plan, zoom) <= avail_w {
         return plan;
     }
     plan.profiles = SectionMode::Compact;
-    if plan_width(logo_w, title_w, stats_w, plan) <= avail_w {
+    if plan_width(logo_w, title_w, stats_w, plan, zoom) <= avail_w {
         return plan;
     }
     plan.panels = SectionMode::Compact;
-    if plan_width(logo_w, title_w, stats_w, plan) <= avail_w {
+    if plan_width(logo_w, title_w, stats_w, plan, zoom) <= avail_w {
         return plan;
     }
     plan.show_title = false;
-    if plan_width(logo_w, title_w, stats_w, plan) <= avail_w {
+    if plan_width(logo_w, title_w, stats_w, plan, zoom) <= avail_w {
         return plan;
     }
     plan.show_stats = false;
@@ -105,11 +112,12 @@ mod tests {
         let logo = 108.0;
         let title = 120.0;
         let stats = 120.0;
-        let full = plan_for_width(10_000.0, logo, title, stats);
+        let z = 1.0;
+        let full = plan_for_width(10_000.0, logo, title, stats, z);
         assert!(full.show_title && full.show_stats);
         assert_eq!(full.app, SectionMode::Full);
 
-        let tiny = plan_for_width(100.0, logo, title, stats);
+        let tiny = plan_for_width(100.0, logo, title, stats, z);
         assert_eq!(tiny.app, SectionMode::Compact);
         assert_eq!(tiny.profiles, SectionMode::Compact);
         assert_eq!(tiny.panels, SectionMode::Compact);
@@ -124,11 +132,11 @@ mod tests {
             show_title: false,
             show_stats: true,
         };
-        let w_logo_stats = plan_width(logo, title, stats, p);
+        let w_logo_stats = plan_width(logo, title, stats, p, z);
         p.show_title = true;
-        let w_title_stats = plan_width(logo, title, stats, p);
+        let w_title_stats = plan_width(logo, title, stats, p, z);
         assert!(w_logo_stats < w_title_stats);
-        let mid = plan_for_width((w_logo_stats + w_title_stats) * 0.5, logo, title, stats);
+        let mid = plan_for_width((w_logo_stats + w_title_stats) * 0.5, logo, title, stats, z);
         assert!(!mid.show_title);
         assert!(mid.show_stats);
     }

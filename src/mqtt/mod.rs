@@ -5,6 +5,7 @@ pub mod live;
 pub mod pins;
 pub mod profile;
 pub mod publish;
+pub mod secrets;
 pub mod session;
 pub mod settings;
 pub mod subscribe;

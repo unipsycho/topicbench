@@ -1,4 +1,5 @@
 //! Topic hierarchy grouped per connected broker/profile.
+//! Per-broker trees can pop out to their own OS window (egui viewport).
 
 use crate::mqtt::pins::PinBoard;
 use crate::mqtt::profile::ProfileStore;
@@ -12,7 +13,8 @@ use crate::ui::icons::{self, IconSet, CHROME_MUTED};
 use crate::ui::json_view;
 use crate::ui::search_bar::SearchFilter;
 use crate::ui::shortcuts;
-use eframe::egui::{self, Color32, FontId, RichText};
+use eframe::egui::{self, Align, Color32, FontId, Layout, RichText, ViewportBuilder, ViewportClass};
+use std::collections::HashSet;
 use std::time::Instant;
 
 /// Exclusive temp key for the one open tree payload/topic tip.
@@ -44,37 +46,24 @@ pub fn draw(
     status: &mut String,
     // Set when a leaf/payload row is double-clicked → open Publish and fill form.
     publish_from_tree: &mut Option<PublishFromTree>,
+    // Profile ids whose topic tree is shown in a floating OS window.
+    undocked: &mut HashSet<String>,
 ) {
     icons::section_header_bar(ui, |ui| {
-        // Match topic-tree tip: aligned icon+heading; Expand/Collapse dropped (9cc4818).
-        if let Some(tex) = icons.get("topic_tree") {
-            ui.add(
-                egui::Image::new(tex)
-                    .fit_to_exact_size(egui::vec2(20.0, 20.0))
-                    .sense(egui::Sense::hover()),
-            );
-        }
-        ui.heading("Topic tree");
+        icons::section_icon(ui, icons, "topic_tree");
+        icons::section_title(ui, "Topic tree");
     });
     // Topic filter lives under the section header, above broker/tree rows.
     crate::ui::search_bar::draw(ui, filter, focus_search);
     ui.add_space(4.0);
-    ui.label("Per connected broker — colored heading, then that broker’s topics.");
     ui.weak("Single-click selects for Payload. Double-click a parent to expand/collapse. Double-click a topic/payload row to fill Publish.");
     ui.add_space(4.0);
 
     // Only currently connected brokers — disconnected sessions are cleared on Disconnect.
     // Broker roots follow Profiles list order (profiles.json array / ProfileStore.order).
-    let connected_ids: Vec<String> = profiles
-        .ids_in_order()
-        .into_iter()
-        .filter(|id| {
-            sessions
-                .open
-                .get(id)
-                .is_some_and(|s| s.state == SessionState::Connected)
-        })
-        .collect();
+    let connected_ids: Vec<String> = connected_profile_ids(sessions, profiles);
+    // Drop undocked entries for brokers that are no longer connected.
+    undocked.retain(|id| connected_ids.iter().any(|c| c == id));
 
     if connected_ids.is_empty() {
         ui.weak("Connect a profile and subscribe to see topics.");
@@ -84,58 +73,218 @@ pub fn draw(
     let now = Instant::now();
 
     for profile_id in connected_ids {
-        let Some(session) = sessions.open.get(&profile_id) else {
-            continue;
-        };
-        // Profile accent color (user-settable); fallback green if missing.
-        let color = profiles
-            .profiles
-            .get(&session.profile_id)
-            .map(|p| p.color())
-            .unwrap_or(Color32::from_rgb(90, 190, 120));
-        let profile_name = session.profile_name.clone();
-        let state_label = session.state.label();
-        let tree_empty = session.topic_tree.root.children.is_empty();
-        ui.add_space(6.0);
+        draw_broker_block(
+            ui,
+            &profile_id,
+            sessions,
+            profiles,
+            pins,
+            expand_mode,
+            icons,
+            filter,
+            status,
+            publish_from_tree,
+            undocked,
+            now,
+            false, // docked panel: undock button pops out
+        );
+    }
+}
+
+/// Floating OS windows for each undocked broker tree (call every frame while any are open).
+pub fn draw_undocked_viewports(
+    ctx: &egui::Context,
+    sessions: &mut SessionManager,
+    profiles: &mut ProfileStore,
+    pins: &mut PinBoard,
+    expand_mode: TopicTreeExpandMode,
+    icons: &IconSet,
+    filter: &mut SearchFilter,
+    status: &mut String,
+    publish_from_tree: &mut Option<PublishFromTree>,
+    undocked: &mut HashSet<String>,
+) {
+    let connected = connected_profile_ids(sessions, profiles);
+    undocked.retain(|id| connected.iter().any(|c| c == id));
+    let ids: Vec<String> = undocked.iter().cloned().collect();
+    let now = Instant::now();
+
+    for profile_id in ids {
+        let profile_name = sessions
+            .open
+            .get(&profile_id)
+            .map(|s| s.profile_name.clone())
+            .or_else(|| {
+                profiles
+                    .profiles
+                    .get(&profile_id)
+                    .map(|p| p.name.clone())
+            })
+            .unwrap_or_else(|| profile_id.clone());
+        let title = format!("Topic tree — {profile_name}");
+        let vp_id = egui::ViewportId::from_hash_of(("topic_tree_pop", profile_id.as_str()));
+        let mut dock_requested = false;
+
+        ctx.show_viewport_immediate(
+            vp_id,
+            ViewportBuilder::default()
+                .with_title(title.clone())
+                .with_inner_size([440.0, 560.0])
+                .with_min_inner_size([280.0, 200.0]),
+            |ctx, class| {
+                let mut body = |ui: &mut egui::Ui| {
+                    draw_broker_block(
+                        ui,
+                        &profile_id,
+                        sessions,
+                        profiles,
+                        pins,
+                        expand_mode,
+                        icons,
+                        filter,
+                        status,
+                        publish_from_tree,
+                        undocked,
+                        now,
+                        true, // floating: dock button restores
+                    );
+                };
+
+                match class {
+                    ViewportClass::Embedded => {
+                        // Backend cannot spawn real windows — fall back to an egui Window.
+                        egui::Window::new(&title)
+                            .id(egui::Id::new(("topic_tree_pop_win", profile_id.as_str())))
+                            .default_size([440.0, 560.0])
+                            .show(ctx, |ui| body(ui));
+                    }
+                    _ => {
+                        egui::CentralPanel::default().show(ctx, |ui| body(ui));
+                    }
+                }
+
+                if ctx.input(|i| i.viewport().close_requested()) {
+                    dock_requested = true;
+                }
+            },
+        );
+
+        if dock_requested {
+            undocked.remove(&profile_id);
+        }
+    }
+}
+
+fn connected_profile_ids(sessions: &SessionManager, profiles: &ProfileStore) -> Vec<String> {
+    profiles
+        .ids_in_order()
+        .into_iter()
+        .filter(|id| {
+            sessions
+                .open
+                .get(id)
+                .is_some_and(|s| s.state == SessionState::Connected)
+        })
+        .collect()
+}
+
+/// One broker heading (+ pop/dock control) and its tree, or a “popped out” stub when undocked in-panel.
+fn draw_broker_block(
+    ui: &mut egui::Ui,
+    profile_id: &str,
+    sessions: &mut SessionManager,
+    profiles: &mut ProfileStore,
+    pins: &mut PinBoard,
+    expand_mode: TopicTreeExpandMode,
+    icons: &IconSet,
+    filter: &SearchFilter,
+    status: &mut String,
+    publish_from_tree: &mut Option<PublishFromTree>,
+    undocked: &mut HashSet<String>,
+    now: Instant,
+    // True when drawing inside the floating viewport (show dock control).
+    in_viewport: bool,
+) {
+    let Some(session) = sessions.open.get(profile_id) else {
+        return;
+    };
+    let color = profiles
+        .profiles
+        .get(&session.profile_id)
+        .map(|p| p.color())
+        .unwrap_or(Color32::from_rgb(90, 190, 120));
+    let profile_name = session.profile_name.clone();
+    let state_label = session.state.label();
+    let tree_empty = session.topic_tree.root.children.is_empty();
+    let is_undocked = undocked.contains(profile_id);
+
+    ui.add_space(if in_viewport { 0.0 } else { 6.0 });
+    ui.horizontal(|ui| {
         ui.label(
             RichText::new(format!("▸ {profile_name}"))
                 .heading()
                 .color(color)
                 .strong(),
         );
-        ui.label(
-            RichText::new(format!("{state_label} · {profile_id}"))
-                .small()
-                .color(color),
-        );
+        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            if in_viewport || is_undocked {
+                // Dock back into the main Topic tree panel.
+                if icons
+                    .tiny(ui, "panel_docked", true, "Dock back into main window")
+                    .clicked()
+                {
+                    undocked.remove(profile_id);
+                }
+            } else if icons
+                .tiny(
+                    ui,
+                    "panel_undock",
+                    false,
+                    "Pop out to its own window",
+                )
+                .clicked()
+            {
+                undocked.insert(profile_id.to_string());
+            }
+        });
+    });
+    ui.label(
+        RichText::new(format!("{state_label} · {profile_id}"))
+            .small()
+            .color(color),
+    );
 
-        if tree_empty {
-            ui.weak("  No traffic yet on this broker.");
-            continue;
-        }
-
-        // Re-borrow session for tree walk (ids collected above so map stays usable).
-        let Some(session) = sessions.open.get(&profile_id) else {
-            continue;
-        };
-        draw_node(
-            ui,
-            &session.topic_tree.root,
-            String::new(),
-            &session.profile_id,
-            &session.profile_name,
-            profiles,
-            pins,
-            now,
-            expand_mode,
-            None, // no toolbar Expand/Collapse — double-click parents instead
-            0,
-            icons,
-            filter,
-            status,
-            publish_from_tree,
-        );
+    // In the docked panel, hide the tree body while it's floating.
+    if !in_viewport && is_undocked {
+        ui.weak("  Popped out — dock from this icon or the floating window to restore.");
+        return;
     }
+
+    if tree_empty {
+        ui.weak("  No traffic yet on this broker.");
+        return;
+    }
+
+    let Some(session) = sessions.open.get(profile_id) else {
+        return;
+    };
+    draw_node(
+        ui,
+        &session.topic_tree.root,
+        String::new(),
+        &session.profile_id,
+        &session.profile_name,
+        profiles,
+        pins,
+        now,
+        expand_mode,
+        None, // no toolbar Expand/Collapse — double-click parents instead
+        0,
+        icons,
+        filter,
+        status,
+        publish_from_tree,
+    );
 }
 
 /// Stable id for a tree collapsing node (independent of UI nesting).

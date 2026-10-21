@@ -1,4 +1,4 @@
-//! Sticky strip — Raw / Value / Graph; rows or column grid from Settings.
+//! Sticky strip — Raw / Value / Graph; grouped per broker; rows or columns from Settings.
 //! Only stickies for currently **connected** profiles are shown.
 
 use crate::mqtt::pins::{DetectedValue, HistorySample, PinBoard, StickyTopic, StickyViewMode};
@@ -10,8 +10,8 @@ use crate::ui::icons::{self, IconSet, CHROME_MUTED};
 use crate::ui::json_view;
 use crate::ui::shortcuts;
 use crate::ui::search_bar::SearchFilter;
-use eframe::egui::{self, Color32, Pos2, RichText, Stroke};
-use std::collections::HashSet;
+use eframe::egui::{self, Align, Color32, Pos2, RichText, Stroke};
+use std::collections::{BTreeMap, HashSet};
 use std::time::Instant;
 
 pub fn draw(
@@ -38,7 +38,7 @@ pub fn draw(
             .weak(),
         );
     });
-    ui.weak("Layout (rows / columns) is in Settings. Shown for connected profiles only.");
+    ui.weak("Grouped by broker. Layout (rows / columns) is in Settings.");
     ui.add_space(4.0);
 
     let connected: HashSet<&str> = sessions
@@ -48,55 +48,106 @@ pub fn draw(
         .map(|(id, _)| id.as_str())
         .collect();
 
-    let keys: Vec<String> = pins
-        .items
-        .iter()
-        .filter(|(_, p)| connected.contains(p.profile_id.as_str()))
-        .map(|(k, _)| k.clone())
-        .collect();
+    // Visible stickies grouped by profile_id (topic order from BTreeMap keys).
+    let mut by_broker: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for (k, p) in &pins.items {
+        if !connected.contains(p.profile_id.as_str()) {
+            continue;
+        }
+        if filter.apply_to_stickies && !filter.matches(&p.topic, Some(&p.last_payload)) {
+            continue;
+        }
+        by_broker
+            .entry(p.profile_id.clone())
+            .or_default()
+            .push(k.clone());
+    }
 
-    if keys.is_empty() {
-        ui.weak("No stickies for connected profiles — mark a topic sticky from the tree.");
+    if by_broker.is_empty() {
+        let any_connected_sticky = pins
+            .items
+            .values()
+            .any(|p| connected.contains(p.profile_id.as_str()));
+        if any_connected_sticky && filter.apply_to_stickies && filter.is_active() {
+            ui.weak("No stickies match the current search.");
+        } else {
+            ui.weak("No stickies for connected profiles — mark a topic sticky from the tree.");
+        }
         return;
+    }
+
+    // Broker order follows Profiles list; unknown ids append after.
+    let mut broker_ids: Vec<String> = profiles
+        .ids_in_order()
+        .into_iter()
+        .filter(|id| by_broker.contains_key(id))
+        .collect();
+    for id in by_broker.keys() {
+        if !broker_ids.iter().any(|x| x == id) {
+            broker_ids.push(id.clone());
+        }
     }
 
     let now = Instant::now();
-    let visible: Vec<String> = keys
-        .into_iter()
-        .filter(|key| {
-            pins.items
-                .get(key)
-                .is_some_and(|p| filter.matches(&p.topic, Some(&p.last_payload)))
-        })
-        .collect();
+    for profile_id in broker_ids {
+        let Some(keys) = by_broker.remove(&profile_id) else {
+            continue;
+        };
+        let (name, accent) = profiles
+            .profiles
+            .get(&profile_id)
+            .map(|p| (p.name.clone(), p.color()))
+            .or_else(|| {
+                keys.first()
+                    .and_then(|k| pins.items.get(k))
+                    .map(|p| (p.profile_name.clone(), Color32::from_rgb(90, 190, 120)))
+            })
+            .unwrap_or_else(|| (profile_id.clone(), Color32::from_rgb(90, 190, 120)));
 
-    if visible.is_empty() {
-        ui.weak("No stickies match the current search.");
-        return;
-    }
+        draw_broker_heading(ui, &name, accent);
+        ui.add_space(2.0);
 
-    match settings.sticky_layout {
-        StickyLayoutMode::Rows => {
-            for key in &visible {
-                draw_card(ui, pins, profiles, key, icons, now, false, status);
-                ui.add_space(4.0);
+        match settings.sticky_layout {
+            StickyLayoutMode::Rows => {
+                ui.spacing_mut().item_spacing.y = 1.0;
+                for key in &keys {
+                    draw_sticky(ui, pins, profiles, key, icons, now, false, status);
+                }
+            }
+            StickyLayoutMode::Columns => {
+                let cols = settings.sticky_column_count();
+                ui.columns(cols, |columns| {
+                    for (i, key) in keys.iter().enumerate() {
+                        let col = &mut columns[i % cols];
+                        col.spacing_mut().item_spacing.y = 1.0;
+                        draw_sticky(col, pins, profiles, key, icons, now, true, status);
+                    }
+                });
             }
         }
-        StickyLayoutMode::Columns => {
-            let cols = settings.sticky_column_count();
-            ui.columns(cols, |columns| {
-                for (i, key) in visible.iter().enumerate() {
-                    let col = &mut columns[i % cols];
-                    draw_card(col, pins, profiles, key, icons, now, true, status);
-                    col.add_space(6.0);
-                }
-            });
-        }
+        ui.add_space(4.0);
     }
 }
 
+fn draw_broker_heading(ui: &mut egui::Ui, name: &str, accent: Color32) {
+    ui.horizontal(|ui| {
+        ui.label(RichText::new(name).strong().color(accent));
+        ui.add_space(6.0);
+        let y = ui.cursor().top() + ui.text_style_height(&egui::TextStyle::Body) * 0.5;
+        let (line, _) = ui.allocate_exact_size(
+            egui::vec2(ui.available_width().max(8.0), 1.0),
+            egui::Sense::hover(),
+        );
+        ui.painter().hline(
+            line.x_range(),
+            y,
+            Stroke::new(1.0_f32, Color32::from_rgb(70, 74, 84)),
+        );
+    });
+}
+
 #[allow(clippy::too_many_arguments)]
-fn draw_card(
+fn draw_sticky(
     ui: &mut egui::Ui,
     pins: &mut PinBoard,
     profiles: &mut ProfileStore,
@@ -115,47 +166,81 @@ fn draw_card(
         1.0_f32,
         ui.visuals().widgets.noninteractive.bg_stroke.color,
     );
+
     let card = egui::Frame::NONE
-        .inner_margin(egui::Margin::same(6))
+        .inner_margin(egui::Margin::symmetric(6, 2))
         .show(ui, |ui| {
-            // Identity on first row when possible; icon chrome wraps as one group.
             let mut mode_changed: Option<StickyViewMode> = None;
             let mut unstick = false;
             let mut copy_payload = false;
             let mut copy_topic = false;
-            // Tiny icons ~14px + gaps + Raw/Value/Graph frame padding.
-            const ICON_GROUP_W: f32 = 118.0;
-            let row_h = ui.spacing().interact_size.y.max(18.0);
 
-            ui.horizontal_wrapped(|ui| {
+            // Height is only topic row + icon row; value panel matches that strip.
+            ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 4.0;
-                if icons
-                    .tiny(ui, "topic_tags", false, "Copy topic")
-                    .clicked()
-                {
-                    copy_topic = true;
-                }
-                let accent = profiles
-                    .profiles
-                    .get(&pin.profile_id)
-                    .map(|p| p.color())
-                    .unwrap_or(Color32::from_rgb(90, 190, 120));
-                ui.label(RichText::new(&pin.profile_name).color(accent));
-                ui.label(json_view::topic_path_text(&pin.topic));
-                if pin.message_count > 0 {
-                    ui.label(
-                        RichText::new(format!("#{}", pin.message_count))
-                            .small()
-                            .color(CHROME_MUTED),
-                    );
-                }
+                let mode = pins
+                    .items
+                    .get(key)
+                    .map(|p| p.view_mode)
+                    .unwrap_or(StickyViewMode::Raw);
 
-                // Whole icon bar is one wrap atom — snaps below when it won't fit.
-                ui.allocate_ui_with_layout(
-                    egui::vec2(ICON_GROUP_W, row_h),
-                    egui::Layout::left_to_right(egui::Align::Center),
-                    |ui| {
-                        ui.spacing_mut().item_spacing.x = 4.0;
+                // Topic takes its natural width; only shrink so the value/chart keeps a floor.
+                let tiny_btn = icons::TINY_ICON + 4.0; // matches IconSet::tiny hit target
+                let gap = 4.0;
+                let sep_w = 1.0;
+                let min_value_w = match mode {
+                    StickyViewMode::Graph => {
+                        if compact {
+                            100.0
+                        } else {
+                            140.0
+                        }
+                    }
+                    _ => {
+                        if compact {
+                            80.0
+                        } else {
+                            110.0
+                        }
+                    }
+                };
+                let max_left = (ui.available_width() - min_value_w - sep_w - gap * 2.0)
+                    .max(tiny_btn + 48.0);
+
+                let topic_font =
+                    egui::TextStyle::Monospace.resolve(ui.style());
+                let topic_galley = ui.fonts(|f| {
+                    f.layout_no_wrap(pin.topic.clone(), topic_font, Color32::WHITE)
+                });
+                let topic_row_w = tiny_btn + gap + topic_galley.size().x;
+                // Mode trio + optional #n + copy + unstick (approx; column can be wider than topic).
+                let mode_w = 3.0 * tiny_btn + 12.0;
+                let count_w = if pin.message_count > 0 { 32.0 } else { 0.0 };
+                let controls_w = mode_w + count_w + tiny_btn + tiny_btn + gap * 4.0;
+                let left_w = topic_row_w.max(controls_w).min(max_left).max(tiny_btn + 48.0);
+
+                // Size to content (not panel available_height) so the card stays chrome-tall.
+                let left = ui.vertical(|ui| {
+                    ui.set_width(left_w);
+                    ui.set_max_width(left_w);
+                    ui.spacing_mut().item_spacing.y = 2.0;
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = gap;
+                        if icons
+                            .tiny(ui, "topic_tags", false, "Copy topic")
+                            .clicked()
+                        {
+                            copy_topic = true;
+                        }
+                        ui.add(
+                            egui::Label::new(json_view::topic_path_text(&pin.topic))
+                                .truncate()
+                                .selectable(false),
+                        );
+                    });
+
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = gap;
                         if let Some(live) = pins.items.get_mut(key) {
                             let before = live.view_mode;
                             egui::Frame::NONE
@@ -183,6 +268,13 @@ fn draw_card(
                                 mode_changed = Some(live.view_mode);
                             }
                         }
+                        if pin.message_count > 0 {
+                            ui.label(
+                                RichText::new(format!("#{}", pin.message_count))
+                                    .small()
+                                    .color(CHROME_MUTED),
+                            );
+                        }
                         if icons
                             .tiny(ui, "clipboard_checklist", false, "Copy payload")
                             .clicked()
@@ -200,9 +292,34 @@ fn draw_card(
                         {
                             unstick = true;
                         }
+                    });
+                });
+                let height = left.response.rect.height().max(1.0);
+
+                let sep = ui
+                    .allocate_exact_size(egui::vec2(sep_w, height), egui::Sense::hover())
+                    .0;
+                ui.painter()
+                    .rect_filled(sep, 0.0, Color32::from_rgb(55, 58, 66));
+
+                let right_w = ui.available_width().max(min_value_w * 0.5);
+                ui.allocate_ui_with_layout(
+                    egui::vec2(right_w, height),
+                    egui::Layout::top_down(Align::LEFT),
+                    |ui| {
+                        ui.set_max_height(height);
+                        ui.set_clip_rect(ui.max_rect());
+                        if let Some(p) = pins.items.get(key) {
+                            match mode {
+                                StickyViewMode::Raw => draw_raw_strip(ui, p, key, height),
+                                StickyViewMode::Value => draw_value_strip(ui, p, key, height),
+                                StickyViewMode::Graph => draw_graph_strip(ui, p, height),
+                            }
+                        }
                     },
                 );
             });
+
             if copy_topic {
                 ui.ctx().copy_text(pin.topic.clone());
                 *status = format!("Copied topic: {}", pin.topic);
@@ -220,73 +337,177 @@ fn draw_card(
             if let Some(mode) = mode_changed {
                 profiles.set_sticky_view_mode_and_save(&pin.profile_id, &pin.topic, mode);
             }
-
-            ui.add_space(2.0);
-
-            let mode = pins
-                .items
-                .get(key)
-                .map(|p| p.view_mode)
-                .unwrap_or(StickyViewMode::Raw);
-            let is_json = matches!(mode, StickyViewMode::Value)
-                && pins
-                    .items
-                    .get(key)
-                    .is_some_and(|p| json_view::try_pretty_json(&p.last_payload).is_some());
-            // Raw uses the same max height as Value/JSON so long payloads scroll.
-            let tall = is_json || matches!(mode, StickyViewMode::Raw);
-            let height = if tall {
-                if compact {
-                    180.0
-                } else {
-                    240.0
-                }
-            } else {
-                72.0
-            };
-
-            ui.allocate_ui_with_layout(
-                egui::vec2(ui.available_width().max(120.0), height),
-                egui::Layout::top_down(egui::Align::LEFT),
-                |ui| {
-                    if let Some(p) = pins.items.get(key) {
-                        match mode {
-                            StickyViewMode::Raw => draw_raw(ui, p, key),
-                            StickyViewMode::Value => draw_value(ui, p, key),
-                            StickyViewMode::Graph => draw_graph(ui, p),
-                        }
-                    }
-                },
-            );
         });
     flash::paint_inset_or(ui, card.response.rect, flash_stroke, card_stroke);
 }
 
-/// Max content height for Raw — matches Value JSON ScrollArea.
-const RAW_MAX_HEIGHT: f32 = 220.0;
-
-fn draw_raw(ui: &mut egui::Ui, pin: &StickyTopic, sticky_key: &str) {
-    ui.label(RichText::new("Raw").small().weak());
-    // Match Value/body font size; cap height like JSON Value mode.
+/// Wrap text inside the chrome-height strip — never grows the sticky card.
+fn draw_fixed_wrap(
+    ui: &mut egui::Ui,
+    text: RichText,
+    height: f32,
+    id_salt: impl std::hash::Hash,
+) {
     egui::ScrollArea::vertical()
-        .id_salt(("sticky-raw", sticky_key))
-        .max_height(RAW_MAX_HEIGHT)
+        .id_salt(id_salt)
+        .max_height(height)
+        .min_scrolled_height(height)
         .auto_shrink([false, false])
         .show(ui, |ui| {
             ui.set_max_width(ui.available_width());
-            ui.label(RichText::new(&pin.last_payload).monospace());
+            ui.add(egui::Label::new(text).wrap().selectable(false));
         });
 }
 
-fn draw_value(ui: &mut egui::Ui, pin: &StickyTopic, sticky_key: &str) {
-    // Sticky cards cap JSON height; Payload panel passes None for full height.
-    draw_value_payload(
-        ui,
-        &pin.last_payload,
-        Some(&pin.history),
-        ("sticky-json", sticky_key),
-        Some(220.0),
+/// Compact right-hand strip: raw payload, wrapped within chrome height.
+fn draw_raw_strip(ui: &mut egui::Ui, pin: &StickyTopic, sticky_key: &str, height: f32) {
+    // Same monospace body size as the topic (never .small()).
+    let text = RichText::new(&pin.last_payload).monospace();
+    draw_fixed_wrap(ui, text, height, ("sticky-raw", sticky_key));
+}
+
+/// Compact right-hand strip: scalars large; long text wraps at topic size.
+fn draw_value_strip(ui: &mut egui::Ui, pin: &StickyTopic, sticky_key: &str, height: f32) {
+    if let Some(pretty) = json_view::try_pretty_json(&pin.last_payload) {
+        // Match topic monospace size for readability.
+        let text = RichText::new(pretty).monospace();
+        draw_fixed_wrap(ui, text, height, ("sticky-json", sticky_key));
+        return;
+    }
+
+    match DetectedValue::from_payload(&pin.last_payload) {
+        DetectedValue::Bool(on) => {
+            let label = if on { "true" } else { "false" };
+            let color = if on {
+                Color32::from_rgb(70, 170, 100)
+            } else {
+                Color32::from_rgb(140, 140, 140)
+            };
+            draw_scalar_centered(
+                ui,
+                RichText::new(label).size(22.0).strong().color(color),
+                height,
+            );
+        }
+        DetectedValue::Number(n) => {
+            draw_scalar_centered(
+                ui,
+                RichText::new(format!("{n}"))
+                    .size(22.0)
+                    .strong()
+                    .monospace(),
+                height,
+            );
+        }
+        DetectedValue::Text(s) => {
+            // Topic-sized monospace; wraps inside the strip when long.
+            let text = RichText::new(s).monospace();
+            draw_fixed_wrap(ui, text, height, ("sticky-text", sticky_key));
+        }
+    }
+}
+
+/// Large bool/number — centered in the value box.
+fn draw_scalar_centered(ui: &mut egui::Ui, text: RichText, height: f32) {
+    let w = ui.available_width().max(1.0);
+    ui.allocate_ui_with_layout(
+        egui::vec2(w, height),
+        egui::Layout::centered_and_justified(egui::Direction::TopDown),
+        |ui| {
+            ui.label(text);
+        },
     );
+}
+
+/// Compact sparkline sized to the chrome strip height, with current value beside it.
+fn draw_graph_strip(ui: &mut egui::Ui, pin: &StickyTopic, height: f32) {
+    let samples = &pin.history;
+    if samples.is_empty() {
+        ui.weak("No history yet.");
+        return;
+    }
+
+    let numeric: Vec<(f32, f64)> = samples
+        .iter()
+        .enumerate()
+        .filter_map(|(i, s)| s.numeric.map(|v| (i as f32, v)))
+        .collect();
+
+    let chart_h = (height - 2.0).max(16.0);
+    // Value is content-width only; sparkline takes the remaining strip.
+    ui.with_layout(egui::Layout::left_to_right(Align::Center), |ui| {
+        ui.set_min_height(chart_h);
+        ui.spacing_mut().item_spacing.x = 8.0;
+
+        match DetectedValue::from_payload(&pin.last_payload) {
+            DetectedValue::Bool(on) => {
+                let label = if on { "true" } else { "false" };
+                let color = if on {
+                    Color32::from_rgb(70, 170, 100)
+                } else {
+                    Color32::from_rgb(140, 140, 140)
+                };
+                ui.label(RichText::new(label).size(22.0).strong().color(color));
+            }
+            DetectedValue::Number(n) => {
+                ui.label(
+                    RichText::new(format!("{n}"))
+                        .size(22.0)
+                        .strong()
+                        .monospace(),
+                );
+            }
+            DetectedValue::Text(_) => {
+                if let Some((_, v)) = numeric.last() {
+                    ui.label(
+                        RichText::new(format!("{v}"))
+                            .size(22.0)
+                            .strong()
+                            .monospace(),
+                    );
+                }
+            }
+        }
+
+        let chart_w = ui.available_width().max(48.0);
+        let (rect, response) =
+            ui.allocate_exact_size(egui::vec2(chart_w, chart_h), egui::Sense::hover());
+        let painter = ui.painter_at(rect);
+        painter.rect_filled(rect, 2.0, ui.visuals().extreme_bg_color);
+
+        if !numeric.is_empty() {
+            let min_v = numeric.iter().map(|(_, v)| *v).fold(f64::INFINITY, f64::min);
+            let max_v = numeric
+                .iter()
+                .map(|(_, v)| *v)
+                .fold(f64::NEG_INFINITY, f64::max);
+            let span = (max_v - min_v).abs().max(1e-9);
+            let n = samples.len().max(1) as f32;
+            let mut points = Vec::with_capacity(numeric.len());
+            for (i, v) in &numeric {
+                let x = rect.left() + (*i / (n - 1.0).max(1.0)) * rect.width();
+                let y = rect.bottom() - (((*v - min_v) / span) as f32) * rect.height();
+                points.push(Pos2::new(x, y));
+            }
+            if points.len() >= 2 {
+                painter.add(egui::Shape::line(
+                    points,
+                    Stroke::new(1.5_f32, Color32::from_rgb(80, 180, 120)),
+                ));
+            } else if let Some(p) = points.first() {
+                painter.circle_filled(*p, 3.0, Color32::from_rgb(80, 180, 120));
+            }
+            response.on_hover_text(format!("min={min_v:.3}  max={max_v:.3}"));
+        } else {
+            let n = samples.len().max(1) as f32;
+            for (i, _) in samples.iter().enumerate() {
+                let x = rect.left() + (i as f32 / (n - 1.0).max(1.0)) * rect.width();
+                let y = rect.center().y;
+                painter.circle_filled(Pos2::new(x, y), 2.5, Color32::from_rgb(100, 160, 220));
+            }
+            response.on_hover_text(format!("{} arrivals", samples.len()));
+        }
+    });
 }
 
 /// Shared sticky **Value** view (pretty JSON / bool / number / string).
@@ -307,7 +528,7 @@ pub fn draw_value_payload(
     match DetectedValue::from_payload(payload) {
         DetectedValue::Bool(on) => {
             ui.label(RichText::new("Boolean").small().weak());
-            let label = if on { "ON" } else { "OFF" };
+            let label = if on { "true" } else { "false" };
             let color = if on {
                 Color32::from_rgb(70, 170, 100)
             } else {
@@ -434,65 +655,6 @@ fn draw_gauge(
         galley_h,
         ui.visuals().weak_text_color(),
     );
-}
-
-fn draw_graph(ui: &mut egui::Ui, pin: &StickyTopic) {
-    let samples = &pin.history;
-    if samples.is_empty() {
-        ui.weak("No history yet.");
-        return;
-    }
-
-    let numeric: Vec<(f32, f64)> = samples
-        .iter()
-        .enumerate()
-        .filter_map(|(i, s)| s.numeric.map(|v| (i as f32, v)))
-        .collect();
-
-    let (rect, _) = ui.allocate_exact_size(egui::vec2(ui.available_width().min(200.0).max(120.0), 64.0), egui::Sense::hover());
-    let painter = ui.painter_at(rect);
-    painter.rect_filled(rect, 2.0, ui.visuals().extreme_bg_color);
-
-    if !numeric.is_empty() {
-        let min_v = numeric.iter().map(|(_, v)| *v).fold(f64::INFINITY, f64::min);
-        let max_v = numeric
-            .iter()
-            .map(|(_, v)| *v)
-            .fold(f64::NEG_INFINITY, f64::max);
-        let span = (max_v - min_v).abs().max(1e-9);
-        let n = samples.len().max(1) as f32;
-        let mut points = Vec::with_capacity(numeric.len());
-        for (i, v) in &numeric {
-            let x = rect.left() + (*i / (n - 1.0).max(1.0)) * rect.width();
-            let y = rect.bottom() - (((*v - min_v) / span) as f32) * rect.height();
-            points.push(Pos2::new(x, y));
-        }
-        if points.len() >= 2 {
-            painter.add(egui::Shape::line(
-                points,
-                Stroke::new(1.5_f32, Color32::from_rgb(80, 180, 120)),
-            ));
-        } else if let Some(p) = points.first() {
-            painter.circle_filled(*p, 3.0, Color32::from_rgb(80, 180, 120));
-        }
-        ui.label(
-            RichText::new(format!("min={min_v:.3} max={max_v:.3}"))
-                .small()
-                .weak(),
-        );
-    } else {
-        let n = samples.len().max(1) as f32;
-        for (i, _) in samples.iter().enumerate() {
-            let x = rect.left() + (i as f32 / (n - 1.0).max(1.0)) * rect.width();
-            let y = rect.center().y;
-            painter.circle_filled(Pos2::new(x, y), 3.0, Color32::from_rgb(100, 160, 220));
-        }
-        ui.label(
-            RichText::new(format!("{} arrivals", samples.len()))
-                .small()
-                .weak(),
-        );
-    }
 }
 
 #[cfg(test)]

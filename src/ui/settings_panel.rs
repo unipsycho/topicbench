@@ -7,9 +7,10 @@ use crate::ui::icons::{self, IconSet, CHROME_ACCENT_BORDER};
 use crate::ui::shortcuts;
 use eframe::egui::{self, Sense};
 
-/// Sticky board column count (Settings Layout dropdown).
+/// Sticky board layout (Settings dropdown): one sticky per row, or a column grid.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum StickyLayoutChoice {
+    Rows,
     Cols2,
     Cols3,
     Cols4,
@@ -18,6 +19,7 @@ enum StickyLayoutChoice {
 impl StickyLayoutChoice {
     fn label(self) -> &'static str {
         match self {
+            Self::Rows => "Rows",
             Self::Cols2 => "2 cols",
             Self::Cols3 => "3 cols",
             Self::Cols4 => "4 cols",
@@ -25,9 +27,8 @@ impl StickyLayoutChoice {
     }
 
     fn from_settings(s: &AppSettings) -> Self {
-        // Legacy "Rows" maps to 2 cols in the UI.
         match s.sticky_layout {
-            StickyLayoutMode::Rows => Self::Cols2,
+            StickyLayoutMode::Rows => Self::Rows,
             StickyLayoutMode::Columns => match AppSettings::clamp_sticky_columns(s.sticky_columns) {
                 4 => Self::Cols4,
                 3 => Self::Cols3,
@@ -37,12 +38,20 @@ impl StickyLayoutChoice {
     }
 
     fn apply(self, s: &mut AppSettings) {
-        s.sticky_layout = StickyLayoutMode::Columns;
-        s.sticky_columns = match self {
-            Self::Cols2 => 2,
-            Self::Cols3 => 3,
-            Self::Cols4 => 4,
-        };
+        match self {
+            Self::Rows => {
+                s.sticky_layout = StickyLayoutMode::Rows;
+            }
+            Self::Cols2 | Self::Cols3 | Self::Cols4 => {
+                s.sticky_layout = StickyLayoutMode::Columns;
+                s.sticky_columns = match self {
+                    Self::Cols2 => 2,
+                    Self::Cols3 => 3,
+                    Self::Cols4 => 4,
+                    Self::Rows => unreachable!(),
+                };
+            }
+        }
     }
 }
 
@@ -93,10 +102,6 @@ pub fn draw(
 
     ui.add_space(12.0);
     ui.strong("Sticky topics");
-    // Normalize legacy Rows → 2-column grid so Save persists the new model.
-    if draft.sticky_layout == StickyLayoutMode::Rows {
-        StickyLayoutChoice::Cols2.apply(draft);
-    }
     ui.horizontal(|ui| {
         ui.label("Layout");
         let mut choice = StickyLayoutChoice::from_settings(draft);
@@ -104,6 +109,7 @@ pub fn draw(
             .selected_text(choice.label())
             .show_ui(ui, |ui| {
                 for opt in [
+                    StickyLayoutChoice::Rows,
                     StickyLayoutChoice::Cols2,
                     StickyLayoutChoice::Cols3,
                     StickyLayoutChoice::Cols4,
@@ -117,6 +123,7 @@ pub fn draw(
                 }
             });
     });
+    ui.weak("Rows: one sticky per line under each broker.");
 
     ui.add_space(12.0);
     ui.strong("MQTT");

@@ -6,16 +6,32 @@ use eframe::egui;
 
 pub use crate::mqtt::settings::SearchScope;
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct SearchFilter {
     pub query: String,
     pub scope: SearchScope,
+    /// When true, sticky board uses the same search filter.
+    pub apply_to_stickies: bool,
+}
+
+impl Default for SearchFilter {
+    fn default() -> Self {
+        Self {
+            query: String::new(),
+            scope: SearchScope::default(),
+            apply_to_stickies: true,
+        }
+    }
 }
 
 impl SearchFilter {
     /// Restore from settings.json fields (applied at startup before tree paint).
-    pub fn from_settings(query: String, scope: SearchScope) -> Self {
-        Self { query, scope }
+    pub fn from_settings(query: String, scope: SearchScope, apply_to_stickies: bool) -> Self {
+        Self {
+            query,
+            scope,
+            apply_to_stickies,
+        }
     }
 
     pub fn is_active(&self) -> bool {
@@ -65,6 +81,7 @@ mod tests {
         let f = SearchFilter {
             query: "  |  | ".into(),
             scope: SearchScope::All,
+            apply_to_stickies: true,
         };
         assert!(!f.is_active());
         assert!(f.matches("a/b", Some("x")));
@@ -75,6 +92,7 @@ mod tests {
         let f = SearchFilter {
             query: "temp | humidity".into(),
             scope: SearchScope::Topics,
+            apply_to_stickies: true,
         };
         assert!(f.matches("sensors/temp", None));
         assert!(f.matches("lab/humidity", None));
@@ -86,6 +104,7 @@ mod tests {
         let f = SearchFilter {
             query: "acid | base".into(),
             scope: SearchScope::Payloads,
+            apply_to_stickies: true,
         };
         assert!(f.matches("chem/x", Some(r#"{"name":"Citric Acid"}"#)));
         assert!(!f.matches("chem/x", Some(r#"{"name":"water"}"#)));
@@ -93,9 +112,10 @@ mod tests {
 
     #[test]
     fn from_settings_roundtrip_fields() {
-        let f = SearchFilter::from_settings("a | b".into(), SearchScope::Topics);
+        let f = SearchFilter::from_settings("a | b".into(), SearchScope::Topics, false);
         assert_eq!(f.query, "a | b");
         assert_eq!(f.scope, SearchScope::Topics);
+        assert!(!f.apply_to_stickies);
         assert!(f.is_active());
     }
 }
@@ -129,5 +149,8 @@ pub fn draw(ui: &mut egui::Ui, filter: &mut SearchFilter, request_focus: &mut bo
         if filter.is_active() && ui.small_button("Clear").clicked() {
             filter.query.clear();
         }
+        // Separate from Clear — applies to the sticky board, not just the query field.
+        ui.add_space(16.0);
+        ui.checkbox(&mut filter.apply_to_stickies, "Apply to stickies");
     });
 }

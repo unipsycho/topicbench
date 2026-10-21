@@ -6,12 +6,48 @@
 //! Source PNGs are 512²; we Lanczos-downsample to [`ICON_TEX_PX`] (2× ribbon glyph)
 //! before upload so GPU scaling stays crisp (≈2:1 / 1:1 with DPI) instead of 512→36.
 
-use eframe::egui::{self, Color32, FontId, Sense, Stroke, TextureHandle, Vec2};
+use eframe::egui::{self, Color32, FontId, Sense, Stroke, TextStyle, TextureHandle, Vec2};
 use eframe::epaint::TextShape;
 use image::imageops::FilterType;
 use image::RgbaImage;
 use std::collections::HashMap;
 use std::f32::consts::FRAC_PI_2;
+
+/// Current font-zoom factor from style Body size vs Style::default() (matches `apply_font_zoom`).
+pub fn font_zoom_factor(ui: &egui::Ui) -> f32 {
+    let body = ui
+        .style()
+        .text_styles
+        .get(&TextStyle::Body)
+        .map(|f| f.size)
+        .unwrap_or(14.0);
+    let base = egui::Style::default()
+        .text_styles
+        .get(&TextStyle::Body)
+        .map(|f| f.size)
+        .unwrap_or(14.0);
+    if base > 0.0 {
+        body / base
+    } else {
+        1.0
+    }
+}
+
+/// Hardcoded ribbon/chrome size × font zoom (floor 8px, same as `apply_font_zoom`).
+pub fn zoomed_font_size(ui: &egui::Ui, base: f32) -> f32 {
+    (base * font_zoom_factor(ui)).max(8.0)
+}
+
+/// Extra width per font-zoom step above default (~4px) so captions aren't clipped.
+const CMD_W_EXTRA_PER_STEP: f32 = 4.0;
+/// Matches [`crate::mqtt::settings::FONT_ZOOM_STEP_FACTOR`].
+const FONT_ZOOM_STEP: f32 = 0.10;
+
+/// Full ribbon command cell width at the given font-zoom factor.
+pub fn cmd_cell_w(zoom: f32) -> f32 {
+    let steps_up = ((zoom - 1.0).max(0.0) / FONT_ZOOM_STEP).round();
+    CMD_W + steps_up * CMD_W_EXTRA_PER_STEP
+}
 
 /// Large ribbon glyph (logical px — same for New/Save/Delete/Settings/Panels).
 const CMD_ICON: f32 = 36.0;
@@ -99,7 +135,7 @@ impl IconSet {
         tip: &str,
         enabled: bool,
     ) -> egui::Response {
-        let cell = Vec2::new(CMD_W, CMD_H);
+        let cell = Vec2::new(cmd_cell_w(font_zoom_factor(ui)), CMD_H);
         let sense = if enabled {
             Sense::click()
         } else {
@@ -153,7 +189,7 @@ impl IconSet {
             egui::pos2(rect.center().x, rect.bottom() - 10.0),
             egui::Align2::CENTER_CENTER,
             label,
-            FontId::proportional(11.0),
+            FontId::proportional(zoomed_font_size(ui, 11.0)),
             caption,
         );
         response
@@ -313,10 +349,11 @@ pub fn paint_drag_grip(ui: &mut egui::Ui, rect: egui::Rect) {
 }
 
 /// Estimated width of a full (icon+caption) ribbon group with `n` commands.
-pub fn estimate_group_full_w(n_cmds: usize) -> f32 {
-    // Frame pad 4×2 + rail 18 + gap 4 + n×CMD_W + (n−1)×1.
+pub fn estimate_group_full_w(n_cmds: usize, zoom: f32) -> f32 {
+    // Frame pad 4×2 + rail 18 + gap 4 + n×cmd_w + (n−1)×1.
     let n = n_cmds.max(1) as f32;
-    8.0 + SECTION_RAIL_W + 4.0 + n * CMD_W + (n - 1.0) * 1.0
+    let cw = cmd_cell_w(zoom);
+    8.0 + SECTION_RAIL_W + 4.0 + n * cw + (n - 1.0) * 1.0
 }
 
 /// Estimated width of a collapsed 2-high icon grid with `n` commands.
@@ -406,7 +443,7 @@ fn paint_rotated_section_label(ui: &mut egui::Ui, rect: egui::Rect, caption: &st
     let galley = ui.fonts(|f| {
         f.layout_no_wrap(
             caption.to_owned(),
-            FontId::proportional(11.0),
+            FontId::proportional(zoomed_font_size(ui, 11.0)),
             CHROME_CAPTION,
         )
     });
