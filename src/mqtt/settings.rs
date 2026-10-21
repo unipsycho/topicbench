@@ -194,11 +194,7 @@ impl Default for AppSettings {
 
 impl AppSettings {
     pub fn path() -> PathBuf {
-        let base = std::env::var_os("XDG_CONFIG_HOME")
-            .map(PathBuf::from)
-            .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))
-            .unwrap_or_else(|| PathBuf::from("."));
-        base.join("mqtt-monitor").join("settings.json")
+        super::paths::config_file("settings.json")
     }
 
     /// Clamp packet size into the supported Settings range.

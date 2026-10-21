@@ -109,6 +109,8 @@ pub struct MqttMonitorApp {
 
 impl MqttMonitorApp {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
+        // One-shot: ~/.config/mqtt-monitor → ~/.config/topicbench when needed.
+        crate::mqtt::paths::migrate_legacy_config_dir();
         let profiles = ProfileStore::load_or_sample();
         let settings = AppSettings::load();
         let status = profiles.last_io.clone();

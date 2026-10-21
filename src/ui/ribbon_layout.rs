@@ -1,7 +1,7 @@
 //! Progressive ribbon collapse for narrow windows.
 //!
 //! Collapse order (first → last):
-//! App compact → Profiles compact → Panels compact → hide MQTT Master title → hide Stats.
+//! App compact → Profiles compact → Panels compact → hide TopicBench title → hide Stats.
 //! Expand reverses that order when width returns.
 
 use crate::ui::icons::{estimate_group_compact_w, estimate_group_full_w, estimate_separator_w};

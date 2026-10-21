@@ -42,8 +42,8 @@ cd topicbench
 cargo run --release
 ```
 
-Profiles: `~/.config/mqtt-monitor/profiles.json`  
-Settings: `~/.config/mqtt-monitor/settings.json`
+Profiles: `~/.config/topicbench/profiles.json`  
+Settings: `~/.config/topicbench/settings.json`
 
 **Windows:** native `cargo build --release` on Windows works; the Windows icon is embedded via `winres` (MinGW `windres` when cross-compiling from Linux).
 

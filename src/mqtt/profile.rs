@@ -178,7 +178,7 @@ impl ConnectionProfile {
             name: "New profile".into(),
             host: "127.0.0.1".into(),
             port: 1883,
-            client_id: format!("mqtt-master-{id}"),
+            client_id: format!("topicbench-{id}"),
             username: String::new(),
             password: String::new(),
             transport: ProfileTransport::Mqtt,
@@ -197,7 +197,7 @@ impl ConnectionProfile {
             name: "Local broker".into(),
             host: "127.0.0.1".into(),
             port: 1883,
-            client_id: "mqtt-master".into(),
+            client_id: "topicbench".into(),
             username: String::new(),
             password: String::new(),
             transport: ProfileTransport::Mqtt,
@@ -216,7 +216,7 @@ impl ConnectionProfile {
             name: "Lab devices".into(),
             host: "broker.lab.local".into(),
             port: 1883,
-            client_id: "mqtt-master-lab".into(),
+            client_id: "topicbench-lab".into(),
             username: String::new(),
             password: String::new(),
             transport: ProfileTransport::Mqtt,
@@ -280,13 +280,9 @@ pub struct ProfileStore {
 }
 
 impl ProfileStore {
-    /// Config path: `$XDG_CONFIG_HOME/mqtt-monitor/profiles.json` or `~/.config/...`.
+    /// Config path: `$XDG_CONFIG_HOME/topicbench/profiles.json` or `~/.config/...`.
     pub fn path() -> PathBuf {
-        let base = std::env::var_os("XDG_CONFIG_HOME")
-            .map(PathBuf::from)
-            .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))
-            .unwrap_or_else(|| PathBuf::from("."));
-        base.join("mqtt-monitor").join("profiles.json")
+        super::paths::config_file("profiles.json")
     }
 
     pub fn with_samples() -> Self {
@@ -552,7 +548,7 @@ mod tests {
 
     #[test]
     fn password_never_written_to_json() {
-        let dir = std::env::temp_dir().join(format!("mqtt-monitor-pw-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("topicbench-pw-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
         let path = dir.join("profiles.json");
@@ -574,7 +570,7 @@ mod tests {
 
     #[test]
     fn save_and_load_roundtrip() {
-        let dir = std::env::temp_dir().join(format!("mqtt-monitor-test-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("topicbench-test-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         let path = dir.join("profiles.json");
 
@@ -618,7 +614,7 @@ mod tests {
 
     #[test]
     fn reorder_persists_array_order() {
-        let dir = std::env::temp_dir().join(format!("mqtt-monitor-order-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("topicbench-order-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         let path = dir.join("profiles.json");
 

@@ -3,7 +3,7 @@ name = "mqtt-monitor"
 version = "1.0.0"
 edition = "2021"
 rust-version = "1.80"
-description = "MQTT Master — multi-broker MQTT monitor"
+description = "TopicBench — multi-broker MQTT explorer and monitor"
 license = "MIT OR Apache-2.0"
 readme = "README.md"
 
@@ -31,6 +31,6 @@ sha2 = "0.10"
 winres = "0.1"
 
 [package.metadata.packager]
-product-name = "MQTT Master"
+product-name = "TopicBench"
 identifier = "com.agileautomation.mqtt-master"
 before-packaging-command = "cargo build --release"
