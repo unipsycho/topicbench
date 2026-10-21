@@ -1,18 +1,32 @@
 //! Sticky strip — Raw / Value / Graph; grouped per broker; rows or columns from Settings.
 //! Only stickies for currently **connected** profiles are shown.
+//! Drag-reorder from the left grip (same pattern as Profiles).
 
 use crate::mqtt::pins::{DetectedValue, HistorySample, PinBoard, StickyTopic, StickyViewMode};
 use crate::mqtt::profile::ProfileStore;
 use crate::mqtt::session::{SessionManager, SessionState};
 use crate::mqtt::settings::{AppSettings, StickyLayoutMode};
 use crate::ui::flash;
-use crate::ui::icons::{self, IconSet, CHROME_MUTED};
+use crate::ui::hover_tip;
+use crate::ui::icons::{
+    self, IconSet, CHROME_ACCENT_BORDER, CHROME_HOVER, CHROME_MUTED,
+};
 use crate::ui::json_view;
 use crate::ui::shortcuts;
 use crate::ui::search_bar::SearchFilter;
-use eframe::egui::{self, Align, Color32, Pos2, RichText, Stroke};
+use eframe::egui::{self, Align, Color32, CursorIcon, Pos2, RichText, Sense, Stroke};
 use std::collections::{BTreeMap, HashSet};
 use std::time::Instant;
+
+/// DnD payload: sticky topic within one broker (profile_id + topic).
+#[derive(Clone)]
+struct StickyDnd {
+    profile_id: String,
+    topic: String,
+}
+
+/// Match Profiles grip width.
+const GRIP_W: f32 = 16.0;
 
 pub fn draw(
     ui: &mut egui::Ui,
@@ -48,7 +62,7 @@ pub fn draw(
         .map(|(id, _)| id.as_str())
         .collect();
 
-    // Visible stickies grouped by profile_id (topic order from BTreeMap keys).
+    // Visible stickies grouped by profile_id; order follows profile.stickies.
     let mut by_broker: BTreeMap<String, Vec<String>> = BTreeMap::new();
     for (k, p) in &pins.items {
         if !connected.contains(p.profile_id.as_str()) {
@@ -61,6 +75,21 @@ pub fn draw(
             .entry(p.profile_id.clone())
             .or_default()
             .push(k.clone());
+    }
+    for (profile_id, keys) in by_broker.iter_mut() {
+        if let Some(prof) = profiles.profiles.get(profile_id) {
+            keys.sort_by_key(|k| {
+                let topic = pins
+                    .items
+                    .get(k)
+                    .map(|s| s.topic.as_str())
+                    .unwrap_or("");
+                prof.stickies
+                    .iter()
+                    .position(|s| s.topic == topic)
+                    .unwrap_or(usize::MAX)
+            });
+        }
     }
 
     if by_broker.is_empty() {
@@ -107,11 +136,16 @@ pub fn draw(
         draw_broker_heading(ui, &name, accent);
         ui.add_space(2.0);
 
+        let mut pending_reorder: Option<(String, String, bool)> = None;
         match settings.sticky_layout {
             StickyLayoutMode::Rows => {
                 ui.spacing_mut().item_spacing.y = 1.0;
                 for key in &keys {
-                    draw_sticky(ui, pins, profiles, key, icons, now, false, status);
+                    if let Some(r) =
+                        draw_sticky(ui, pins, profiles, key, icons, now, false, status)
+                    {
+                        pending_reorder = Some(r);
+                    }
                 }
             }
             StickyLayoutMode::Columns => {
@@ -120,9 +154,18 @@ pub fn draw(
                     for (i, key) in keys.iter().enumerate() {
                         let col = &mut columns[i % cols];
                         col.spacing_mut().item_spacing.y = 1.0;
-                        draw_sticky(col, pins, profiles, key, icons, now, true, status);
+                        if let Some(r) =
+                            draw_sticky(col, pins, profiles, key, icons, now, true, status)
+                        {
+                            pending_reorder = Some(r);
+                        }
                     }
                 });
+            }
+        }
+        if let Some((dragged, target, after)) = pending_reorder {
+            if profiles.reorder_sticky_and_save(&profile_id, &dragged, &target, after) {
+                *status = format!("Reordered stickies on {name}");
             }
         }
         ui.add_space(4.0);
@@ -146,6 +189,7 @@ fn draw_broker_heading(ui: &mut egui::Ui, name: &str, accent: Color32) {
     });
 }
 
+/// Returns pending reorder `(dragged_topic, target_topic, after)` when a drop lands on this row.
 #[allow(clippy::too_many_arguments)]
 fn draw_sticky(
     ui: &mut egui::Ui,
@@ -156,9 +200,9 @@ fn draw_sticky(
     now: Instant,
     compact: bool,
     status: &mut String,
-) {
+) -> Option<(String, String, bool)> {
     let Some(pin) = pins.items.get(key).cloned() else {
-        return;
+        return None;
     };
     // Card chrome + flash are inset strokes (never grow layout when pulsing).
     let flash_stroke = flash::flash_stroke(pin.flash_until, now);
@@ -167,178 +211,282 @@ fn draw_sticky(
         ui.visuals().widgets.noninteractive.bg_stroke.color,
     );
 
-    let card = egui::Frame::NONE
-        .inner_margin(egui::Margin::symmetric(6, 2))
-        .show(ui, |ui| {
-            let mut mode_changed: Option<StickyViewMode> = None;
-            let mut unstick = false;
-            let mut copy_payload = false;
-            let mut copy_topic = false;
+    let mut pending_reorder = None;
+    let profile_id = pin.profile_id.clone();
+    let topic = pin.topic.clone();
 
-            // Height is only topic row + icon row; value panel matches that strip.
-            ui.horizontal(|ui| {
-                ui.spacing_mut().item_spacing.x = 4.0;
-                let mode = pins
-                    .items
-                    .get(key)
-                    .map(|p| p.view_mode)
-                    .unwrap_or(StickyViewMode::Raw);
+    // Grip left + card body (Profiles pattern: grip starts drag, body keeps clicks).
+    let row = ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 2.0;
 
-                // Topic takes its natural width; only shrink so the value/chart keeps a floor.
-                let tiny_btn = icons::TINY_ICON + 4.0; // matches IconSet::tiny hit target
-                let gap = 4.0;
-                let sep_w = 1.0;
-                let min_value_w = match mode {
-                    StickyViewMode::Graph => {
-                        if compact {
-                            100.0
-                        } else {
-                            140.0
-                        }
-                    }
-                    _ => {
-                        if compact {
-                            80.0
-                        } else {
-                            110.0
-                        }
-                    }
-                };
-                let max_left = (ui.available_width() - min_value_w - sep_w - gap * 2.0)
-                    .max(tiny_btn + 48.0);
+        let card = egui::Frame::NONE
+            .inner_margin(egui::Margin {
+                left: (6.0 + GRIP_W) as i8,
+                right: 6,
+                top: 2,
+                bottom: 2,
+            })
+            .show(ui, |ui| {
+                let mut mode_changed: Option<StickyViewMode> = None;
+                let mut unstick = false;
+                let mut copy_payload = false;
+                let mut copy_topic = false;
 
-                let topic_font =
-                    egui::TextStyle::Monospace.resolve(ui.style());
-                let topic_galley = ui.fonts(|f| {
-                    f.layout_no_wrap(pin.topic.clone(), topic_font, Color32::WHITE)
-                });
-                let topic_row_w = tiny_btn + gap + topic_galley.size().x;
-                // Mode trio + optional #n + copy + unstick (approx; column can be wider than topic).
-                let mode_w = 3.0 * tiny_btn + 12.0;
-                let count_w = if pin.message_count > 0 { 32.0 } else { 0.0 };
-                let controls_w = mode_w + count_w + tiny_btn + tiny_btn + gap * 4.0;
-                let left_w = topic_row_w.max(controls_w).min(max_left).max(tiny_btn + 48.0);
+                // Height is only topic row + icon row; value panel matches that strip.
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 4.0;
+                    let mode = pins
+                        .items
+                        .get(key)
+                        .map(|p| p.view_mode)
+                        .unwrap_or(StickyViewMode::Raw);
 
-                // Size to content (not panel available_height) so the card stays chrome-tall.
-                let left = ui.vertical(|ui| {
-                    ui.set_width(left_w);
-                    ui.set_max_width(left_w);
-                    ui.spacing_mut().item_spacing.y = 2.0;
-                    ui.horizontal(|ui| {
-                        ui.spacing_mut().item_spacing.x = gap;
-                        if icons
-                            .tiny(ui, "topic_tags", false, "Copy topic")
-                            .clicked()
-                        {
-                            copy_topic = true;
-                        }
-                        ui.add(
-                            egui::Label::new(json_view::topic_path_text(&pin.topic))
-                                .truncate()
-                                .selectable(false),
-                        );
-                    });
-
-                    ui.horizontal(|ui| {
-                        ui.spacing_mut().item_spacing.x = gap;
-                        if let Some(live) = pins.items.get_mut(key) {
-                            let before = live.view_mode;
-                            egui::Frame::NONE
-                                .fill(Color32::from_rgb(32, 34, 40))
-                                .corner_radius(3.0)
-                                .inner_margin(egui::Margin::symmetric(3, 2))
-                                .show(ui, |ui| {
-                                    ui.horizontal(|ui| {
-                                        ui.spacing_mut().item_spacing.x = 2.0;
-                                        for (mode, icon, tip) in [
-                                            (StickyViewMode::Raw, "terminal", "Raw"),
-                                            (StickyViewMode::Value, "json_payload", "Value"),
-                                            (StickyViewMode::Graph, "line_graph", "Graph"),
-                                        ] {
-                                            if icons
-                                                .tiny(ui, icon, live.view_mode == mode, tip)
-                                                .clicked()
-                                            {
-                                                live.view_mode = mode;
-                                            }
-                                        }
-                                    });
-                                });
-                            if live.view_mode != before {
-                                mode_changed = Some(live.view_mode);
+                    // Topic takes its natural width; only shrink so the value/chart keeps a floor.
+                    let tiny_btn = icons::TINY_ICON + 4.0; // matches IconSet::tiny hit target
+                    let gap = 4.0;
+                    let sep_w = 1.0;
+                    let min_value_w = match mode {
+                        StickyViewMode::Graph => {
+                            if compact {
+                                100.0
+                            } else {
+                                140.0
                             }
                         }
-                        if pin.message_count > 0 {
-                            ui.label(
-                                RichText::new(format!("#{}", pin.message_count))
-                                    .small()
-                                    .color(CHROME_MUTED),
+                        _ => {
+                            if compact {
+                                80.0
+                            } else {
+                                110.0
+                            }
+                        }
+                    };
+                    let max_left = (ui.available_width() - min_value_w - sep_w - gap * 2.0)
+                        .max(tiny_btn + 48.0);
+
+                    let topic_font = egui::TextStyle::Monospace.resolve(ui.style());
+                    let topic_galley = ui.fonts(|f| {
+                        f.layout_no_wrap(pin.topic.clone(), topic_font, Color32::WHITE)
+                    });
+                    let topic_row_w = tiny_btn + gap + topic_galley.size().x;
+                    // Mode trio + optional #n + copy + unstick (approx; column can be wider than topic).
+                    let mode_w = 3.0 * tiny_btn + 12.0;
+                    let count_w = if pin.message_count > 0 { 32.0 } else { 0.0 };
+                    let controls_w = mode_w + count_w + tiny_btn + tiny_btn + gap * 4.0;
+                    let left_w = topic_row_w.max(controls_w).min(max_left).max(tiny_btn + 48.0);
+
+                    // Size to content (not panel available_height) so the card stays chrome-tall.
+                    let left = ui.vertical(|ui| {
+                        ui.set_width(left_w);
+                        ui.set_max_width(left_w);
+                        ui.spacing_mut().item_spacing.y = 2.0;
+                        ui.horizontal(|ui| {
+                            ui.spacing_mut().item_spacing.x = gap;
+                            if icons
+                                .tiny(ui, "topic_tags", false, "Copy topic")
+                                .clicked()
+                            {
+                                copy_topic = true;
+                            }
+                            ui.add(
+                                egui::Label::new(json_view::topic_path_text(&pin.topic))
+                                    .truncate()
+                                    .selectable(false),
                             );
-                        }
-                        if icons
-                            .tiny(ui, "clipboard_checklist", false, "Copy payload")
-                            .clicked()
-                        {
-                            copy_payload = true;
-                        }
-                        if icons
-                            .tiny(
-                                ui,
-                                "sticky_topic",
-                                true,
-                                &shortcuts::tip("Unstick", "Ctrl+Shift+S"),
-                            )
-                            .clicked()
-                        {
-                            unstick = true;
-                        }
-                    });
-                });
-                let height = left.response.rect.height().max(1.0);
+                        });
 
-                let sep = ui
-                    .allocate_exact_size(egui::vec2(sep_w, height), egui::Sense::hover())
-                    .0;
-                ui.painter()
-                    .rect_filled(sep, 0.0, Color32::from_rgb(55, 58, 66));
-
-                let right_w = ui.available_width().max(min_value_w * 0.5);
-                ui.allocate_ui_with_layout(
-                    egui::vec2(right_w, height),
-                    egui::Layout::top_down(Align::LEFT),
-                    |ui| {
-                        ui.set_max_height(height);
-                        ui.set_clip_rect(ui.max_rect());
-                        if let Some(p) = pins.items.get(key) {
-                            match mode {
-                                StickyViewMode::Raw => draw_raw_strip(ui, p, key, height),
-                                StickyViewMode::Value => draw_value_strip(ui, p, key, height),
-                                StickyViewMode::Graph => draw_graph_strip(ui, p, height),
+                        ui.horizontal(|ui| {
+                            ui.spacing_mut().item_spacing.x = gap;
+                            if let Some(live) = pins.items.get_mut(key) {
+                                let before = live.view_mode;
+                                egui::Frame::NONE
+                                    .fill(Color32::from_rgb(32, 34, 40))
+                                    .corner_radius(3.0)
+                                    .inner_margin(egui::Margin::symmetric(3, 2))
+                                    .show(ui, |ui| {
+                                        ui.horizontal(|ui| {
+                                            ui.spacing_mut().item_spacing.x = 2.0;
+                                            for (mode, icon, tip) in [
+                                                (StickyViewMode::Raw, "terminal", "Raw"),
+                                                (StickyViewMode::Value, "json_payload", "Value"),
+                                                (StickyViewMode::Graph, "line_graph", "Graph"),
+                                            ] {
+                                                if icons
+                                                    .tiny(ui, icon, live.view_mode == mode, tip)
+                                                    .clicked()
+                                                {
+                                                    live.view_mode = mode;
+                                                }
+                                            }
+                                        });
+                                    });
+                                if live.view_mode != before {
+                                    mode_changed = Some(live.view_mode);
+                                }
                             }
-                        }
-                    },
-                );
+                            if pin.message_count > 0 {
+                                ui.label(
+                                    RichText::new(format!("#{}", pin.message_count))
+                                        .small()
+                                        .color(CHROME_MUTED),
+                                );
+                            }
+                            if icons
+                                .tiny(ui, "clipboard_checklist", false, "Copy payload")
+                                .clicked()
+                            {
+                                copy_payload = true;
+                            }
+                            if icons
+                                .tiny(
+                                    ui,
+                                    "sticky_topic",
+                                    true,
+                                    &shortcuts::tip("Unstick", "Ctrl+Shift+S"),
+                                )
+                                .clicked()
+                            {
+                                unstick = true;
+                            }
+                        });
+                    });
+                    let height = left.response.rect.height().max(1.0);
+
+                    let sep = ui
+                        .allocate_exact_size(egui::vec2(sep_w, height), egui::Sense::hover())
+                        .0;
+                    ui.painter()
+                        .rect_filled(sep, 0.0, Color32::from_rgb(55, 58, 66));
+
+                    let right_w = ui.available_width().max(min_value_w * 0.5);
+                    ui.allocate_ui_with_layout(
+                        egui::vec2(right_w, height),
+                        egui::Layout::top_down(Align::LEFT),
+                        |ui| {
+                            ui.set_max_height(height);
+                            ui.set_clip_rect(ui.max_rect());
+                            if let Some(p) = pins.items.get(key) {
+                                match mode {
+                                    StickyViewMode::Raw => draw_raw_strip(ui, p, key, height),
+                                    StickyViewMode::Value => draw_value_strip(ui, p, key, height),
+                                    StickyViewMode::Graph => draw_graph_strip(ui, p, height),
+                                }
+                            }
+                        },
+                    );
+                });
+
+                if copy_topic {
+                    ui.ctx().copy_text(pin.topic.clone());
+                    *status = format!("Copied topic: {}", pin.topic);
+                }
+                if copy_payload {
+                    let copy = json_view::try_pretty_json(&pin.last_payload)
+                        .unwrap_or_else(|| pin.last_payload.clone());
+                    ui.ctx().copy_text(copy);
+                    *status = "Copied payload".into();
+                }
+                if unstick {
+                    pins.unpin(&pin.profile_id, &pin.topic);
+                    profiles.set_sticky_and_save(&pin.profile_id, &pin.topic, false);
+                }
+                if let Some(mode) = mode_changed {
+                    profiles.set_sticky_view_mode_and_save(&pin.profile_id, &pin.topic, mode);
+                }
             });
 
-            if copy_topic {
-                ui.ctx().copy_text(pin.topic.clone());
-                *status = format!("Copied topic: {}", pin.topic);
+        let row_rect = card.response.rect;
+        flash::paint_inset_or(ui, row_rect, flash_stroke, card_stroke);
+
+        // Grip in the left padding — drag only; buttons in the body stay clickable.
+        let grip_rect = egui::Rect::from_min_size(
+            egui::pos2(row_rect.left() + 2.0, row_rect.top()),
+            egui::vec2(GRIP_W, row_rect.height()),
+        );
+        icons::paint_drag_grip(ui, grip_rect);
+        let grip_id = egui::Id::new(("sticky_grip", key));
+        let grip_response = hover_tip::attach(
+            ui.interact(grip_rect, grip_id, Sense::drag())
+                .on_hover_cursor(CursorIcon::Grab),
+            "Drag to reorder",
+        );
+        if grip_response.dragged() {
+            grip_response.dnd_set_drag_payload(StickyDnd {
+                profile_id: profile_id.clone(),
+                topic: topic.clone(),
+            });
+        }
+        if ui.ctx().is_being_dragged(grip_id) {
+            if let Some(pos) = ui.ctx().pointer_interact_pos() {
+                let layer = egui::LayerId::new(egui::Order::Tooltip, grip_id);
+                let preview =
+                    egui::Rect::from_center_size(pos, egui::vec2(GRIP_W, GRIP_W + 8.0));
+                let painter = ui.ctx().layer_painter(layer);
+                painter.rect_filled(preview, 2.0, CHROME_HOVER);
+                // Same 2×3 grip dots as Profiles floating preview.
+                let color = CHROME_MUTED;
+                let r = 1.2_f32;
+                let cx = preview.center().x;
+                let cy = preview.center().y;
+                for col in [-1.0_f32, 1.0] {
+                    for row in [-1.0_f32, 0.0, 1.0] {
+                        painter.circle_filled(
+                            egui::pos2(cx + col * 3.0, cy + row * 3.5),
+                            r,
+                            color,
+                        );
+                    }
+                }
             }
-            if copy_payload {
-                let copy = json_view::try_pretty_json(&pin.last_payload)
-                    .unwrap_or_else(|| pin.last_payload.clone());
-                ui.ctx().copy_text(copy);
-                *status = "Copied payload".into();
+        }
+
+        // Whole card is the drop target (insert before/after by pointer Y).
+        let drop_response = ui.interact(
+            row_rect,
+            egui::Id::new(("sticky_drop", key)),
+            Sense::hover(),
+        );
+        if let Some(payload) = drop_response.dnd_hover_payload::<StickyDnd>() {
+            if payload.profile_id == profile_id && payload.topic != topic {
+                let after = drop_response
+                    .hover_pos()
+                    .map(|p| p.y > drop_response.rect.center().y)
+                    .unwrap_or(false);
+                let y = if after {
+                    drop_response.rect.bottom()
+                } else {
+                    drop_response.rect.top()
+                };
+                ui.painter().hline(
+                    drop_response.rect.x_range(),
+                    y,
+                    egui::Stroke::new(2.0, CHROME_ACCENT_BORDER),
+                );
+                ui.painter().rect_filled(
+                    drop_response.rect,
+                    2.0,
+                    Color32::from_rgba_unmultiplied(
+                        CHROME_HOVER.r(),
+                        CHROME_HOVER.g(),
+                        CHROME_HOVER.b(),
+                        80,
+                    ),
+                );
             }
-            if unstick {
-                pins.unpin(&pin.profile_id, &pin.topic);
-                profiles.set_sticky_and_save(&pin.profile_id, &pin.topic, false);
+        }
+        if let Some(payload) = drop_response.dnd_release_payload::<StickyDnd>() {
+            if payload.profile_id == profile_id && payload.topic != topic {
+                let after = drop_response
+                    .interact_pointer_pos()
+                    .or_else(|| drop_response.hover_pos())
+                    .map(|p| p.y > drop_response.rect.center().y)
+                    .unwrap_or(false);
+                pending_reorder = Some((payload.topic.clone(), topic.clone(), after));
             }
-            if let Some(mode) = mode_changed {
-                profiles.set_sticky_view_mode_and_save(&pin.profile_id, &pin.topic, mode);
-            }
-        });
-    flash::paint_inset_or(ui, card.response.rect, flash_stroke, card_stroke);
+        }
+    });
+    let _ = row;
+    pending_reorder
 }
 
 /// Wrap text inside the chrome-height strip — never grows the sticky card.

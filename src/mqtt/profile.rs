@@ -261,6 +261,24 @@ impl ConnectionProfile {
         }
         false
     }
+
+    /// Move sticky `dragged` before/after `target` in this profile’s list. Returns true if changed.
+    pub fn reorder_sticky(&mut self, dragged: &str, target: &str, after: bool) -> bool {
+        if dragged == target {
+            return false;
+        }
+        let Some(from) = self.stickies.iter().position(|s| s.topic == dragged) else {
+            return false;
+        };
+        let item = self.stickies.remove(from);
+        let Some(to) = self.stickies.iter().position(|s| s.topic == target) else {
+            self.stickies.push(item);
+            return true;
+        };
+        let idx = if after { to + 1 } else { to };
+        self.stickies.insert(idx, item);
+        true
+    }
 }
 
 #[derive(Serialize, Deserialize)]
@@ -517,6 +535,25 @@ impl ProfileStore {
             let _ = self.save();
         }
     }
+
+    /// Reorder stickies on a profile and save (same persistence as pin/unpin).
+    pub fn reorder_sticky_and_save(
+        &mut self,
+        profile_id: &str,
+        dragged: &str,
+        target: &str,
+        after: bool,
+    ) -> bool {
+        let changed = self
+            .profiles
+            .get_mut(profile_id)
+            .map(|p| p.reorder_sticky(dragged, target, after))
+            .unwrap_or(false);
+        if changed {
+            let _ = self.save();
+        }
+        changed
+    }
 }
 
 /// Ensure WebSocket path starts with `/` (empty → `/mqtt`).
@@ -608,6 +645,35 @@ mod tests {
         assert_eq!(
             legacy_store.profiles["x"].stickies,
             vec![StickyPref::new("a/b", StickyViewMode::Raw)]
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn reorder_sticky_persists_topic_order() {
+        let dir = std::env::temp_dir().join(format!("topicbench-sticky-order-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        let path = dir.join("profiles.json");
+
+        let mut store = ProfileStore::with_samples();
+        let p = store.profiles.get_mut("local").unwrap();
+        p.set_sticky("a/one", true);
+        p.set_sticky("a/two", true);
+        p.set_sticky("a/three", true);
+        assert!(p.reorder_sticky("a/three", "a/one", false)); // three before one
+        assert_eq!(
+            p.stickies.iter().map(|s| s.topic.as_str()).collect::<Vec<_>>(),
+            vec!["a/three", "a/one", "a/two"]
+        );
+        store.save_to(&path).unwrap();
+        let loaded = ProfileStore::load_from(&path);
+        assert_eq!(
+            loaded.profiles["local"]
+                .stickies
+                .iter()
+                .map(|s| s.topic.as_str())
+                .collect::<Vec<_>>(),
+            vec!["a/three", "a/one", "a/two"]
         );
         let _ = fs::remove_dir_all(&dir);
     }
