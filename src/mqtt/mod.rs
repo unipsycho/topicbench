@@ -2,6 +2,7 @@
 
 pub mod certs;
 pub mod live;
+pub mod paths;
 pub mod pins;
 pub mod profile;
 pub mod publish;
