@@ -15,6 +15,7 @@ use crate::ui::search_bar::SearchFilter;
 use crate::ui::payload_panel::{PayloadSearch, PoppedPayload};
 use crate::ui::flash;
 use crate::ui::splash::SplashIntro;
+use crate::update::{self, ReleaseInfo, UpdateService, UpdateStatus};
 use eframe::egui::{self, TextureHandle};
 use std::collections::HashSet;
 use std::sync::atomic::Ordering;
@@ -90,6 +91,20 @@ pub struct MqttMonitorApp {
     payload_popped: Vec<PoppedPayload>,
     /// Startup AA logo intro; dropped when finished / skipped.
     splash: Option<SplashIntro>,
+    /// Background GitHub Releases check / install.
+    update_service: UpdateService,
+    update_status: UpdateStatus,
+    /// Offer shown in the update modal (also kept while Remind/Skip hides the modal).
+    update_offer: Option<ReleaseInfo>,
+    update_modal_open: bool,
+    /// Session-only Remind me later (also persisted ~24h via settings).
+    update_remind_session: bool,
+    /// Startup checks stay quiet on failure; manual Check now surfaces in Settings.
+    update_check_quiet: bool,
+    /// Startup auto-check fired once after splash.
+    update_auto_check_done: bool,
+    /// Extra note when install fell back to opening the browser.
+    update_modal_fallback_note: Option<String>,
 }
 
 impl MqttMonitorApp {
@@ -148,6 +163,14 @@ impl MqttMonitorApp {
             topic_tree_undocked: HashSet::new(),
             payload_popped: Vec::new(),
             splash: Some(SplashIntro::new(splash_logo)),
+            update_service: UpdateService::new(),
+            update_status: UpdateStatus::Idle,
+            update_offer: None,
+            update_modal_open: false,
+            update_remind_session: false,
+            update_check_quiet: true,
+            update_auto_check_done: false,
+            update_modal_fallback_note: None,
         }
     }
 }
@@ -238,10 +261,25 @@ impl eframe::App for MqttMonitorApp {
             ctx.request_repaint_after(crate::mqtt::session::BACKGROUND_UI_HZ_INTERVAL);
         }
 
+        // Drain update-check / install results (never blocks UI).
+        while let Some(ev) = self.update_service.try_recv() {
+            self.handle_update_event(ev);
+            ctx.request_repaint();
+        }
+        // Quiet startup check once after splash (24h cache).
+        if !self.update_auto_check_done
+            && update::should_auto_check(self.settings.last_update_check)
+        {
+            self.update_auto_check_done = true;
+            self.request_update_check(true);
+        } else if !self.update_auto_check_done {
+            self.update_auto_check_done = true;
+        }
+
         self.handle_shortcuts(ctx);
-        // Suppress tips from panels under Settings / Keyboard Shortcuts overlays
-        // (including custom tree payload/topic popups — not only egui on_hover_text).
-        let block_tips = self.settings_open || self.shortcuts_open;
+        // Suppress tips under Settings / Shortcuts / Update overlays.
+        let block_tips =
+            self.settings_open || self.shortcuts_open || self.update_modal_open;
         crate::ui::hover_tip::set_block_hover_tips(ctx, block_tips);
         if block_tips {
             crate::ui::topic_tree_panel::dismiss_hover_tips(ctx);

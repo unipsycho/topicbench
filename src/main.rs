@@ -6,6 +6,7 @@
 mod app;
 mod mqtt;
 mod ui;
+mod update;
 
 use eframe::egui::{self, Color32, IconData, Visuals};
 use ui::icons::{CHROME_BG, STATUS_BG};

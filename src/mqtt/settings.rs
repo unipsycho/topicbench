@@ -143,6 +143,15 @@ pub struct AppSettings {
     /// When true, the search filter also hides non-matching sticky topics.
     #[serde(default = "default_true")]
     pub search_apply_to_stickies: bool,
+    /// Unix seconds of last update check (startup cache / Settings “last checked”).
+    #[serde(default)]
+    pub last_update_check: Option<u64>,
+    /// Skipped release tag — don’t prompt again until a newer tag appears.
+    #[serde(default)]
+    pub skipped_update_version: Option<String>,
+    /// Unix seconds until “Remind me later” expires (~24h).
+    #[serde(default)]
+    pub remind_later_until: Option<u64>,
 }
 
 fn default_true() -> bool {
@@ -176,6 +185,9 @@ impl Default for AppSettings {
             search_query: String::new(),
             search_scope: SearchScope::All,
             search_apply_to_stickies: true,
+            last_update_check: None,
+            skipped_update_version: None,
+            remind_later_until: None,
         }
     }
 }
