@@ -297,14 +297,14 @@ impl MqttMonitorApp {
                         .map(|f| f.family.clone())
                         .unwrap_or(FontFamily::Proportional);
                     let font_id = FontId::new(title_size, strong_family);
-                    let (mqtt_g, master_g) = ui.fonts(|f| {
+                    let (line1_g, line2_g) = ui.fonts(|f| {
                         (
-                            f.layout_no_wrap("MQTT".into(), font_id.clone(), green),
-                            f.layout_no_wrap("Master".into(), font_id, green),
+                            f.layout_no_wrap("Topic".into(), font_id.clone(), green),
+                            f.layout_no_wrap("Bench".into(), font_id, green),
                         )
                     });
-                    let title_w = mqtt_g.size().x.max(master_g.size().x).ceil();
-                    let stack_h = mqtt_g.size().y + master_g.size().y + line_gap;
+                    let title_w = line1_g.size().x.max(line2_g.size().x).ceil();
+                    let stack_h = line1_g.size().y + line2_g.size().y + line_gap;
                     let logo_w = logo_size.x;
 
                     // Collapse: App → Profiles → Panels → hide title → hide Stats.
@@ -370,15 +370,15 @@ impl MqttMonitorApp {
                                     egui::Sense::hover(),
                                 );
                                 let top = title_rect.center().y - stack_h * 0.5;
-                                let mqtt_x =
-                                    title_rect.left() + (title_w - mqtt_g.size().x) * 0.5;
-                                let master_x =
-                                    title_rect.left() + (title_w - master_g.size().x) * 0.5;
+                                let line1_x =
+                                    title_rect.left() + (title_w - line1_g.size().x) * 0.5;
+                                let line2_x =
+                                    title_rect.left() + (title_w - line2_g.size().x) * 0.5;
                                 ui.painter()
-                                    .galley(egui::pos2(mqtt_x, top), mqtt_g, green);
+                                    .galley(egui::pos2(line1_x, top), line1_g, green);
                                 ui.painter().galley(
-                                    egui::pos2(master_x, top + stack_h - master_g.size().y),
-                                    master_g,
+                                    egui::pos2(line2_x, top + stack_h - line2_g.size().y),
+                                    line2_g,
                                     green,
                                 );
                                 ui.add_space(10.0);

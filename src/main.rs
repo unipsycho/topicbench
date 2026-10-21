@@ -1,4 +1,4 @@
-//! MQTT Master — egui/eframe shell (ArtCraft Crafting Apps stack).
+//! TopicBench — egui/eframe shell (ArtCraft Crafting Apps stack).
 
 // Hide the console window on Windows GUI builds (no-op on Linux).
 #![cfg_attr(windows, windows_subsystem = "windows")]
@@ -15,8 +15,8 @@ fn main() -> eframe::Result<()> {
     let icon = load_window_icon();
     let mut viewport = egui::ViewportBuilder::default()
         .with_inner_size([1200.0, 760.0])
-        .with_title("MQTT Master")
-        // Wayland app_id — Hyprland ANR was showing "MQTT Master - (unknown)" with empty class.
+        .with_title("TopicBench")
+        // Wayland app_id — keep stable so Hyprland rules keep matching.
         .with_app_id("com.agileautomation.mqtt-master")
         // Splash starts as a floating AA logo; decorations + opacity restored when it ends.
         .with_transparent(true)
@@ -34,7 +34,7 @@ fn main() -> eframe::Result<()> {
     };
 
     eframe::run_native(
-        "MQTT Master",
+        "TopicBench",
         options,
         Box::new(|cc| {
             apply_dark_chrome(&cc.egui_ctx);
