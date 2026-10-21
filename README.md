@@ -1,8 +1,10 @@
-# MQTT Master
+# TopicBench (MQTT Master)
 
-Dedicated repository for the Rust + egui **MQTT Master** monitor (Explorer-style).
+**TopicBench** is the free/OSS product name for this Rust + egui MQTT monitor (Explorer-style). The local crate/binary still use the MQTT Master name until a later rename pass.
 
-**Clone:** `git clone https://gitlab.com/agileautomation/mqtt-master.git`
+**GitHub (canonical for releases / updates):** https://github.com/unipsycho/topicbench  
+**Clone:** `git clone https://github.com/unipsycho/topicbench.git`  
+**GitLab mirror:** `https://gitlab.com/agileautomation/mqtt-master.git`
 
 Rust desktop app for multi-broker MQTT monitoring: connection profiles, wildcard subscribe, shared sticky board, topic tree, and publish.
 
