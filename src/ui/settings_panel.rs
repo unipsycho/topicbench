@@ -3,9 +3,10 @@
 use crate::mqtt::settings::{
     AppSettings, StickyLayoutMode, TopicTreeExpandMode, MAX_PACKET_MAX, MAX_PACKET_MIN,
 };
-use crate::ui::icons::{self, IconSet, CHROME_ACCENT_BORDER};
+use crate::ui::icons::{self, IconSet, CHROME_ACCENT_BORDER, CHROME_MUTED, CHROME_TEXT};
 use crate::ui::shortcuts;
-use eframe::egui::{self, Sense};
+use crate::update::{self, UpdateStatus};
+use eframe::egui::{self, RichText, Sense};
 
 /// Sticky board layout (Settings dropdown): one sticky per row, or a column grid.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -55,12 +56,21 @@ impl StickyLayoutChoice {
     }
 }
 
+/// Live Updates section inputs (not part of the Save draft).
+pub struct UpdatesSection<'a> {
+    pub status: &'a UpdateStatus,
+    pub last_check_unix: Option<u64>,
+    pub checking: bool,
+    pub check_now: &'a mut bool,
+}
+
 /// Draw settings body into `draft` (caller commits on Save / discards on Cancel).
 pub fn draw(
     ui: &mut egui::Ui,
     draft: &mut AppSettings,
     icons: &IconSet,
     open_shortcuts: &mut bool,
+    updates: UpdatesSection<'_>,
 ) {
     icons::section_header_bar(ui, |ui| {
         icons::section_icon(ui, icons, "configuration_sliders");
@@ -156,4 +166,51 @@ pub fn draw(
         *open_shortcuts = true;
     }
     ui.weak("Also F1 or ? when not typing.");
+
+    ui.add_space(12.0);
+    ui.strong("Updates");
+    ui.label(
+        RichText::new(format!("Current version: {}", update::current_version())).color(CHROME_TEXT),
+    );
+    ui.label(
+        RichText::new(format!("Last checked: {}", format_last_checked(updates.last_check_unix)))
+            .color(CHROME_MUTED),
+    );
+    ui.label(RichText::new(updates.status.settings_line()).color(CHROME_MUTED));
+    ui.add_space(4.0);
+    let check_btn = ui.add_enabled(
+        !updates.checking,
+        egui::Button::new(if updates.checking {
+            "Checking…"
+        } else {
+            "Check now"
+        })
+        .min_size(egui::vec2(96.0, 28.0)),
+    );
+    if check_btn.clicked() {
+        *updates.check_now = true;
+    }
+    ui.weak(format!(
+        "Checks GitHub Releases ({}).",
+        update::GITHUB_REPO
+    ));
+}
+
+fn format_last_checked(unix: Option<u64>) -> String {
+    match unix {
+        None => "never".into(),
+        Some(ts) => {
+            let now = update::now_unix();
+            let ago = now.saturating_sub(ts);
+            if ago < 60 {
+                "just now".into()
+            } else if ago < 3600 {
+                format!("{} min ago", ago / 60)
+            } else if ago < 86400 {
+                format!("{} h ago", ago / 3600)
+            } else {
+                format!("{} d ago", ago / 86400)
+            }
+        }
+    }
 }

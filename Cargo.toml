@@ -21,6 +21,10 @@ image = { version = "0.25", default-features = false, features = ["png"] }
 rfd = "0.15"
 # OS credential store: Secret Service (Linux), Credential Manager (Windows), Keychain (macOS).
 keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service"] }
+# Check-for-updates: GitHub Releases HTTP + semver + SHA-256 verify.
+ureq = { version = "2.12", features = ["json"] }
+semver = "1"
+sha2 = "0.10"
 
 [build-dependencies]
 # Embed mqtt-monitor.exe icon on Windows (and cross-compile via MinGW windres).
