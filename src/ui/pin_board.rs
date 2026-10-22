@@ -254,6 +254,7 @@ fn draw_sticky(
             })
             .show(ui, |ui| {
                 let mut mode_changed: Option<StickyViewMode> = None;
+                let mut combined_changed: Option<bool> = None;
                 let mut unstick = false;
                 let mut copy_payload = false;
                 let mut copy_topic = false;
@@ -351,19 +352,25 @@ fn draw_sticky(
                                                     live.view_mode = mode;
                                                 }
                                             }
-                                            // Pro: Combined graph — only when entitled + Graph mode.
-                                            if multi_graph
-                                                && live.view_mode == StickyViewMode::Graph
-                                                && icons
+                                            // Pro: opt into Combined multi-graph (persisted; default off).
+                                            if multi_graph && live.view_mode == StickyViewMode::Graph
+                                            {
+                                                let on = live.in_combined;
+                                                if icons
                                                     .tiny(
                                                         ui,
                                                         "node_graph",
-                                                        *combined_graph_open,
-                                                        "Combined graph",
+                                                        on,
+                                                        "Include in Combined graph",
                                                     )
                                                     .clicked()
-                                            {
-                                                *combined_graph_open = !*combined_graph_open;
+                                                {
+                                                    live.in_combined = !on;
+                                                    combined_changed = Some(live.in_combined);
+                                                    if live.in_combined {
+                                                        *combined_graph_open = true;
+                                                    }
+                                                }
                                             }
                                         });
                                     });
@@ -439,6 +446,9 @@ fn draw_sticky(
                 }
                 if let Some(mode) = mode_changed {
                     profiles.set_sticky_view_mode_and_save(&pin.profile_id, &pin.topic, mode);
+                }
+                if let Some(on) = combined_changed {
+                    profiles.set_sticky_in_combined_and_save(&pin.profile_id, &pin.topic, on);
                 }
             });
 
@@ -639,7 +649,7 @@ fn sticky_short_label(topic: &str) -> String {
     }
 }
 
-/// Pro: shared time-axis overlay of all Graph-mode stickies with numeric history.
+/// Pro: shared time-axis overlay of opted-in Graph stickies with numeric history.
 fn draw_combined_graph(
     ui: &mut egui::Ui,
     pins: &PinBoard,
@@ -647,9 +657,12 @@ fn draw_combined_graph(
     filter: &SearchFilter,
     open: &mut bool,
 ) {
-    // v1: auto-include every connected Graph sticky that has numeric samples.
+    // Only stickies with Combined include on (default off).
     let mut series: Vec<(&StickyTopic, Color32)> = Vec::new();
     for p in pins.items.values() {
+        if !p.in_combined {
+            continue;
+        }
         if !connected.contains(p.profile_id.as_str()) {
             continue;
         }
@@ -690,10 +703,12 @@ fn draw_combined_graph(
 
             if series.is_empty() {
                 ui.label(
-                    RichText::new("No Graph stickies with numeric history yet.")
+                    RichText::new("No series included yet.")
                         .color(CHROME_MUTED),
                 );
-                ui.weak("Switch stickies to Graph mode — they appear here on one time axis.");
+                ui.weak(
+                    "On a Graph sticky, tap the Combined icon to include it (off by default).",
+                );
                 return;
             }
 
@@ -703,7 +718,7 @@ fn draw_combined_graph(
         });
 }
 
-/// Shared X = Instant domain (union of histories); shared Y auto-scale; gap = omit (no hold-last).
+/// Left Y-axis labels (4 ticks) + plot; bottom X time span. Shared auto Y; Instant X.
 fn paint_multi_series_plot(ui: &mut egui::Ui, series: &[(&StickyTopic, Color32)], height: f32) {
     let mut t0: Option<Instant> = None;
     let mut t1: Option<Instant> = None;
@@ -741,45 +756,88 @@ fn paint_multi_series_plot(ui: &mut egui::Ui, series: &[(&StickyTopic, Color32)]
     let y_span = (y_hi - y_lo).max(1e-9);
     let dt = t1.saturating_duration_since(t0).as_secs_f32().max(1e-3);
 
-    let plot_w = ui.available_width().max(48.0);
-    let (rect, response) =
-        ui.allocate_exact_size(egui::vec2(plot_w, height), egui::Sense::hover());
-    let painter = ui.painter_at(rect);
-    painter.rect_filled(rect, 2.0, ui.visuals().extreme_bg_color);
+    const Y_LABEL_W: f32 = 52.0;
+    const X_LABEL_H: f32 = 16.0;
+    const Y_TICKS: usize = 4;
+    let plot_h = (height - X_LABEL_H).max(48.0);
+    let avail = ui.available_width().max(Y_LABEL_W + 48.0);
+    let plot_w = (avail - Y_LABEL_W).max(48.0);
 
-    // Subtle midline for orientation on dark chrome.
-    let mid_y = rect.center().y;
-    painter.hline(
-        rect.x_range(),
-        mid_y,
-        Stroke::new(1.0_f32, Color32::from_rgb(48, 52, 60)),
-    );
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 4.0;
+        let (label_rect, _) =
+            ui.allocate_exact_size(egui::vec2(Y_LABEL_W, plot_h), egui::Sense::hover());
+        let (rect, response) =
+            ui.allocate_exact_size(egui::vec2(plot_w, plot_h), egui::Sense::hover());
+        let painter = ui.painter_at(rect.union(label_rect));
+        painter.rect_filled(rect, 2.0, ui.visuals().extreme_bg_color);
 
-    for (pin, color) in series {
-        let mut points = Vec::new();
-        for s in &pin.history {
-            let Some(v) = s.numeric else { continue };
-            if !v.is_finite() {
-                continue;
+        // Horizontal grid + right-aligned Y labels (top = high).
+        let grid = Stroke::new(1.0_f32, Color32::from_rgb(48, 52, 60));
+        let font = egui::TextStyle::Small.resolve(ui.style());
+        for i in 0..Y_TICKS {
+            let frac = i as f32 / (Y_TICKS - 1) as f32;
+            let v = y_hi - f64::from(frac) * (y_hi - y_lo);
+            let y = rect.top() + frac * rect.height();
+            painter.hline(rect.x_range(), y, grid);
+            let text = fmt_scale(v);
+            let galley = ui.fonts(|f| f.layout_no_wrap(text, font.clone(), CHROME_MUTED));
+            let pos = Pos2::new(
+                label_rect.right() - galley.size().x - 2.0,
+                y - galley.size().y * 0.5,
+            );
+            painter.galley(pos, galley, CHROME_MUTED);
+        }
+
+        for (pin, color) in series {
+            let mut points = Vec::new();
+            for s in &pin.history {
+                let Some(v) = s.numeric else { continue };
+                if !v.is_finite() {
+                    continue;
+                }
+                let x_t = s.at.saturating_duration_since(t0).as_secs_f32() / dt;
+                let x = rect.left() + x_t.clamp(0.0, 1.0) * rect.width();
+                let y = rect.bottom() - (((v - y_lo) / y_span) as f32) * rect.height();
+                points.push(Pos2::new(x, y));
             }
-            let x_t = s.at.saturating_duration_since(t0).as_secs_f32() / dt;
-            let x = rect.left() + x_t.clamp(0.0, 1.0) * rect.width();
-            let y = rect.bottom() - (((v - y_lo) / y_span) as f32) * rect.height();
-            points.push(Pos2::new(x, y));
+            if points.len() >= 2 {
+                painter.add(egui::Shape::line(points, Stroke::new(1.6_f32, *color)));
+            } else if let Some(p) = points.first() {
+                painter.circle_filled(*p, 3.0, *color);
+            }
         }
-        if points.len() >= 2 {
-            painter.add(egui::Shape::line(points, Stroke::new(1.6_f32, *color)));
-        } else if let Some(p) = points.first() {
-            painter.circle_filled(*p, 3.0, *color);
-        }
-    }
 
-    response.on_hover_text(format!(
-        "Y {:.3} … {:.3} · {} series · shared time axis",
-        min_v,
-        max_v,
-        series.len()
-    ));
+        response.on_hover_text(format!(
+            "Y {} … {} · {} series · shared time axis",
+            fmt_scale(min_v),
+            fmt_scale(max_v),
+            series.len()
+        ));
+    });
+
+    // X-axis time span under the plot (aligned with plot, not Y labels).
+    ui.horizontal(|ui| {
+        ui.add_space(Y_LABEL_W + 4.0);
+        ui.label(RichText::new("0s").small().color(CHROME_MUTED));
+        ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
+            ui.label(
+                RichText::new(fmt_duration_axis(dt))
+                    .small()
+                    .color(CHROME_MUTED),
+            );
+        });
+    });
+}
+
+fn fmt_duration_axis(secs: f32) -> String {
+    if secs < 60.0 {
+        format!("{secs:.0}s")
+    } else if secs < 3600.0 {
+        format!("{:.1}m", f64::from(secs) / 60.0)
+    } else {
+        format!("{:.1}h", f64::from(secs) / 3600.0)
+    }
 }
 
 /// Wrapping legend: color swatch + short name + current value; tooltip = full topic.

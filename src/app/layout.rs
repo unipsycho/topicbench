@@ -20,6 +20,16 @@ use image::RgbaImage;
 use std::collections::BTreeMap;
 use std::time::Instant;
 
+/// Ribbon panel height: brand/group band (`brand_h` 70) + vertical frame margins (4+4).
+const RIBBON_PANEL_H: f32 = 78.0;
+const STATUS_STRIP_H: f32 = 24.0;
+
+/// Rects reserved by top chrome panels (real UI paints later on Middle overlays).
+pub(super) struct TopChromeRects {
+    pub ribbon: egui::Rect,
+    pub status: egui::Rect,
+}
+
 impl MqttMonitorApp {
     /// Profiles ribbon group (full captions or compact 2-high icons).
     fn draw_ribbon_profiles(&mut self, ui: &mut egui::Ui, mode: SectionMode) {
@@ -257,213 +267,218 @@ impl MqttMonitorApp {
         });
     }
 
-    pub(super) fn draw_ribbon(&mut self, ctx: &egui::Context) {
-        // Dark chrome. Groups shrink-wrap (see icons::ribbon_group) so Profiles cannot
-        // expand across the bar and leave Panels/Settings with zero width.
-        egui::TopBottomPanel::top("ribbon")
+    /// Reserve top chrome space only — real ribbon/status paint after CentralPanel
+    /// on Middle overlays so sticky/tree scroll cannot draw over the navbar.
+    pub(super) fn reserve_top_chrome(&mut self, ctx: &egui::Context) -> TopChromeRects {
+        let ribbon = egui::TopBottomPanel::top("ribbon")
             .resizable(false)
+            .exact_height(RIBBON_PANEL_H)
             .show_separator_line(false)
             .frame(
                 egui::Frame::NONE
                     .fill(CHROME_BG)
-                    .inner_margin(egui::Margin::symmetric(8, 4))
                     .stroke(egui::Stroke::new(1.0_f32, CHROME_SEP)),
             )
             .show(ctx, |ui| {
-                ui.visuals_mut().override_text_color = Some(CHROME_TEXT);
-                ui.spacing_mut().item_spacing.y = 0.0;
-
-                // Top-align the ribbon row (Align::Center left a clear-color void above the
-                // frame while egui still reserved space from the window top). Brand logo +
-                // two-line title stay vertically centered inside brand_h below.
-                ui.with_layout(egui::Layout::left_to_right(egui::Align::Min), |ui| {
-                    ui.spacing_mut().item_spacing.x = 4.0;
-
-                    // Brand metrics (also feed collapse width planning).
-                    let logo_size = self
-                        .logo
-                        .as_ref()
-                        .map(|l| l.size_vec2())
-                        .unwrap_or(egui::vec2(108.0, 54.0));
-                    let brand_h = 70.0; // match ribbon group / separator height
-                    let green = Color32::from_rgb(90, 190, 120); // Connected/status green
-                    // Brand title stays fixed — only command captions follow font zoom.
-                    let title_size = 24.0;
-                    let line_gap = -2.0_f32;
-                    let strong_family = ui
-                        .style()
-                        .text_styles
-                        .get(&TextStyle::Name("Strong".into()))
-                        .map(|f| f.family.clone())
-                        .unwrap_or(FontFamily::Proportional);
-                    let font_id = FontId::new(title_size, strong_family);
-                    let (line1_g, line2_g) = ui.fonts(|f| {
-                        (
-                            f.layout_no_wrap("Topic".into(), font_id.clone(), green),
-                            f.layout_no_wrap("Bench".into(), font_id, green),
-                        )
-                    });
-                    let title_w = line1_g.size().x.max(line2_g.size().x).ceil();
-                    let stack_h = line1_g.size().y + line2_g.size().y + line_gap;
-                    let logo_w = logo_size.x;
-
-                    // Collapse: App → Profiles → Panels → hide title → hide Stats.
-                    let avail_w = ui.available_width();
-                    let plan = ribbon_layout::plan_for_width(
-                        avail_w,
-                        logo_w,
-                        title_w,
-                        stats_ribbon::estimate_width(),
-                        icons::font_zoom_factor(ui),
-                    );
-                    let brand_w = if plan.show_title {
-                        logo_w + 10.0 + title_w + 10.0
-                    } else {
-                        logo_w + 10.0
-                    };
-
-                    // Brand: logo centered in its slot; version bottom-right of that slot.
-                    const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
-                    let ver_font = FontId::new(10.0, FontFamily::Proportional);
-                    let ver_g = ui.fonts(|f| {
-                        f.layout_no_wrap(
-                            format!("v{APP_VERSION}"),
-                            ver_font,
-                            CHROME_MUTED,
-                        )
-                    });
-                    ui.allocate_ui_with_layout(
-                        egui::vec2(brand_w, brand_h),
-                        egui::Layout::left_to_right(Align::Center),
-                        |ui| {
-                            ui.spacing_mut().item_spacing.x = 0.0;
-                            let (logo_rect, _) = ui.allocate_exact_size(
-                                egui::vec2(logo_w, brand_h),
-                                egui::Sense::hover(),
-                            );
-                            if let Some(logo) = &self.logo {
-                                let logo_pos = egui::pos2(
-                                    logo_rect.center().x - logo_size.x * 0.5,
-                                    logo_rect.center().y - logo_size.y * 0.5,
-                                );
-                                ui.put(
-                                    egui::Rect::from_min_size(logo_pos, logo_size),
-                                    egui::Image::new(logo)
-                                        .fit_to_exact_size(logo_size)
-                                        .maintain_aspect_ratio(true)
-                                        .sense(egui::Sense::hover()),
-                                );
-                            }
-                            // Version tucked in the bottom-right of the logo slot.
-                            ui.painter().galley(
-                                egui::pos2(
-                                    logo_rect.right() - ver_g.size().x,
-                                    logo_rect.bottom() - ver_g.size().y,
-                                ),
-                                ver_g,
-                                CHROME_MUTED,
-                            );
-                            if plan.show_title {
-                                ui.add_space(10.0);
-                                let (title_rect, _) = ui.allocate_exact_size(
-                                    egui::vec2(title_w, brand_h),
-                                    egui::Sense::hover(),
-                                );
-                                let top = title_rect.center().y - stack_h * 0.5;
-                                let line1_x =
-                                    title_rect.left() + (title_w - line1_g.size().x) * 0.5;
-                                let line2_x =
-                                    title_rect.left() + (title_w - line2_g.size().x) * 0.5;
-                                ui.painter()
-                                    .galley(egui::pos2(line1_x, top), line1_g, green);
-                                ui.painter().galley(
-                                    egui::pos2(line2_x, top + stack_h - line2_g.size().y),
-                                    line2_g,
-                                    green,
-                                );
-                                ui.add_space(10.0);
-                            }
-                        },
-                    );
-
-                    icons::ribbon_separator(ui);
-                    self.draw_ribbon_profiles(ui, plan.profiles);
-                    icons::ribbon_separator(ui);
-                    self.draw_ribbon_panels(ui, plan.panels);
-                    icons::ribbon_separator(ui);
-                    self.draw_ribbon_app(ui, ctx, plan.app);
-
-                    // Stats far-right (RTL: group then sep → App | Stats).
-                    if plan.show_stats {
-                        let remaining = ui.available_width();
-                        if remaining > 8.0 {
-                            ui.with_layout(
-                                egui::Layout::right_to_left(egui::Align::Min),
-                                |ui| {
-                                    ui.set_max_width(remaining);
-                                    stats_ribbon::draw_group(
-                                        ui,
-                                        &self.sessions.traffic_stats,
-                                    );
-                                    icons::ribbon_separator(ui);
-                                },
-                            );
-                        }
-                    }
-                });
+                reserve_side_panel_space(ui);
             });
 
-        // Status strip: left = always-on brokers + msg/min; right = ephemeral status (fades).
-        egui::TopBottomPanel::top("status_strip")
-            .exact_height(24.0)
+        let status = egui::TopBottomPanel::top("status_strip")
+            .exact_height(STATUS_STRIP_H)
             .show_separator_line(false)
             .frame(
                 egui::Frame::NONE
                     .fill(CHROME_BG)
-                    .inner_margin(egui::Margin::symmetric(10, 3))
                     .stroke(egui::Stroke::new(1.0_f32, CHROME_SEP)),
             )
             .show(ctx, |ui| {
-                ui.visuals_mut().override_text_color = Some(CHROME_TEXT);
-                let connected = self
-                    .sessions
-                    .open
-                    .values()
-                    .filter(|s| s.state == SessionState::Connected)
-                    .count();
-                let broker_label = if connected == 1 {
-                    "1 broker connected".to_string()
-                } else {
-                    format!("{connected} brokers connected")
-                };
-                let msgs = self.sessions.traffic_stats.format_msgs_per_min();
-                // Same green as Connected status elsewhere.
-                let broker_green = Color32::from_rgb(90, 190, 120);
+                reserve_side_panel_space(ui);
+            });
 
-                ui.horizontal_centered(|ui| {
-                    ui.label(RichText::new(broker_label).color(broker_green));
-                    ui.add_space(8.0);
-                    ui.label(RichText::new("·").color(CHROME_MUTED));
-                    ui.add_space(8.0);
-                    ui.label(RichText::new(msgs).color(CHROME_CAPTION));
-                    ui.add_space(12.0);
-                    ui.label(RichText::new("·").color(CHROME_MUTED));
-                    ui.add_space(12.0);
+        TopChromeRects {
+            ribbon: ribbon.response.rect,
+            status: status.response.rect,
+        }
+    }
 
-                    let alpha = status_strip_fade_alpha(self.status_changed_at, Instant::now());
-                    if alpha > 0.01 && !self.status.is_empty() {
-                        let a = (255.0 * alpha) as u8;
-                        ui.label(
-                            RichText::new(&self.status).color(Color32::from_rgba_unmultiplied(
-                                CHROME_TEXT.r(),
-                                CHROME_TEXT.g(),
-                                CHROME_TEXT.b(),
-                                a,
-                            )),
+    /// Paint ribbon + status above central scroll (covers sticky/graph bleed).
+    pub(super) fn draw_top_chrome_overlays(
+        &mut self,
+        ctx: &egui::Context,
+        rects: TopChromeRects,
+    ) {
+        top_chrome_overlay(ctx, "ribbon_front", rects.ribbon, |ui| {
+            self.paint_ribbon_bar(ui, ctx);
+        });
+        top_chrome_overlay(ctx, "status_front", rects.status, |ui| {
+            self.paint_status_strip(ui);
+        });
+    }
+
+    /// Ribbon command bar body (drawn inside the Middle overlay).
+    fn paint_ribbon_bar(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
+        ui.visuals_mut().override_text_color = Some(CHROME_TEXT);
+        ui.spacing_mut().item_spacing.y = 0.0;
+
+        // Top-align the ribbon row. Brand logo + two-line title centered in brand_h.
+        ui.with_layout(egui::Layout::left_to_right(egui::Align::Min), |ui| {
+            ui.spacing_mut().item_spacing.x = 4.0;
+
+            let logo_size = self
+                .logo
+                .as_ref()
+                .map(|l| l.size_vec2())
+                .unwrap_or(egui::vec2(108.0, 54.0));
+            let brand_h = 70.0; // match ribbon group / separator height
+            let green = Color32::from_rgb(90, 190, 120);
+            let title_size = 24.0;
+            let line_gap = -2.0_f32;
+            let strong_family = ui
+                .style()
+                .text_styles
+                .get(&TextStyle::Name("Strong".into()))
+                .map(|f| f.family.clone())
+                .unwrap_or(FontFamily::Proportional);
+            let font_id = FontId::new(title_size, strong_family);
+            let (line1_g, line2_g) = ui.fonts(|f| {
+                (
+                    f.layout_no_wrap("Topic".into(), font_id.clone(), green),
+                    f.layout_no_wrap("Bench".into(), font_id, green),
+                )
+            });
+            let title_w = line1_g.size().x.max(line2_g.size().x).ceil();
+            let stack_h = line1_g.size().y + line2_g.size().y + line_gap;
+            let logo_w = logo_size.x;
+
+            // Collapse: App → Profiles → Panels → hide title → hide Stats.
+            let avail_w = ui.available_width();
+            let plan = ribbon_layout::plan_for_width(
+                avail_w,
+                logo_w,
+                title_w,
+                stats_ribbon::estimate_width(),
+                icons::font_zoom_factor(ui),
+            );
+            let brand_w = if plan.show_title {
+                logo_w + 10.0 + title_w + 10.0
+            } else {
+                logo_w + 10.0
+            };
+
+            const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
+            let ver_font = FontId::new(10.0, FontFamily::Proportional);
+            let ver_g = ui.fonts(|f| {
+                f.layout_no_wrap(format!("v{APP_VERSION}"), ver_font, CHROME_MUTED)
+            });
+            ui.allocate_ui_with_layout(
+                egui::vec2(brand_w, brand_h),
+                egui::Layout::left_to_right(Align::Center),
+                |ui| {
+                    ui.spacing_mut().item_spacing.x = 0.0;
+                    let (logo_rect, _) =
+                        ui.allocate_exact_size(egui::vec2(logo_w, brand_h), egui::Sense::hover());
+                    if let Some(logo) = &self.logo {
+                        let logo_pos = egui::pos2(
+                            logo_rect.center().x - logo_size.x * 0.5,
+                            logo_rect.center().y - logo_size.y * 0.5,
+                        );
+                        ui.put(
+                            egui::Rect::from_min_size(logo_pos, logo_size),
+                            egui::Image::new(logo)
+                                .fit_to_exact_size(logo_size)
+                                .maintain_aspect_ratio(true)
+                                .sense(egui::Sense::hover()),
                         );
                     }
-                });
-            });
+                    ui.painter().galley(
+                        egui::pos2(
+                            logo_rect.right() - ver_g.size().x,
+                            logo_rect.bottom() - ver_g.size().y,
+                        ),
+                        ver_g,
+                        CHROME_MUTED,
+                    );
+                    if plan.show_title {
+                        ui.add_space(10.0);
+                        let (title_rect, _) = ui.allocate_exact_size(
+                            egui::vec2(title_w, brand_h),
+                            egui::Sense::hover(),
+                        );
+                        let top = title_rect.center().y - stack_h * 0.5;
+                        let line1_x = title_rect.left() + (title_w - line1_g.size().x) * 0.5;
+                        let line2_x = title_rect.left() + (title_w - line2_g.size().x) * 0.5;
+                        ui.painter()
+                            .galley(egui::pos2(line1_x, top), line1_g, green);
+                        ui.painter().galley(
+                            egui::pos2(line2_x, top + stack_h - line2_g.size().y),
+                            line2_g,
+                            green,
+                        );
+                        ui.add_space(10.0);
+                    }
+                },
+            );
+
+            icons::ribbon_separator(ui);
+            self.draw_ribbon_profiles(ui, plan.profiles);
+            icons::ribbon_separator(ui);
+            self.draw_ribbon_panels(ui, plan.panels);
+            icons::ribbon_separator(ui);
+            self.draw_ribbon_app(ui, ctx, plan.app);
+
+            if plan.show_stats {
+                let remaining = ui.available_width();
+                if remaining > 8.0 {
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
+                        ui.set_max_width(remaining);
+                        stats_ribbon::draw_group(ui, &self.sessions.traffic_stats);
+                        icons::ribbon_separator(ui);
+                    });
+                }
+            }
+        });
+    }
+
+    /// Status strip body (drawn inside the Middle overlay).
+    fn paint_status_strip(&mut self, ui: &mut egui::Ui) {
+        ui.visuals_mut().override_text_color = Some(CHROME_TEXT);
+        let connected = self
+            .sessions
+            .open
+            .values()
+            .filter(|s| s.state == SessionState::Connected)
+            .count();
+        let broker_label = if connected == 1 {
+            "1 broker connected".to_string()
+        } else {
+            format!("{connected} brokers connected")
+        };
+        let msgs = self.sessions.traffic_stats.format_msgs_per_min();
+        let broker_green = Color32::from_rgb(90, 190, 120);
+
+        ui.horizontal_centered(|ui| {
+            ui.label(RichText::new(broker_label).color(broker_green));
+            ui.add_space(8.0);
+            ui.label(RichText::new("·").color(CHROME_MUTED));
+            ui.add_space(8.0);
+            ui.label(RichText::new(msgs).color(CHROME_CAPTION));
+            ui.add_space(12.0);
+            ui.label(RichText::new("·").color(CHROME_MUTED));
+            ui.add_space(12.0);
+
+            let alpha = status_strip_fade_alpha(self.status_changed_at, Instant::now());
+            if alpha > 0.01 && !self.status.is_empty() {
+                let a = (255.0 * alpha) as u8;
+                ui.label(
+                    RichText::new(&self.status).color(Color32::from_rgba_unmultiplied(
+                        CHROME_TEXT.r(),
+                        CHROME_TEXT.g(),
+                        CHROME_TEXT.b(),
+                        a,
+                    )),
+                );
+            }
+        });
     }
 
     /// Side panels + central scroll content (traffic / stickies / topic tree).
@@ -522,12 +537,16 @@ impl MqttMonitorApp {
             )
             .show(ctx, |ui| {
                 // Clip to the central region only (outer CentralPanel clip is the full screen).
-                ui.set_clip_rect(ui.max_rect());
+                let panel_rect = ui.max_rect();
+                ui.set_clip_rect(panel_rect);
+                // No margin bleed above/below the scroll viewport (was painting over ribbon).
+                ui.visuals_mut().clip_rect_margin = 0.0;
                 // Keep full panel width (default auto_shrink follows content → early ellipsis).
                 egui::ScrollArea::vertical()
+                    .id_salt("central_main")
                     .auto_shrink([false, false])
                     .show(ui, |ui| {
-                        ui.set_clip_rect(ui.clip_rect().intersect(ui.max_rect()));
+                        // Keep ScrollArea's viewport clip — do not widen to content max_rect.
                         if self.panels.live_traffic {
                             traffic_panel::draw(
                                 ui,
@@ -587,6 +606,8 @@ impl MqttMonitorApp {
                             // Leaf double-click → open Publish and fill broker / topic / payload.
                             self.apply_publish_from_tree(publish_from_tree);
                         }
+                        // Pad so the last tree row can scroll fully into the viewport.
+                        ui.add_space(16.0);
                     });
             });
 
@@ -741,6 +762,40 @@ fn side_panel_overlay(
             ui.set_clip_rect(rect);
             egui::Frame::side_top_panel(ui.style())
                 .fill(CHROME_BG)
+                .show(ui, |ui| {
+                    ui.set_min_height(ui.available_height());
+                    add_contents(ui);
+                });
+        });
+}
+
+/// Paint top chrome (ribbon / status) above central scroll (same z-order fix as sides).
+fn top_chrome_overlay(
+    ctx: &egui::Context,
+    overlay_id: impl Into<egui::Id>,
+    rect: egui::Rect,
+    add_contents: impl FnOnce(&mut egui::Ui),
+) {
+    // Status strip is shorter — match its tighter inner margin.
+    let inner = if rect.height() <= STATUS_STRIP_H + 1.0 {
+        egui::Margin::symmetric(10, 3)
+    } else {
+        egui::Margin::symmetric(8, 4)
+    };
+    egui::Area::new(overlay_id.into())
+        .order(egui::Order::Middle)
+        .fixed_pos(rect.min)
+        .default_size(rect.size())
+        .constrain(false)
+        .interactable(true)
+        .show(ctx, |ui| {
+            ui.set_min_size(rect.size());
+            ui.set_max_size(rect.size());
+            ui.set_clip_rect(rect);
+            egui::Frame::NONE
+                .fill(CHROME_BG)
+                .inner_margin(inner)
+                .stroke(egui::Stroke::new(1.0_f32, CHROME_SEP))
                 .show(ui, |ui| {
                     ui.set_min_height(ui.available_height());
                     add_contents(ui);

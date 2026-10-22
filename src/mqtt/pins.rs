@@ -52,6 +52,8 @@ pub struct StickyTopic {
     pub message_count: u64,
     pub flash_until: Option<Instant>,
     pub view_mode: StickyViewMode,
+    /// Pro: opt into Combined multi-graph (persisted on profile sticky pref).
+    pub in_combined: bool,
     pub history: VecDeque<HistorySample>,
 }
 
@@ -96,6 +98,7 @@ impl PinBoard {
             message_count: 0,
             flash_until: None,
             view_mode: StickyViewMode::Raw,
+            in_combined: false,
             history: VecDeque::new(),
         });
     }
@@ -108,6 +111,18 @@ impl PinBoard {
         topic: &str,
         view_mode: StickyViewMode,
     ) {
+        self.pin_with_pref(profile_id, profile_name, topic, view_mode, false);
+    }
+
+    /// Pin or update view mode + Combined membership (profile restore).
+    pub fn pin_with_pref(
+        &mut self,
+        profile_id: &str,
+        profile_name: &str,
+        topic: &str,
+        view_mode: StickyViewMode,
+        in_combined: bool,
+    ) {
         let topic = topic.trim();
         if topic.is_empty() {
             return;
@@ -116,6 +131,7 @@ impl PinBoard {
         match self.items.entry(key) {
             std::collections::btree_map::Entry::Occupied(mut e) => {
                 e.get_mut().view_mode = view_mode;
+                e.get_mut().in_combined = in_combined;
                 e.get_mut().profile_name = profile_name.to_string();
             }
             std::collections::btree_map::Entry::Vacant(v) => {
@@ -127,6 +143,7 @@ impl PinBoard {
                     message_count: 0,
                     flash_until: None,
                     view_mode,
+                    in_combined,
                     history: VecDeque::new(),
                 });
             }
@@ -141,14 +158,15 @@ impl PinBoard {
         self.items.contains_key(&Self::key(profile_id, topic))
     }
 
-    /// Restore stickies saved on a profile (idempotent; reapplies view mode).
+    /// Restore stickies saved on a profile (idempotent; reapplies view + Combined).
     pub fn restore_from_profile(&mut self, profile: &ConnectionProfile) {
         for sticky in &profile.stickies {
-            self.pin_with_mode(
+            self.pin_with_pref(
                 &profile.id,
                 &profile.name,
                 &sticky.topic,
                 sticky.view_mode,
+                sticky.in_combined,
             );
         }
     }
