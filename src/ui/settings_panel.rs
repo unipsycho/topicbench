@@ -190,10 +190,6 @@ pub fn draw(
     if check_btn.clicked() {
         *updates.check_now = true;
     }
-    ui.weak(format!(
-        "Checks GitHub Releases ({}).",
-        update::GITHUB_REPO
-    ));
 }
 
 fn format_last_checked(unix: Option<u64>) -> String {
