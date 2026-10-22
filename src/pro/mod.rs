@@ -205,7 +205,9 @@ pub fn has(flag: Entitlement) -> bool {
     bridge().has(flag)
 }
 
-/// Settings label — install/license only (ignores DEV override so Settings never looks “pirated”).
+/// Settings / about label — install/license only (ignores DEV override).
+/// Not shown in Settings until more Pro features ship; kept for future UI.
+#[allow(dead_code)]
 pub fn status_label() -> &'static str {
     bridge().status().label()
 }

@@ -551,7 +551,7 @@ impl MqttMonitorApp {
                                 &self.icons,
                                 &self.search,
                                 &mut self.status,
-                                &mut self.combined_graph_placeholder,
+                                &mut self.combined_graph_open,
                             );
                             ui.add_space(8.0);
                             ui.separator();
