@@ -167,6 +167,16 @@ pub fn draw(
     ui.weak("Also F1 or ? when not typing.");
 
     ui.add_space(12.0);
+    ui.strong("TopicBench Pro");
+    ui.horizontal(|ui| {
+        ui.label("Status:");
+        ui.label(RichText::new(crate::pro::status_label()).color(CHROME_TEXT));
+    });
+    ui.weak(
+        "Pro unlocks extras (combined graph, MCP, simulation, export, …). Install TopicBench Pro alongside this free app when available — no fake activate here.",
+    );
+
+    ui.add_space(12.0);
     ui.strong("Updates");
     ui.label(
         RichText::new(format!("Current version: {}", update::current_version())).color(CHROME_TEXT),
