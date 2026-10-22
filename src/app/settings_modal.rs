@@ -164,7 +164,6 @@ impl MqttMonitorApp {
             let mut cancel_clicked = false;
             let mut check_now = false;
             let checking = matches!(self.update_status, UpdateStatus::Checking);
-            let last_check = self.settings.last_update_check;
             let status_snapshot = self.update_status.clone();
             let modal = egui::Modal::new(egui::Id::new("mqtt_master_settings")).show(ctx, |ui| {
                 ui.set_min_width(420.0);
@@ -180,7 +179,6 @@ impl MqttMonitorApp {
                                 &mut open_shortcuts,
                                 settings_panel::UpdatesSection {
                                     status: &status_snapshot,
-                                    last_check_unix: last_check,
                                     checking,
                                     check_now: &mut check_now,
                                 },
