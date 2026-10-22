@@ -566,7 +566,7 @@ impl MqttMonitorApp {
                                 &mut self.pins,
                                 &mut self.profiles,
                                 &self.sessions,
-                                &self.settings,
+                                &mut self.settings,
                                 &self.icons,
                                 &self.search,
                                 &mut self.status,
