@@ -143,7 +143,7 @@ pub struct AppSettings {
     /// When true, the search filter also hides non-matching sticky topics.
     #[serde(default = "default_true")]
     pub search_apply_to_stickies: bool,
-    /// Unix seconds of last update check (startup cache / Settings “last checked”).
+    /// Unix seconds of last update check (24h auto-check cache; not shown in Settings).
     #[serde(default)]
     pub last_update_check: Option<u64>,
     /// Skipped release tag — don’t prompt again until a newer tag appears.

@@ -59,7 +59,6 @@ impl StickyLayoutChoice {
 /// Live Updates section inputs (not part of the Save draft).
 pub struct UpdatesSection<'a> {
     pub status: &'a UpdateStatus,
-    pub last_check_unix: Option<u64>,
     pub checking: bool,
     pub check_now: &'a mut bool,
 }
@@ -172,10 +171,6 @@ pub fn draw(
     ui.label(
         RichText::new(format!("Current version: {}", update::current_version())).color(CHROME_TEXT),
     );
-    ui.label(
-        RichText::new(format!("Last checked: {}", format_last_checked(updates.last_check_unix)))
-            .color(CHROME_MUTED),
-    );
     ui.label(RichText::new(updates.status.settings_line()).color(CHROME_MUTED));
     ui.add_space(4.0);
     let check_btn = ui.add_enabled(
@@ -189,24 +184,5 @@ pub fn draw(
     );
     if check_btn.clicked() {
         *updates.check_now = true;
-    }
-}
-
-fn format_last_checked(unix: Option<u64>) -> String {
-    match unix {
-        None => "never".into(),
-        Some(ts) => {
-            let now = update::now_unix();
-            let ago = now.saturating_sub(ts);
-            if ago < 60 {
-                "just now".into()
-            } else if ago < 3600 {
-                format!("{} min ago", ago / 60)
-            } else if ago < 86400 {
-                format!("{} h ago", ago / 3600)
-            } else {
-                format!("{} d ago", ago / 86400)
-            }
-        }
     }
 }
