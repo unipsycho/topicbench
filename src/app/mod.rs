@@ -289,8 +289,11 @@ impl eframe::App for MqttMonitorApp {
         if block_tips {
             crate::ui::topic_tree_panel::dismiss_hover_tips(ctx);
         }
-        self.draw_ribbon(ctx);
+        // Reserve top chrome, paint central/sides, then ribbon/status on Middle overlays
+        // so sticky/tree scroll cannot draw over the navbar (same pattern as side panels).
+        let top_chrome = self.reserve_top_chrome(ctx);
         self.draw_panels(ctx);
+        self.draw_top_chrome_overlays(ctx, top_chrome);
         self.draw_undocked_topic_trees(ctx);
         self.draw_undocked_payloads(ctx);
         self.draw_overlays(ctx);

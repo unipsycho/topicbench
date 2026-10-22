@@ -64,6 +64,9 @@ pub struct StickyPref {
     pub topic: String,
     #[serde(default)]
     pub view_mode: StickyViewMode,
+    /// Pro: include this sticky’s series on the Combined multi-graph (default off).
+    #[serde(default)]
+    pub in_combined: bool,
 }
 
 impl StickyPref {
@@ -71,6 +74,7 @@ impl StickyPref {
         Self {
             topic: topic.into(),
             view_mode,
+            in_combined: false,
         }
     }
 }
@@ -88,11 +92,21 @@ impl<'de> Deserialize<'de> for StickyPref {
                 topic: String,
                 #[serde(default)]
                 view_mode: StickyViewMode,
+                #[serde(default)]
+                in_combined: bool,
             },
         }
         match Helper::deserialize(deserializer)? {
             Helper::Topic(topic) => Ok(Self::new(topic, StickyViewMode::Raw)),
-            Helper::Full { topic, view_mode } => Ok(Self { topic, view_mode }),
+            Helper::Full {
+                topic,
+                view_mode,
+                in_combined,
+            } => Ok(Self {
+                topic,
+                view_mode,
+                in_combined,
+            }),
         }
     }
 }
@@ -256,6 +270,18 @@ impl ConnectionProfile {
         if let Some(s) = self.stickies.iter_mut().find(|s| s.topic == topic) {
             if s.view_mode != mode {
                 s.view_mode = mode;
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Persist Combined-graph membership for an existing sticky (returns true if changed).
+    pub fn set_sticky_in_combined(&mut self, topic: &str, on: bool) -> bool {
+        let topic = topic.trim();
+        if let Some(s) = self.stickies.iter_mut().find(|s| s.topic == topic) {
+            if s.in_combined != on {
+                s.in_combined = on;
                 return true;
             }
         }
@@ -530,6 +556,18 @@ impl ProfileStore {
             .profiles
             .get_mut(profile_id)
             .map(|p| p.set_sticky_view_mode(topic, mode))
+            .unwrap_or(false);
+        if changed {
+            let _ = self.save();
+        }
+    }
+
+    /// Persist Combined-graph membership and save to disk.
+    pub fn set_sticky_in_combined_and_save(&mut self, profile_id: &str, topic: &str, on: bool) {
+        let changed = self
+            .profiles
+            .get_mut(profile_id)
+            .map(|p| p.set_sticky_in_combined(topic, on))
             .unwrap_or(false);
         if changed {
             let _ = self.save();
