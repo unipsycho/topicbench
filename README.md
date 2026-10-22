@@ -25,6 +25,7 @@ Free, open-source MQTT explorer and monitor for builders and testers.
 - Topic subscriptions with `+` / `#`
 - Shared sticky board across profiles
 - Publish with QoS and retain
+- Full keyboard shortcuts & navigation — F1 / `?` help, panel toggles, search focus, and more
 
 ## Download
 
