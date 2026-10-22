@@ -660,12 +660,24 @@ fn sticky_short_label(topic: &str) -> String {
     }
 }
 
-/// Map sample Instant → local wall clock HH:MM (via age from Instant::now).
-fn instant_hhmm(at: Instant) -> String {
+/// Map sample Instant → local wall clock (via age from Instant::now).
+fn instant_clock(at: Instant, with_secs: bool) -> String {
     let age = Instant::now().saturating_duration_since(at);
     let wall = SystemTime::now().checked_sub(age).unwrap_or_else(SystemTime::now);
     let dt: chrono::DateTime<chrono::Local> = wall.into();
-    dt.format("%H:%M").to_string()
+    if with_secs {
+        dt.format("%H:%M:%S").to_string()
+    } else {
+        dt.format("%H:%M").to_string()
+    }
+}
+
+fn instant_hhmm(at: Instant) -> String {
+    instant_clock(at, false)
+}
+
+fn instant_hhmmss(at: Instant) -> String {
+    instant_clock(at, true)
 }
 
 /// Default PNG filename: `topicbench-combined-YYYYMMDD-HHMM.png`.
@@ -815,8 +827,6 @@ fn paint_multi_series_plot(ui: &mut egui::Ui, series: &[(&StickyTopic, Color32)]
     let avail = ui.available_width().max(Y_LABEL_W + 48.0);
     let plot_w = (avail - Y_LABEL_W).max(48.0);
 
-    let mut hover_tip_text: Option<String> = None;
-
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 4.0;
         let (label_rect, _) =
@@ -826,9 +836,7 @@ fn paint_multi_series_plot(ui: &mut egui::Ui, series: &[(&StickyTopic, Color32)]
 
         // Inset plot so top/bottom Y labels sit fully inside label_rect.
         let font = egui::TextStyle::Small.resolve(ui.style());
-        let label_h = ui.fonts(|f| {
-            f.row_height(&font)
-        });
+        let label_h = ui.fonts(|f| f.row_height(&font));
         let y_inset = (label_h * 0.5 + 1.0).min(plot_h * 0.2);
         let plot = egui::Rect::from_min_max(
             Pos2::new(rect.left(), rect.top() + y_inset),
@@ -872,33 +880,93 @@ fn paint_multi_series_plot(ui: &mut egui::Ui, series: &[(&StickyTopic, Color32)]
             }
         }
 
-        // Hover: crosshair + timestamp + per-series values (nearest sample).
-        if let Some(pos) = response.hover_pos() {
-            if plot.x_range().contains(pos.x) {
-                let frac = ((pos.x - plot.left()) / plot.width()).clamp(0.0, 1.0);
-                let at = t0 + Duration::from_secs_f32(frac * dt);
-                painter.vline(
-                    pos.x,
-                    plot.y_range(),
-                    Stroke::new(1.0_f32, Color32::from_rgb(120, 130, 150)),
-                );
-                let mut tip = instant_hhmm(at);
-                for (pin, _) in series {
-                    let short = sticky_short_label(&pin.topic);
-                    let val = nearest_numeric_at(pin, at)
-                        .map(fmt_scale)
-                        .unwrap_or_else(|| "—".into());
-                    tip.push_str(&format!("\n{short}: {val}"));
-                }
-                hover_tip_text = Some(tip);
-            }
+        // Hover: use ctx pointer over full plot rect (stable; not flicker-prone like
+        // response.hover_pos when idle frames throttle). Readout tracks the cursor.
+        let pointer = ui
+            .ctx()
+            .pointer_interact_pos()
+            .or_else(|| ui.ctx().pointer_hover_pos());
+        let over_plot = pointer.is_some_and(|p| rect.contains(p));
+        if over_plot {
+            ui.ctx().request_repaint(); // keep readout alive between MQTT frames
         }
+        if let Some(pos) = pointer.filter(|p| rect.contains(*p)) {
+            let x = pos.x.clamp(plot.left(), plot.right());
+            let frac = ((x - plot.left()) / plot.width()).clamp(0.0, 1.0);
+            let at = t0 + Duration::from_secs_f32(frac * dt);
+            painter.vline(
+                x,
+                plot.y_range(),
+                Stroke::new(1.0_f32, Color32::from_rgb(120, 130, 150)),
+            );
 
-        if let Some(tip) = hover_tip_text {
-            response.on_hover_text(tip);
-        } else {
+            let mut lines: Vec<(String, Color32)> = Vec::with_capacity(series.len() + 1);
+            lines.push((instant_hhmmss(at), CHROME_TEXT));
+            for (pin, color) in series {
+                let short = sticky_short_label(&pin.topic);
+                let val = value_at_time(pin, at)
+                    .map(fmt_scale)
+                    .unwrap_or_else(|| "—".into());
+                lines.push((format!("{short}: {val}"), *color));
+                if let Some(v) = value_at_time(pin, at) {
+                    let y = plot.bottom()
+                        - (((v - y_lo) / y_span) as f32).clamp(0.0, 1.0) * plot.height();
+                    painter.circle_filled(Pos2::new(x, y), 3.5, *color);
+                    painter.circle_stroke(
+                        Pos2::new(x, y),
+                        3.5,
+                        Stroke::new(1.0_f32, Color32::from_rgb(20, 22, 26)),
+                    );
+                }
+            }
+
+            // Size from per-line galleys so colored text measures correctly.
+            let pad = 6.0_f32;
+            let galleys: Vec<_> = lines
+                .iter()
+                .map(|(text, color)| {
+                    ui.fonts(|f| f.layout_no_wrap(text.clone(), font.clone(), *color))
+                })
+                .collect();
+            let box_w = galleys
+                .iter()
+                .map(|g| g.size().x)
+                .fold(0.0_f32, f32::max)
+                + pad * 2.0;
+            let box_h = galleys.iter().map(|g| g.size().y).sum::<f32>()
+                + (galleys.len().saturating_sub(1) as f32) * 1.0
+                + pad * 2.0;
+
+            // Prefer right of crosshair; flip left if it would clip.
+            let mut bx = x + 12.0;
+            if bx + box_w > rect.right() - 2.0 {
+                bx = x - box_w - 12.0;
+            }
+            bx = bx.clamp(rect.left() + 2.0, (rect.right() - box_w - 2.0).max(rect.left() + 2.0));
+            let mut by = pos.y - box_h * 0.5;
+            by = by.clamp(rect.top() + 2.0, (rect.bottom() - box_h - 2.0).max(rect.top() + 2.0));
+            let tip_rect =
+                egui::Rect::from_min_size(Pos2::new(bx, by), egui::vec2(box_w, box_h));
+            painter.rect_filled(
+                tip_rect,
+                4.0,
+                Color32::from_rgba_unmultiplied(20, 22, 28, 235),
+            );
+            painter.rect_stroke(
+                tip_rect,
+                4.0,
+                Stroke::new(1.0_f32, CHROME_ACCENT_BORDER),
+                egui::StrokeKind::Inside,
+            );
+            let mut ly = tip_rect.top() + pad;
+            for g in galleys {
+                let h = g.size().y;
+                painter.galley(Pos2::new(tip_rect.left() + pad, ly), g, CHROME_TEXT);
+                ly += h + 1.0;
+            }
+        } else if response.hovered() {
             response.on_hover_text(format!(
-                "Y {} … {} · {} series",
+                "Y {} … {} · {} series — hover plot for values",
                 fmt_scale(min_v),
                 fmt_scale(max_v),
                 series.len()
@@ -981,24 +1049,35 @@ fn series_time_value_domain(series: &[(&StickyTopic, Color32)]) -> Option<Series
     })
 }
 
-/// Nearest numeric sample to `at` (by Instant distance).
-fn nearest_numeric_at(pin: &StickyTopic, at: Instant) -> Option<f64> {
-    let mut best: Option<(Duration, f64)> = None;
+/// Value at hover time: linear interpolate between bracketing samples, else hold-last.
+fn value_at_time(pin: &StickyTopic, at: Instant) -> Option<f64> {
+    let mut before: Option<(Instant, f64)> = None;
+    let mut after: Option<(Instant, f64)> = None;
     for s in &pin.history {
         let Some(v) = s.numeric else { continue };
-        let d = if s.at >= at {
-            s.at.saturating_duration_since(at)
-        } else {
-            at.saturating_duration_since(s.at)
-        };
-        if best.map(|(bd, _)| d < bd).unwrap_or(true) {
-            best = Some((d, v));
+        if !v.is_finite() {
+            continue;
+        }
+        if s.at <= at {
+            if before.map(|(t, _)| s.at >= t).unwrap_or(true) {
+                before = Some((s.at, v));
+            }
+        } else if after.map(|(t, _)| s.at < t).unwrap_or(true) {
+            after = Some((s.at, v));
         }
     }
-    best.map(|(_, v)| v)
+    match (before, after) {
+        (Some((tb, vb)), Some((ta, va))) => {
+            let span = ta.saturating_duration_since(tb).as_secs_f64().max(1e-9);
+            let u = at.saturating_duration_since(tb).as_secs_f64() / span;
+            Some(vb + (va - vb) * u)
+        }
+        (Some((_, v)), None) | (None, Some((_, v))) => Some(v),
+        (None, None) => None,
+    }
 }
 
-/// Rasterize Combined chart to PNG via file dialog (dark chrome).
+/// Rasterize Combined chart + legend to PNG via file dialog (dark chrome).
 fn export_combined_png(series: &[(&StickyTopic, Color32)], plot_h: f32) -> Result<String, String> {
     let path = rfd::FileDialog::new()
         .set_title("Save Combined graph")
@@ -1011,11 +1090,15 @@ fn export_combined_png(series: &[(&StickyTopic, Color32)], plot_h: f32) -> Resul
     let w = 900u32;
     let label_w = 70u32;
     let x_h = 28u32;
+    let legend_row_h = 16u32;
+    let legend_pad = 10u32;
+    let legend_h = legend_pad * 2 + (series.len() as u32) * legend_row_h;
     let plot_w = w.saturating_sub(label_w);
-    let h = (plot_h.round() as u32).clamp(80, 800) + x_h + 8;
+    let plot_body = (plot_h.round() as u32).clamp(80, 800);
+    let h = plot_body + x_h + legend_h + 8;
     let mut img = image::RgbaImage::from_pixel(w, h, image::Rgba([32, 34, 40, 255]));
     let plot_top = 4u32;
-    let plot_bot = h.saturating_sub(x_h + 4);
+    let plot_bot = plot_top + plot_body;
     let y_inset = 10u32;
     let inner_top = plot_top + y_inset;
     let inner_bot = plot_bot.saturating_sub(y_inset);
@@ -1093,9 +1176,55 @@ fn export_combined_png(series: &[(&StickyTopic, Color32)], plot_h: f32) -> Resul
         [175, 182, 196],
     );
 
+    // Legend: color swatch + short name + current value (matches on-screen legend).
+    let legend_top = plot_bot + x_h;
+    blit_text(
+        &mut img,
+        12,
+        legend_top,
+        "Legend",
+        [175, 182, 196],
+    );
+    for (i, (pin, color)) in series.iter().enumerate() {
+        let y = legend_top + legend_pad + (i as u32) * legend_row_h;
+        let rgb = [color.r(), color.g(), color.b()];
+        // Swatch circle.
+        fill_circle(&mut img, 16, y + 4, 4, rgb);
+        let short = sticky_short_label(&pin.topic);
+        let cur = pin
+            .history
+            .iter()
+            .rev()
+            .find_map(|s| s.numeric)
+            .map(fmt_scale)
+            .unwrap_or_else(|| "-".into());
+        let label = format!("{short}  {cur}");
+        blit_text(&mut img, 28, y, &label, rgb);
+    }
+
     img.save(&path)
         .map_err(|e| format!("write {}: {e}", path.display()))?;
     Ok(path.display().to_string())
+}
+
+fn fill_circle(img: &mut image::RgbaImage, cx: u32, cy: u32, r: i32, rgb: [u8; 3]) {
+    let (w, h) = (img.width() as i32, img.height() as i32);
+    let (cx, cy) = (cx as i32, cy as i32);
+    for dy in -r..=r {
+        for dx in -r..=r {
+            if dx * dx + dy * dy <= r * r {
+                let x = cx + dx;
+                let y = cy + dy;
+                if x >= 0 && y >= 0 && x < w && y < h {
+                    img.put_pixel(
+                        x as u32,
+                        y as u32,
+                        image::Rgba([rgb[0], rgb[1], rgb[2], 255]),
+                    );
+                }
+            }
+        }
+    }
 }
 
 fn draw_line(img: &mut image::RgbaImage, x0: u32, y0: u32, x1: u32, y1: u32, rgb: [u8; 3]) {
@@ -1167,9 +1296,44 @@ fn tiny_glyph_map() -> HashMap<char, [u8; 7]> {
     put(&mut m, ':', [0x00, 0x04, 0x00, 0x00, 0x04, 0x00, 0x00]);
     put(&mut m, '.', [0x00, 0x00, 0x00, 0x00, 0x00, 0x0C, 0x0C]);
     put(&mut m, '-', [0x00, 0x00, 0x00, 0x1F, 0x00, 0x00, 0x00]);
-    put(&mut m, 'e', [0x00, 0x00, 0x0E, 0x11, 0x1F, 0x10, 0x0E]);
-    put(&mut m, 'E', [0x1F, 0x10, 0x10, 0x1E, 0x10, 0x10, 0x1F]);
+    put(&mut m, '_', [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x1F]);
+    put(&mut m, '/', [0x01, 0x02, 0x04, 0x04, 0x08, 0x10, 0x10]);
+    put(&mut m, ' ', [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]);
     put(&mut m, '+', [0x00, 0x04, 0x04, 0x1F, 0x04, 0x04, 0x00]);
+    // Uppercase A–Z (compact 5×7).
+    put(&mut m, 'A', [0x0E, 0x11, 0x11, 0x1F, 0x11, 0x11, 0x11]);
+    put(&mut m, 'B', [0x1E, 0x11, 0x11, 0x1E, 0x11, 0x11, 0x1E]);
+    put(&mut m, 'C', [0x0E, 0x11, 0x10, 0x10, 0x10, 0x11, 0x0E]);
+    put(&mut m, 'D', [0x1E, 0x11, 0x11, 0x11, 0x11, 0x11, 0x1E]);
+    put(&mut m, 'E', [0x1F, 0x10, 0x10, 0x1E, 0x10, 0x10, 0x1F]);
+    put(&mut m, 'F', [0x1F, 0x10, 0x10, 0x1E, 0x10, 0x10, 0x10]);
+    put(&mut m, 'G', [0x0E, 0x11, 0x10, 0x17, 0x11, 0x11, 0x0E]);
+    put(&mut m, 'H', [0x11, 0x11, 0x11, 0x1F, 0x11, 0x11, 0x11]);
+    put(&mut m, 'I', [0x0E, 0x04, 0x04, 0x04, 0x04, 0x04, 0x0E]);
+    put(&mut m, 'J', [0x01, 0x01, 0x01, 0x01, 0x11, 0x11, 0x0E]);
+    put(&mut m, 'K', [0x11, 0x12, 0x14, 0x18, 0x14, 0x12, 0x11]);
+    put(&mut m, 'L', [0x10, 0x10, 0x10, 0x10, 0x10, 0x10, 0x1F]);
+    put(&mut m, 'M', [0x11, 0x1B, 0x15, 0x15, 0x11, 0x11, 0x11]);
+    put(&mut m, 'N', [0x11, 0x19, 0x15, 0x13, 0x11, 0x11, 0x11]);
+    put(&mut m, 'O', [0x0E, 0x11, 0x11, 0x11, 0x11, 0x11, 0x0E]);
+    put(&mut m, 'P', [0x1E, 0x11, 0x11, 0x1E, 0x10, 0x10, 0x10]);
+    put(&mut m, 'Q', [0x0E, 0x11, 0x11, 0x11, 0x15, 0x12, 0x0D]);
+    put(&mut m, 'R', [0x1E, 0x11, 0x11, 0x1E, 0x14, 0x12, 0x11]);
+    put(&mut m, 'S', [0x0E, 0x11, 0x10, 0x0E, 0x01, 0x11, 0x0E]);
+    put(&mut m, 'T', [0x1F, 0x04, 0x04, 0x04, 0x04, 0x04, 0x04]);
+    put(&mut m, 'U', [0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x0E]);
+    put(&mut m, 'V', [0x11, 0x11, 0x11, 0x11, 0x11, 0x0A, 0x04]);
+    put(&mut m, 'W', [0x11, 0x11, 0x11, 0x15, 0x15, 0x1B, 0x11]);
+    put(&mut m, 'X', [0x11, 0x11, 0x0A, 0x04, 0x0A, 0x11, 0x11]);
+    put(&mut m, 'Y', [0x11, 0x11, 0x0A, 0x04, 0x04, 0x04, 0x04]);
+    put(&mut m, 'Z', [0x1F, 0x01, 0x02, 0x04, 0x08, 0x10, 0x1F]);
+    // Lowercase — reuse uppercase bitmaps (legible at 5×7 for legend names).
+    for c in b'a'..=b'z' {
+        let up = (c - b'a' + b'A') as char;
+        if let Some(g) = m.get(&up).copied() {
+            m.insert(c as char, g);
+        }
+    }
     m
 }
 
