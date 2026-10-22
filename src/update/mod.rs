@@ -7,7 +7,7 @@ use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-pub use github::{ReleaseInfo, GITHUB_REPO};
+pub use github::ReleaseInfo;
 pub use install::InstallOutcome;
 
 /// How long a successful/failed check stays cached before a quiet startup recheck.
