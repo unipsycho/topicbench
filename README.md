@@ -8,6 +8,7 @@ Free, open-source MQTT explorer and monitor for builders and testers.
 
 ## Why TopicBench
 
+- **100% Rust** — built entirely in Rust to handle massive topic trees and topic lists with very efficient memory and CPU use
 - **Simultaneous multi-broker** — connect to several brokers at once and monitor or search their topics in a single window
 - **Multi-broker profiles** — save hosts, TLS/WSS options, and credentials (passwords in the OS keyring)
 - **Live topic tree** — subscribe with wildcards and browse traffic as it arrives
