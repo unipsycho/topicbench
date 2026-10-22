@@ -6,10 +6,11 @@ use crate::mqtt::pins::{DetectedValue, HistorySample, PinBoard, StickyTopic, Sti
 use crate::mqtt::profile::ProfileStore;
 use crate::mqtt::session::{SessionManager, SessionState};
 use crate::mqtt::settings::{AppSettings, StickyLayoutMode};
+use crate::pro::{self, Entitlement};
 use crate::ui::flash;
 use crate::ui::hover_tip;
 use crate::ui::icons::{
-    self, IconSet, CHROME_ACCENT_BORDER, CHROME_HOVER, CHROME_MUTED,
+    self, IconSet, CHROME_ACCENT_BORDER, CHROME_HOVER, CHROME_MUTED, CHROME_TEXT,
 };
 use crate::ui::json_view;
 use crate::ui::shortcuts;
@@ -37,6 +38,7 @@ pub fn draw(
     icons: &IconSet,
     filter: &SearchFilter,
     status: &mut String,
+    combined_graph_placeholder: &mut bool,
 ) {
     icons::section_header_bar(ui, |ui| {
         icons::section_icon(ui, icons, "sticky_topic");
@@ -54,6 +56,12 @@ pub fn draw(
     });
     ui.weak("Grouped by broker. Layout (rows / columns) is in Settings.");
     ui.add_space(4.0);
+
+    // Pro combined-graph scaffold (only when entitled — hide when free).
+    if *combined_graph_placeholder && pro::has(Entitlement::MultiGraph) {
+        draw_combined_graph_placeholder(ui, combined_graph_placeholder);
+        ui.add_space(8.0);
+    }
 
     let connected: HashSet<&str> = sessions
         .open
@@ -141,9 +149,17 @@ pub fn draw(
             StickyLayoutMode::Rows => {
                 ui.spacing_mut().item_spacing.y = 1.0;
                 for key in &keys {
-                    if let Some(r) =
-                        draw_sticky(ui, pins, profiles, key, icons, now, false, status)
-                    {
+                    if let Some(r) = draw_sticky(
+                        ui,
+                        pins,
+                        profiles,
+                        key,
+                        icons,
+                        now,
+                        false,
+                        status,
+                        combined_graph_placeholder,
+                    ) {
                         pending_reorder = Some(r);
                     }
                 }
@@ -154,9 +170,18 @@ pub fn draw(
                     for (i, key) in keys.iter().enumerate() {
                         let col = &mut columns[i % cols];
                         col.spacing_mut().item_spacing.y = 1.0;
-                        if let Some(r) =
-                            draw_sticky(col, pins, profiles, key, icons, now, true, status)
-                        {
+                        if let Some(r) = draw_sticky(
+                            col,
+                            pins,
+                            profiles,
+                            key,
+                            icons,
+                            now,
+                            true,
+                            status,
+                            combined_graph_placeholder,
+                        ) {
+
                             pending_reorder = Some(r);
                         }
                     }
@@ -200,6 +225,7 @@ fn draw_sticky(
     now: Instant,
     compact: bool,
     status: &mut String,
+    combined_graph_placeholder: &mut bool,
 ) -> Option<(String, String, bool)> {
     let Some(pin) = pins.items.get(key).cloned() else {
         return None;
@@ -269,8 +295,15 @@ fn draw_sticky(
                         f.layout_no_wrap(pin.topic.clone(), topic_font, Color32::WHITE)
                     });
                     let topic_row_w = tiny_btn + gap + topic_galley.size().x;
-                    // Mode trio + optional #n + copy + unstick (approx; column can be wider than topic).
-                    let mode_w = 3.0 * tiny_btn + 12.0;
+                    // Mode trio + optional Pro combined + #n + copy + unstick.
+                    let multi_graph = pro::has(Entitlement::MultiGraph);
+                    let mode_w = 3.0 * tiny_btn
+                        + if multi_graph && mode == StickyViewMode::Graph {
+                            tiny_btn + 4.0
+                        } else {
+                            0.0
+                        }
+                        + 12.0;
                     let count_w = if pin.message_count > 0 { 32.0 } else { 0.0 };
                     let controls_w = mode_w + count_w + tiny_btn + tiny_btn + gap * 4.0;
                     let left_w = topic_row_w.max(controls_w).min(max_left).max(tiny_btn + 48.0);
@@ -317,6 +350,21 @@ fn draw_sticky(
                                                 {
                                                     live.view_mode = mode;
                                                 }
+                                            }
+                                            // Pro: Combined graph — only when entitled + Graph mode.
+                                            if multi_graph
+                                                && live.view_mode == StickyViewMode::Graph
+                                                && icons
+                                                    .tiny(
+                                                        ui,
+                                                        "node_graph",
+                                                        *combined_graph_placeholder,
+                                                        "Combined graph",
+                                                    )
+                                                    .clicked()
+                                            {
+                                                *combined_graph_placeholder =
+                                                    !*combined_graph_placeholder;
                                             }
                                         });
                                     });
@@ -568,6 +616,30 @@ fn draw_scalar_centered(ui: &mut egui::Ui, text: RichText, height: f32) {
 }
 
 /// Compact sparkline sized to the chrome strip height, with current value beside it.
+/// Pro scaffold: shared time-axis host (real multi-series lands with Pro).
+fn draw_combined_graph_placeholder(ui: &mut egui::Ui, open: &mut bool) {
+    egui::Frame::NONE
+        .fill(Color32::from_rgb(32, 34, 40))
+        .stroke(Stroke::new(1.0_f32, CHROME_ACCENT_BORDER))
+        .corner_radius(4.0)
+        .inner_margin(egui::Margin::symmetric(10, 8))
+        .show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.label(RichText::new("Combined graph").strong().color(CHROME_TEXT));
+                ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
+                    if ui.small_button("Dismiss").clicked() {
+                        *open = false;
+                    }
+                });
+            });
+            ui.label(
+                RichText::new("Combined graph — coming soon")
+                    .color(CHROME_MUTED),
+            );
+            ui.weak("Shared time-axis for Graph stickies (TopicBench Pro).");
+        });
+}
+
 fn draw_graph_strip(ui: &mut egui::Ui, pin: &StickyTopic, height: f32) {
     let samples = &pin.history;
     if samples.is_empty() {

@@ -5,6 +5,7 @@
 
 mod app;
 mod mqtt;
+mod pro;
 mod ui;
 mod update;
 
