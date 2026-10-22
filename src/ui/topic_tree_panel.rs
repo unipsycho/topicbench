@@ -15,7 +15,10 @@ use crate::ui::search_bar::SearchFilter;
 use crate::ui::shortcuts;
 use eframe::egui::{self, Align, Color32, FontId, Layout, RichText, ViewportBuilder, ViewportClass};
 use std::collections::HashSet;
-use std::time::Instant;
+use std::time::{Duration, Instant};
+
+/// Stay on the same row this long before a payload hover popup opens.
+const TREE_HOVER_DELAY: Duration = Duration::from_millis(500);
 
 /// Exclusive temp key for the one open tree payload/topic tip.
 fn hover_active_key() -> egui::Id {
@@ -730,6 +733,7 @@ fn scrollable_hover(
     let popup_id = id.with("scroll_hover");
     let active_key = hover_active_key();
     let scroll_key = popup_id.with("scroll_y");
+    let pending_key = popup_id.with("hover_since");
 
     // Modal owns the pointer — never open or keep a tree tip underneath.
     if hover_tip::is_blocked(ctx) {
@@ -738,6 +742,7 @@ fn scrollable_hover(
             ctx.data_mut(|d| {
                 d.remove::<egui::Id>(active_key);
                 d.remove_temp::<f32>(scroll_key);
+                d.remove_temp::<f64>(pending_key);
             });
         }
         return;
@@ -781,23 +786,48 @@ fn scrollable_hover(
             !(in_anchor || in_popup || in_bridge)
         });
 
+    // ~500ms dwell on the same row before opening (scroll-through doesn't trap tips).
+    // Store egui time (f64) — IdTypeMap::remove_temp requires Default (Instant lacks it).
+    let now_t = ctx.input(|i| i.time);
+    let delay_secs = TREE_HOVER_DELAY.as_secs_f64();
+    let delay_elapsed = if over_anchor && active.is_none() {
+        let since = ctx
+            .data(|d| d.get_temp::<f64>(pending_key))
+            .unwrap_or(now_t);
+        ctx.data_mut(|d| d.insert_temp(pending_key, since));
+        let elapsed = (now_t - since).max(0.0);
+        if elapsed < delay_secs {
+            ctx.request_repaint_after(Duration::from_secs_f64(delay_secs - elapsed));
+            false
+        } else {
+            true
+        }
+    } else {
+        ctx.data_mut(|d| d.remove_temp::<f64>(pending_key));
+        false
+    };
+
     // Only one popup: while another is active, ignore hover on other rows.
     let open = if click_outside {
         false
     } else if is_ours {
         over_anchor || over_popup || over_bridge
-    } else if active.is_none() && over_anchor {
+    } else if active.is_none() && over_anchor && delay_elapsed {
         true
     } else {
         false
     };
 
     if open {
-        ctx.data_mut(|d| d.insert_temp(active_key, popup_id));
+        ctx.data_mut(|d| {
+            d.insert_temp(active_key, popup_id);
+            d.remove_temp::<f64>(pending_key);
+        });
     } else if is_ours || click_outside {
         ctx.data_mut(|d| {
             d.remove::<egui::Id>(active_key);
             d.remove_temp::<f32>(scroll_key);
+            d.remove_temp::<f64>(pending_key);
         });
         return;
     } else {

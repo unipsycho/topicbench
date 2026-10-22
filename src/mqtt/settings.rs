@@ -118,6 +118,9 @@ pub struct AppSettings {
     /// Column count when `sticky_layout` is Columns (clamped 2–4).
     #[serde(default = "default_sticky_columns")]
     pub sticky_columns: u8,
+    /// Pro Combined multi-graph plot height (px); user-resizable.
+    #[serde(default = "default_combined_graph_height")]
+    pub combined_graph_height: f32,
     /// App-wide font zoom step (−4…+5). 0 = default egui sizes.
     #[serde(default)]
     pub font_zoom_step: i8,
@@ -166,6 +169,14 @@ fn default_sticky_columns() -> u8 {
     2
 }
 
+fn default_combined_graph_height() -> f32 {
+    120.0
+}
+
+/// Combined graph plot height range (drag-resize).
+pub const COMBINED_GRAPH_H_MIN: f32 = 80.0;
+pub const COMBINED_GRAPH_H_MAX: f32 = 480.0;
+
 impl Default for AppSettings {
     fn default() -> Self {
         Self {
@@ -175,6 +186,7 @@ impl Default for AppSettings {
             max_packet_bytes: MAX_PACKET_DEFAULT,
             sticky_layout: StickyLayoutMode::Rows,
             sticky_columns: 2,
+            combined_graph_height: default_combined_graph_height(),
             font_zoom_step: 0,
             show_profiles: true,
             show_live_traffic: false,
@@ -266,8 +278,16 @@ impl AppSettings {
         }
         s.max_packet_bytes = Self::clamp_max_packet(s.max_packet_bytes);
         s.sticky_columns = Self::clamp_sticky_columns(s.sticky_columns);
+        s.combined_graph_height = Self::clamp_combined_graph_height(s.combined_graph_height);
         s.font_zoom_step = Self::clamp_font_zoom(s.font_zoom_step);
         s
+    }
+
+    pub fn clamp_combined_graph_height(h: f32) -> f32 {
+        if !h.is_finite() {
+            return default_combined_graph_height();
+        }
+        h.clamp(COMBINED_GRAPH_H_MIN, COMBINED_GRAPH_H_MAX)
     }
 
     pub fn save(&self) -> Result<(), String> {
@@ -278,6 +298,7 @@ impl AppSettings {
         let mut clone = self.clone();
         clone.max_packet_bytes = Self::clamp_max_packet(clone.max_packet_bytes);
         clone.sticky_columns = Self::clamp_sticky_columns(clone.sticky_columns);
+        clone.combined_graph_height = Self::clamp_combined_graph_height(clone.combined_graph_height);
         clone.font_zoom_step = Self::clamp_font_zoom(clone.font_zoom_step);
         let text = serde_json::to_string_pretty(&clone).map_err(|e| e.to_string())?;
         fs::write(&path, text).map_err(|e| format!("write {}: {e}", path.display()))

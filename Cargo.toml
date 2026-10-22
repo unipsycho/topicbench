@@ -17,6 +17,8 @@ rumqttc = { version = "0.24", features = ["websocket", "use-rustls"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 image = { version = "0.25", default-features = false, features = ["png"] }
+# Local HH:MM axis labels for Combined graph (no full timezone DB needed beyond clock).
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 # Native folder picker for profile TLS certs directory.
 rfd = "0.15"
 # OS credential store: Secret Service (Linux), Credential Manager (Windows), Keychain (macOS).
