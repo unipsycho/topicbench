@@ -5,16 +5,16 @@ use serde::Deserialize;
 /// Owner/repo used for Releases API + HTML fallback links.
 pub const GITHUB_REPO: &str = "unipsycho/topicbench";
 
-const USER_AGENT: &str = concat!("MQTT-Master/", env!("CARGO_PKG_VERSION"));
+const USER_AGENT: &str = concat!("TopicBench/", env!("CARGO_PKG_VERSION"));
 const API_TIMEOUT_SECS: u64 = 20;
 
 /// Platform binary asset names published with each release.
 #[cfg(target_os = "linux")]
-pub const ASSET_NAME: &str = "mqtt-master-linux-x64";
+pub const ASSET_NAME: &str = "topicbench-linux-x64";
 #[cfg(target_os = "windows")]
-pub const ASSET_NAME: &str = "mqtt-master-windows-x64.exe";
+pub const ASSET_NAME: &str = "topicbench-windows-x64.exe";
 #[cfg(not(any(target_os = "linux", target_os = "windows")))]
-pub const ASSET_NAME: &str = "mqtt-master-linux-x64";
+pub const ASSET_NAME: &str = "topicbench-linux-x64";
 
 pub const SHA256SUMS_NAME: &str = "SHA256SUMS";
 

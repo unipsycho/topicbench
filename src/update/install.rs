@@ -182,15 +182,15 @@ mod tests {
     fn parse_sha_sums() {
         let text = "\
 # comment
-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa  mqtt-master-linux-x64
-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb *mqtt-master-windows-x64.exe
+aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa  topicbench-linux-x64
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb *topicbench-windows-x64.exe
 ";
         assert_eq!(
-            parse_sha256_for_asset(text, "mqtt-master-linux-x64").as_deref(),
+            parse_sha256_for_asset(text, "topicbench-linux-x64").as_deref(),
             Some("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
         );
         assert_eq!(
-            parse_sha256_for_asset(text, "mqtt-master-windows-x64.exe").as_deref(),
+            parse_sha256_for_asset(text, "topicbench-windows-x64.exe").as_deref(),
             Some("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
         );
         assert!(parse_sha256_for_asset(text, "missing").is_none());
