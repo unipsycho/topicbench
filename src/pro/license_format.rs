@@ -1,6 +1,6 @@
-//! TopicBench Pro license file format (v1) — signed offline blob.
+//! TopicBench Pro license file format (v1) — verify-only (OSS).
 //!
-//! Shared by the OSS probe and the `topicbench-license` mint tool (`#[path]`).
+//! Minting / keygen lives in the private `topicbench-pro` companion.
 //! Honest-user friction only; not unbreakable DRM.
 //!
 //! File (JSON), default path `~/.config/topicbench/license.json`:
@@ -12,16 +12,16 @@
 //! }
 //! ```
 //!
-//! Private signing key never ships in the app tree. Settings → Activate (later)
+//! Private signing key never ships in the OSS tree. Settings → Activate (later)
 //! will write this same file and re-probe; until then, install by copying the file.
 
 use base64::Engine;
-use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
+use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
-/// Embedded ed25519 verify key (32 bytes). Pair lives outside the repo / gitignored
-/// (`~/.config/topicbench/dev/ed25519.sk.hex`). Rotate via `topicbench-license keygen`
+/// Embedded ed25519 verify key (32 bytes). Pair lives outside the OSS repo
+/// (`~/.config/topicbench/dev/ed25519.sk.hex`). Rotate via `topicbench-pro` keygen
 /// then paste the printed public hex here.
 pub const LICENSE_VERIFY_KEY: [u8; 32] = [
     0xbc, 0xc4, 0x43, 0xd3, 0x6a, 0x75, 0x72, 0xc4, 0xdd, 0xc5, 0xf1, 0xcf, 0x91, 0x4d, 0xb0,
@@ -78,24 +78,6 @@ impl std::fmt::Display for LicenseError {
             Self::Empty => write!(f, "empty entitlements"),
         }
     }
-}
-
-/// Compact JSON for the payload (stable field order from struct derive).
-pub fn payload_to_canonical_json(payload: &LicensePayload) -> Result<String, LicenseError> {
-    serde_json::to_string(payload).map_err(|e| LicenseError::Json(e.to_string()))
-}
-
-/// Sign a payload with a signing key; return the on-disk JSON file text.
-#[allow(dead_code)] // Used by `topicbench-license` mint bin (shared via #[path]).
-pub fn mint_license_json(signing_key: &SigningKey, payload: &LicensePayload) -> Result<String, LicenseError> {
-    let payload_str = payload_to_canonical_json(payload)?;
-    let sig = signing_key.sign(payload_str.as_bytes());
-    let file = LicenseFileV1 {
-        v: 1,
-        payload: payload_str,
-        sig: base64::engine::general_purpose::STANDARD.encode(sig.to_bytes()),
-    };
-    serde_json::to_string_pretty(&file).map_err(|e| LicenseError::Json(e.to_string()))
 }
 
 /// Verify bytes of a license file against the embedded public key.
@@ -182,72 +164,21 @@ fn utc_ymd_today() -> (i32, u32, u32) {
     (y, m, d)
 }
 
-/// Hex-encode key bytes (lowercase).
-#[allow(dead_code)] // Mint bin.
-pub fn key_to_hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|b| format!("{b:02x}")).collect()
-}
-
-/// Decode a 32-byte key from hex (ignores whitespace).
-#[allow(dead_code)] // Mint bin.
-pub fn key_from_hex(hex: &str) -> Result<[u8; 32], LicenseError> {
-    let clean: String = hex.chars().filter(|c| !c.is_whitespace()).collect();
-    if clean.len() != 64 {
-        return Err(LicenseError::BadKey);
-    }
-    let mut out = [0u8; 32];
-    for i in 0..32 {
-        out[i] = u8::from_str_radix(&clean[i * 2..i * 2 + 2], 16)
-            .map_err(|_| LicenseError::BadKey)?;
-    }
-    Ok(out)
-}
-
-/// Load signing key from a hex file (64 hex chars).
-#[allow(dead_code)] // Mint bin.
-pub fn signing_key_from_hex_file(path: &Path) -> Result<SigningKey, LicenseError> {
-    let text = std::fs::read_to_string(path).map_err(|e| LicenseError::Io(e.to_string()))?;
-    let bytes = key_from_hex(text.trim())?;
-    Ok(SigningKey::from_bytes(&bytes))
-}
-
-/// Generate a new keypair.
-#[allow(dead_code)] // Mint bin + unit tests.
-pub fn generate_keypair() -> SigningKey {
-    let mut rng = rand::rngs::OsRng;
-    SigningKey::generate(&mut rng)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn roundtrip_sign_verify() {
-        let sk = generate_keypair();
-        let vk = sk.verifying_key();
-        let payload = LicensePayload {
-            entitlements: vec!["multi_graph".into(), "mcp_server".into()],
-            expires: Some("2099-01-01".into()),
-            licensee: Some("dev".into()),
-        };
-        let json = mint_license_json(&sk, &payload).unwrap();
-        let got = verify_license_bytes_with_key(json.as_bytes(), &vk.to_bytes()).unwrap();
-        assert_eq!(got.entitlements, payload.entitlements);
-        assert_eq!(got.expires, payload.expires);
+    fn rejects_bad_json() {
+        assert!(verify_license_bytes(b"not json").is_err());
     }
 
     #[test]
-    fn rejects_tampered_payload() {
-        let sk = generate_keypair();
-        let vk = sk.verifying_key();
-        let payload = LicensePayload {
-            entitlements: vec!["multi_graph".into()],
-            expires: None,
-            licensee: None,
-        };
-        let mut json = mint_license_json(&sk, &payload).unwrap();
-        json = json.replace("multi_graph", "mcp_server");
-        assert!(verify_license_bytes_with_key(json.as_bytes(), &vk.to_bytes()).is_err());
+    fn rejects_wrong_version() {
+        let json = br#"{"v":99,"payload":"{}","sig":"AA=="}"#;
+        assert!(matches!(
+            verify_license_bytes(json),
+            Err(LicenseError::Version)
+        ));
     }
 }

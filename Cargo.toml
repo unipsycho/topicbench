@@ -1,5 +1,5 @@
 [package]
-name = "mqtt-monitor"
+name = "topicbench"
 version = "1.0.0"
 edition = "2021"
 rust-version = "1.80"
@@ -27,18 +27,17 @@ keyring = { version = "3", features = ["apple-native", "windows-native", "sync-s
 ureq = { version = "2.12", features = ["json"] }
 semver = "1"
 sha2 = "0.10"
-# Pro license file: ed25519 verify (public key in OSS; private key never shipped).
-ed25519-dalek = { version = "2", features = ["rand_core"] }
-rand = "0.8"
+# Pro license file: ed25519 verify only (public key in OSS; minting in topicbench-pro).
+ed25519-dalek = "2"
 base64 = "0.22"
 
 [build-dependencies]
-# Embed mqtt-monitor.exe icon on Windows (and cross-compile via MinGW windres).
+# Embed topicbench.exe icon on Windows (and cross-compile via MinGW windres).
 winres = "0.1"
 
 [[bin]]
-name = "topicbench-license"
-path = "src/bin/topicbench-license.rs"
+name = "topicbench"
+path = "src/main.rs"
 
 [package.metadata.packager]
 product-name = "TopicBench"
