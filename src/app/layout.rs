@@ -524,33 +524,20 @@ impl MqttMonitorApp {
             payload_rect = Some(r.response.rect);
         }
 
-        // Match SidePanel vertical margin (2). Symmetric horizontal inset — do not
-        // pad away from the Payload splitter; floating scrollbars were the real clip.
+        // Match SidePanel vertical margin (2) — default CentralPanel uses 8 and drops the header.
         egui::CentralPanel::default()
             .frame(
                 egui::Frame::NONE
                     .fill(CHROME_BG)
-                    .inner_margin(egui::Margin {
-                        left: 8,
-                        right: 8,
-                        top: 2,
-                        bottom: 2,
-                    }),
+                    .inner_margin(egui::Margin::symmetric(8, 2)),
             )
             .show(ctx, |ui| {
                 // Clip to the central region only (outer CentralPanel clip is the full screen).
+                // Keep default clip_rect_margin (~3): zeroing it made ScrollArea clip flush to
+                // the content edge, chopping Combined/sticky right strokes and tree #N glyphs
+                // while looking like “empty space” to the right. panel_rect still blocks ribbon bleed.
                 let panel_rect = ui.max_rect();
                 ui.set_clip_rect(panel_rect);
-                // No margin bleed above/below the scroll viewport (was painting over ribbon).
-                ui.visuals_mut().clip_rect_margin = 0.0;
-                // egui default floating bars allocate 0 width → content (Combined/sticky
-                // borders, tree #N) paints under the bar. Reserve bar + margin + ~10px
-                // so #counts and 1px card/flash strokes clear the handle (not panel padding).
-                {
-                    let scroll = &mut ui.spacing_mut().scroll;
-                    scroll.floating_allocated_width =
-                        scroll.bar_width + scroll.bar_inner_margin + 10.0;
-                }
                 // Keep full panel width (default auto_shrink follows content → early ellipsis).
                 egui::ScrollArea::vertical()
                     .id_salt("central_main")
