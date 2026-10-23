@@ -1,4 +1,7 @@
 //! Signed license file verify (ed25519).
+//!
+//! Payload is all-or-nothing Pro: `licensed: true` (+ optional expires/licensee).
+//! Legacy files with an `entitlements` array still verify as full Pro.
 
 use base64::Engine;
 use ed25519_dalek::{Signature, Verifier, VerifyingKey};
@@ -24,14 +27,27 @@ pub struct LicenseFileV1 {
     pub sig: String,
 }
 
+/// Inner payload after signature checks out.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LicensePayload {
+    /// Full Pro unlock when true (current format).
+    #[serde(default)]
+    pub licensed: bool,
+    /// Legacy per-feature list — presence of any entry means full Pro.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub entitlements: Vec<String>,
     /// Optional `YYYY-MM-DD` (UTC). Missing = no expiry.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expires: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub licensee: Option<String>,
+}
+
+impl LicensePayload {
+    /// True when this payload grants full Pro (new or legacy).
+    pub fn grants_pro(&self) -> bool {
+        self.licensed || !self.entitlements.is_empty()
+    }
 }
 
 #[derive(Debug)]
@@ -42,7 +58,7 @@ pub enum LicenseError {
     Signature,
     BadKey,
     Expired,
-    Empty,
+    NotLicensed,
 }
 
 impl std::fmt::Display for LicenseError {
@@ -54,7 +70,7 @@ impl std::fmt::Display for LicenseError {
             Self::Signature => write!(f, "invalid signature"),
             Self::BadKey => write!(f, "bad verify/signing key"),
             Self::Expired => write!(f, "license expired"),
-            Self::Empty => write!(f, "empty entitlements"),
+            Self::NotLicensed => write!(f, "payload does not grant Pro"),
         }
     }
 }
@@ -83,8 +99,8 @@ pub fn verify_license_bytes_with_key(
         .map_err(|_| LicenseError::Signature)?;
     let payload: LicensePayload =
         serde_json::from_str(&file.payload).map_err(|e| LicenseError::Json(e.to_string()))?;
-    if payload.entitlements.is_empty() {
-        return Err(LicenseError::Empty);
+    if !payload.grants_pro() {
+        return Err(LicenseError::NotLicensed);
     }
     if let Some(ref exp) = payload.expires {
         if is_expired(exp)? {
@@ -159,5 +175,30 @@ mod tests {
             verify_license_bytes(json),
             Err(LicenseError::Version)
         ));
+    }
+
+    #[test]
+    fn grants_pro_new_and_legacy() {
+        assert!(LicensePayload {
+            licensed: true,
+            entitlements: vec![],
+            expires: None,
+            licensee: None,
+        }
+        .grants_pro());
+        assert!(LicensePayload {
+            licensed: false,
+            entitlements: vec!["multi_graph".into()],
+            expires: None,
+            licensee: None,
+        }
+        .grants_pro());
+        assert!(!LicensePayload {
+            licensed: false,
+            entitlements: vec![],
+            expires: None,
+            licensee: None,
+        }
+        .grants_pro());
     }
 }
