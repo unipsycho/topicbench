@@ -548,11 +548,12 @@ impl MqttMonitorApp {
                 // No margin bleed above/below the scroll viewport (was painting over ribbon).
                 ui.visuals_mut().clip_rect_margin = 0.0;
                 // egui default floating bars allocate 0 width → content (Combined/sticky
-                // borders, tree #N) paints under the bar. Reserve a real gutter.
+                // borders, tree #N) paints under the bar. Reserve bar + margin + ~10px
+                // so #counts and 1px card/flash strokes clear the handle (not panel padding).
                 {
                     let scroll = &mut ui.spacing_mut().scroll;
                     scroll.floating_allocated_width =
-                        scroll.bar_width + scroll.bar_inner_margin;
+                        scroll.bar_width + scroll.bar_inner_margin + 10.0;
                 }
                 // Keep full panel width (default auto_shrink follows content → early ellipsis).
                 egui::ScrollArea::vertical()
