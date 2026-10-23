@@ -56,22 +56,21 @@ pub fn draw(
     }
 
     if *floating {
-        let mut win_open = true;
+        // Single chrome: inner header only (title + pill + dock + close).
+        // Hide outer egui title bar so there is no second “Simulation”, close, or collapse ▾.
         egui::Window::new("Simulation")
             .id(egui::Id::new("topicbench_simulation_win"))
+            .title_bar(false)
+            .collapsible(false)
             .default_size([980.0, 360.0])
             .min_width(780.0)
             .min_height(220.0)
             .frame(egui::Frame::window(&ctx.style()).fill(CHROME_BG))
-            .open(&mut win_open)
             .show(ctx, |ui| {
                 header_bar(ui, icons, floating, open, client);
                 ui.separator();
                 body(ui, licensed, client, sessions, profiles, icons, status);
             });
-        if !win_open {
-            *open = false;
-        }
     } else {
         egui::SidePanel::right("topicbench_simulation_dock")
             .default_width(520.0)
