@@ -671,6 +671,8 @@ impl MqttMonitorApp {
                                 &self.icons,
                                 &self.search,
                                 &mut self.status,
+                                self.history_fwd.as_ref(),
+                                &mut self.scrub_ui,
                             );
                             ui.add_space(8.0);
                             ui.separator();

@@ -8,6 +8,7 @@
 
 mod license_format;
 pub mod bridge;
+pub mod history_client;
 pub mod sim_client;
 
 use std::sync::OnceLock;

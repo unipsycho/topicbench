@@ -114,6 +114,10 @@ pub struct MqttMonitorApp {
     simulation_floating: bool,
     /// HTTP client state for `topicbench-pro` `/sim`.
     sim_client: crate::pro::sim_client::SimClientState,
+    /// Pro deep-history forwarder (None when HistoryScrubber not entitled).
+    history_fwd: Option<crate::pro::history_client::HistoryForwarder>,
+    /// Graph / Combined scrub playhead state (session-only).
+    scrub_ui: crate::pro::history_client::ScrubUi,
 }
 
 impl MqttMonitorApp {
@@ -206,6 +210,12 @@ impl MqttMonitorApp {
             simulation_open,
             simulation_floating,
             sim_client: crate::pro::sim_client::SimClientState::new(),
+            history_fwd: if crate::pro::has(crate::pro::Entitlement::HistoryScrubber) {
+                Some(crate::pro::history_client::HistoryForwarder::start())
+            } else {
+                None
+            },
+            scrub_ui: crate::pro::history_client::ScrubUi::default(),
         }
     }
 }
@@ -237,6 +247,22 @@ impl eframe::App for MqttMonitorApp {
         let need_repaint = poll.need_repaint();
         if let Some(msg) = poll.status {
             self.status = msg;
+        }
+        // Forward sticky numeric samples to Pro deep store (non-blocking; drop if down).
+        if let Some(fwd) = self.history_fwd.as_ref() {
+            for s in self.pins.drain_history_fwd() {
+                fwd.try_enqueue(crate::pro::history_client::FwdSample {
+                    series_id: s.series_id,
+                    profile: s.profile,
+                    topic: s.topic,
+                    field: s.field,
+                    t_ms: crate::pro::history_client::instant_to_t_ms(s.at),
+                    v: s.v,
+                });
+            }
+        } else {
+            // Unlicensed: discard so the buffer cannot grow forever.
+            let _ = self.pins.drain_history_fwd();
         }
         // Fan MQTT applies into the Pro bridge buffer so wait_for_message / GUI stay in sync.
         if let Some(bridge) = self.pro_bridge.as_ref() {
