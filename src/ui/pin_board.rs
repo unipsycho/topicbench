@@ -39,7 +39,6 @@ pub fn draw(
     icons: &IconSet,
     filter: &SearchFilter,
     status: &mut String,
-    combined_graph_open: &mut bool,
 ) {
     icons::section_header_bar(ui, |ui| {
         icons::section_icon(ui, icons, "sticky_topic");
@@ -65,8 +64,12 @@ pub fn draw(
         .map(|(id, _)| id.as_str())
         .collect();
 
+    // Local copy so we can mutate open without double-borrowing settings.
+    let open_before = settings.combined_graph_open;
+    let mut combined_open = open_before;
+
     // Pro combined multi-series graph (only when entitled — hide when free).
-    if *combined_graph_open && pro::has(Entitlement::MultiGraph) {
+    if combined_open && pro::has(Entitlement::MultiGraph) {
         draw_combined_graph(
             ui,
             pins,
@@ -75,7 +78,7 @@ pub fn draw(
             settings,
             icons,
             status,
-            combined_graph_open,
+            &mut combined_open,
         );
         ui.add_space(8.0);
     }
@@ -168,7 +171,7 @@ pub fn draw(
                         now,
                         false,
                         status,
-                        combined_graph_open,
+                        &mut combined_open,
                     ) {
                         pending_reorder = Some(r);
                     }
@@ -189,9 +192,8 @@ pub fn draw(
                             now,
                             true,
                             status,
-                            combined_graph_open,
+                            &mut combined_open,
                         ) {
-
                             pending_reorder = Some(r);
                         }
                     }
@@ -204,6 +206,12 @@ pub fn draw(
             }
         }
         ui.add_space(4.0);
+    }
+
+    // Persist Combined panel open/closed like other layout prefs.
+    if combined_open != open_before {
+        settings.combined_graph_open = combined_open;
+        let _ = settings.save();
     }
 }
 
@@ -740,7 +748,7 @@ fn draw_combined_graph(
                 }
                 ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
                     if ui.small_button("Dismiss").clicked() {
-                        *open = false;
+                        *open = false; // persisted by pin_board::draw when it differs
                     }
                     if !series.is_empty()
                         && icons

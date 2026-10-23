@@ -121,6 +121,9 @@ pub struct AppSettings {
     /// Pro Combined multi-graph plot height (px); user-resizable.
     #[serde(default = "default_combined_graph_height")]
     pub combined_graph_height: f32,
+    /// Pro Combined multi-graph panel open/closed — restored on reload.
+    #[serde(default)]
+    pub combined_graph_open: bool,
     /// App-wide font zoom step (−4…+5). 0 = default egui sizes.
     #[serde(default)]
     pub font_zoom_step: i8,
@@ -187,6 +190,7 @@ impl Default for AppSettings {
             sticky_layout: StickyLayoutMode::Rows,
             sticky_columns: 2,
             combined_graph_height: default_combined_graph_height(),
+            combined_graph_open: false,
             font_zoom_step: 0,
             show_profiles: true,
             show_live_traffic: false,
