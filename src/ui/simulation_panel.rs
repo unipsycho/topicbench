@@ -29,9 +29,11 @@ const GEN_TYPES: &[&str] = &[
 ];
 
 // Spreadsheet column widths (keep rows aligned).
-const COL_TOPIC: f32 = 220.0;
+const COL_PROFILE: f32 = 110.0;
+const COL_TOPIC: f32 = 160.0;
+const COL_FIELD: f32 = 130.0;
 const COL_GEN: f32 = 128.0;
-const COL_SETTINGS: f32 = 520.0;
+const COL_SETTINGS: f32 = 360.0;
 const COL_VALUE: f32 = 120.0;
 
 /// Draw floating Window and/or docked SidePanel for Simulation.
@@ -63,8 +65,8 @@ pub fn draw(
             .id(egui::Id::new("topicbench_simulation_win"))
             .title_bar(false)
             .collapsible(false)
-            .default_size([980.0, 360.0])
-            .min_width(780.0)
+            .default_size([1100.0, 360.0])
+            .min_width(900.0)
             .min_height(220.0)
             .frame(egui::Frame::window(&ctx.style()).fill(CHROME_BG))
             .show(ctx, |ui| {
@@ -237,6 +239,38 @@ fn body(
                 }
             }
         }
+        // One precision for all rows (header control).
+        ui.separator();
+        ui.label(RichText::new("prec").small().color(CHROME_MUTED));
+        let mut prec = client
+            .rows
+            .first()
+            .map(|r| r.precision as i32)
+            .unwrap_or(3);
+        if ui
+            .add_enabled(
+                !client.rows.is_empty(),
+                egui::DragValue::new(&mut prec).range(0..=12).speed(0.2),
+            )
+            .on_hover_text("Decimal digits for all simulations")
+            .changed()
+        {
+            let prec = prec.clamp(0, 12) as u8;
+            let rows = client.rows.clone();
+            for mut row in rows {
+                if row.precision == prec {
+                    continue;
+                }
+                row.precision = prec;
+                if let Some(slot) = client.rows.iter_mut().find(|r| r.id == row.id) {
+                    slot.precision = prec;
+                }
+                if let Err(e) = client.upsert(&row) {
+                    *status = e;
+                    break;
+                }
+            }
+        }
     });
 
     ui.add_space(4.0);
@@ -245,13 +279,15 @@ fn body(
         .auto_shrink([false, false])
         .show(ui, |ui| {
             egui::Grid::new("sim_sheet")
-                .num_columns(4)
+                .num_columns(6)
                 .spacing([10.0, 6.0])
                 .min_col_width(40.0)
                 .striped(true)
                 .show(ui, |ui| {
-                    // Header
-                    header_cell(ui, COL_TOPIC, "Topic / profile");
+                    // Header — Profile | Topic | Field | Generator | Settings | Value
+                    header_cell(ui, COL_PROFILE, "Profile");
+                    header_cell(ui, COL_TOPIC, "Topic");
+                    header_cell(ui, COL_FIELD, "Field");
                     header_cell(ui, COL_GEN, "Generator");
                     header_cell(ui, COL_SETTINGS, "Settings");
                     header_cell(ui, COL_VALUE, "Current value");
@@ -292,26 +328,15 @@ fn draw_row(
     let mut dirty = false;
     let gen_type = sim_client::generator_label(&draft.generator);
 
-    // Topic / profile — single line
+    // Profile (broker) — first column
     ui.allocate_ui_with_layout(
-        Vec2::new(COL_TOPIC, 28.0),
+        Vec2::new(COL_PROFILE, 28.0),
         egui::Layout::left_to_right(egui::Align::Center),
         |ui| {
-            ui.set_min_width(COL_TOPIC);
-            ui.spacing_mut().item_spacing.x = 4.0;
-            if ui
-                .add(
-                    egui::TextEdit::singleline(&mut draft.topic)
-                        .desired_width(118.0)
-                        .hint_text("topic"),
-                )
-                .changed()
-            {
-                dirty = true;
-            }
+            ui.set_min_width(COL_PROFILE);
             egui::ComboBox::from_id_salt(format!("sim_prof_{}", row.id))
                 .selected_text(profile_label(profiles, &draft.profile))
-                .width(90.0)
+                .width(COL_PROFILE - 8.0)
                 .show_ui(ui, |ui| {
                     for p in profiles.profiles.values() {
                         let connected = sessions
@@ -335,6 +360,64 @@ fn draw_row(
                         }
                     }
                 });
+        },
+    );
+
+    // Topic
+    ui.allocate_ui_with_layout(
+        Vec2::new(COL_TOPIC, 28.0),
+        egui::Layout::left_to_right(egui::Align::Center),
+        |ui| {
+            ui.set_min_width(COL_TOPIC);
+            if ui
+                .add(
+                    egui::TextEdit::singleline(&mut draft.topic)
+                        .desired_width(COL_TOPIC - 8.0)
+                        .hint_text("topic"),
+                )
+                .changed()
+            {
+                dirty = true;
+            }
+        },
+    );
+
+    // Field — compact checkbox; path only when checked (Field mode)
+    ui.allocate_ui_with_layout(
+        Vec2::new(COL_FIELD, 28.0),
+        egui::Layout::left_to_right(egui::Align::Center),
+        |ui| {
+            ui.set_min_width(COL_FIELD);
+            ui.spacing_mut().item_spacing.x = 4.0;
+            let mut use_field = draft.mode == "field_patch";
+            if ui
+                .checkbox(&mut use_field, "")
+                .on_hover_text("Apply generator to a JSON field path (unchecked = whole payload)")
+                .changed()
+            {
+                if use_field {
+                    draft.mode = "field_patch".into();
+                    if draft.field_path.trim().is_empty() {
+                        draft.field_path = "value".into();
+                    }
+                } else {
+                    draft.mode = "whole_payload".into();
+                }
+                dirty = true;
+            }
+            if use_field {
+                if ui
+                    .add(
+                        egui::TextEdit::singleline(&mut draft.field_path)
+                            .desired_width(COL_FIELD - 28.0)
+                            .hint_text("path"),
+                    )
+                    .on_hover_text("JSON dot path to patch (e.g. sensors.temp)")
+                    .changed()
+                {
+                    dirty = true;
+                }
+            }
         },
     );
 
@@ -363,7 +446,7 @@ fn draw_row(
         },
     );
 
-    // Settings — all inline
+    // Settings — interval + generator params (precision lives in toolbar)
     ui.allocate_ui_with_layout(
         Vec2::new(COL_SETTINGS, 28.0),
         egui::Layout::left_to_right(egui::Align::Center),
@@ -372,7 +455,6 @@ fn draw_row(
             ui.spacing_mut().item_spacing.x = 6.0;
             ui.set_max_height(28.0);
 
-            // Interval
             ui.label(RichText::new("ms").small().color(CHROME_MUTED));
             let mut ms = draft.interval_ms as f32;
             if ui
@@ -396,69 +478,6 @@ fn draw_row(
                 dirty = true;
             }
 
-            // Mode — Whole = replace payload; Field = patch one JSON path.
-            let mode_before = draft.mode.clone();
-            let mode_label = if draft.mode == "field_patch" {
-                "Field"
-            } else {
-                "Whole"
-            };
-            egui::ComboBox::from_id_salt(format!("sim_mode_{}", row.id))
-                .selected_text(mode_label)
-                .width(72.0)
-                .show_ui(ui, |ui| {
-                    ui.selectable_value(
-                        &mut draft.mode,
-                        "whole_payload".into(),
-                        "Whole",
-                    )
-                    .on_hover_text("Publish the generated value as the whole payload");
-                    ui.selectable_value(
-                        &mut draft.mode,
-                        "field_patch".into(),
-                        "Field",
-                    )
-                    .on_hover_text("Patch one JSON field path inside the template/payload");
-                });
-            if draft.mode != mode_before {
-                dirty = true;
-                // Seed a path so Field mode can persist (Pro used to reject empty path).
-                if draft.mode == "field_patch" && draft.field_path.trim().is_empty() {
-                    draft.field_path = "value".into();
-                }
-            }
-            if draft.mode == "field_patch" {
-                if ui
-                    .add(
-                        egui::TextEdit::singleline(&mut draft.field_path)
-                            .desired_width(88.0)
-                            .hint_text("field.path"),
-                    )
-                    .on_hover_text("JSON dot path to patch (e.g. sensors.temp)")
-                    .changed()
-                {
-                    dirty = true;
-                }
-            }
-
-            // Decimal precision for published numbers
-            ui.label(RichText::new("prec").small().color(CHROME_MUTED));
-            let mut prec = draft.precision as i32;
-            if ui
-                .add(
-                    egui::DragValue::new(&mut prec)
-                        .range(0..=12)
-                        .speed(0.2)
-                        .prefix(""),
-                )
-                .on_hover_text("Digits after decimal when publishing numbers")
-                .changed()
-            {
-                draft.precision = prec.clamp(0, 12) as u8;
-                dirty = true;
-            }
-
-            // Generator-specific inline controls
             if edit_generator_inline(ui, &row.id, &gen_type, &mut draft.generator, client) {
                 dirty = true;
             }
