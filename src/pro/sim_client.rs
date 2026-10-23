@@ -299,11 +299,31 @@ pub fn blank_row(profile: &str, topic: &str) -> SimRow {
     }
 }
 
-/// Compact generator label for the grid column.
+/// Wire/schema generator type id (stable for persistence / match arms).
 pub fn generator_label(gen: &Value) -> String {
     match gen.get("type").and_then(|t| t.as_str()).unwrap_or("?") {
         "expr" | "formula" => "formula".into(),
+        "enum_list" => "enum_cycle".into(),
         other => other.to_string(),
+    }
+}
+
+/// Human Title Case label for the generator combo (display only).
+pub fn generator_display_name(type_id: &str) -> &'static str {
+    match type_id {
+        "constant" => "Constant",
+        "counter" => "Counter",
+        "sine" => "Sine",
+        "triangle" => "Triangle",
+        "ramp" => "Ramp",
+        "uniform" => "Uniform",
+        "gaussian" => "Gaussian",
+        "random_walk" => "Random Walk",
+        "bool_toggle" => "Bool Toggle",
+        "iso_timestamp" => "ISO Timestamp",
+        "enum_cycle" | "enum_list" => "List",
+        "formula" | "expr" => "Formula",
+        _ => "Unknown",
     }
 }
 

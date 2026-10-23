@@ -7,8 +7,7 @@ use crate::mqtt::profile::ProfileStore;
 use crate::mqtt::session::SessionManager;
 use crate::pro::sim_client::{self, SimClientState, SimRow};
 use crate::ui::icons::{
-    self, IconSet, CHROME_ACCENT_BORDER, CHROME_ACCENT_SOFT, CHROME_BG, CHROME_CAPTION,
-    CHROME_MUTED, CHROME_TEXT,
+    self, IconSet, CHROME_BG, CHROME_CAPTION, CHROME_MUTED, CHROME_TEXT, TINY_ICON,
 };
 use eframe::egui::{self, Color32, RichText, Vec2};
 use serde_json::{json, Value};
@@ -30,7 +29,7 @@ const GEN_TYPES: &[&str] = &[
 
 // Spreadsheet column widths (keep rows aligned).
 const COL_TOPIC: f32 = 220.0;
-const COL_GEN: f32 = 110.0;
+const COL_GEN: f32 = 128.0;
 const COL_SETTINGS: f32 = 520.0;
 const COL_VALUE: f32 = 120.0;
 
@@ -50,6 +49,12 @@ pub fn draw(
         return;
     }
 
+    // Refresh before paint so the title status matches sidecar state.
+    if licensed {
+        client.poll_if_due(false);
+        ctx.request_repaint_after(std::time::Duration::from_millis(500));
+    }
+
     if *floating {
         let mut win_open = true;
         egui::Window::new("Simulation")
@@ -60,9 +65,9 @@ pub fn draw(
             .frame(egui::Frame::window(&ctx.style()).fill(CHROME_BG))
             .open(&mut win_open)
             .show(ctx, |ui| {
-                header_bar(ui, icons, floating, open);
+                header_bar(ui, icons, floating, open, client);
                 ui.separator();
-                body(ui, licensed, client, sessions, profiles, status);
+                body(ui, licensed, client, sessions, profiles, icons, status);
             });
         if !win_open {
             *open = false;
@@ -73,22 +78,31 @@ pub fn draw(
             .min_width(420.0)
             .frame(egui::Frame::NONE.fill(CHROME_BG).inner_margin(8.0))
             .show(ctx, |ui| {
-                header_bar(ui, icons, floating, open);
+                header_bar(ui, icons, floating, open, client);
                 ui.separator();
-                body(ui, licensed, client, sessions, profiles, status);
+                body(ui, licensed, client, sessions, profiles, icons, status);
             });
-    }
-
-    if licensed {
-        client.poll_if_due(false);
-        ctx.request_repaint_after(std::time::Duration::from_millis(500));
     }
 }
 
-fn header_bar(ui: &mut egui::Ui, icons: &IconSet, floating: &mut bool, open: &mut bool) {
+fn header_bar(
+    ui: &mut egui::Ui,
+    icons: &IconSet,
+    floating: &mut bool,
+    open: &mut bool,
+    client: &SimClientState,
+) {
     icons::section_header_bar(ui, |ui| {
         icons::section_icon(ui, icons, "data_table");
         icons::section_title(ui, "Simulation");
+        // Compact run state always next to the title.
+        let any_running = client.statuses.iter().any(|s| s.running);
+        let (label, color) = if any_running {
+            ("Running", Color32::from_rgb(140, 210, 160))
+        } else {
+            ("Stopped", CHROME_MUTED)
+        };
+        ui.label(RichText::new(label).small().color(color));
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             if icons
                 .tiny(ui, "remove_x", false, "Close Simulation panel")
@@ -119,6 +133,7 @@ fn body(
     client: &mut SimClientState,
     sessions: &SessionManager,
     profiles: &ProfileStore,
+    icons: &IconSet,
     status: &mut String,
 ) {
     if !licensed {
@@ -151,14 +166,10 @@ fn body(
         );
     }
 
-    // Toolbar — Start/Stop affect every simulation.
+    // Toolbar — Start/Stop affect every simulation (icon + label, Profiles/Publish chrome).
     ui.horizontal(|ui| {
-        if ui
-            .add(
-                egui::Button::new(RichText::new("Add").strong())
-                    .fill(CHROME_ACCENT_SOFT)
-                    .stroke(egui::Stroke::new(1.0_f32, CHROME_ACCENT_BORDER)),
-            )
+        ui.spacing_mut().item_spacing.x = 6.0;
+        if toolbar_btn(ui, icons, "profile_add", "Add", true)
             .on_hover_text("Add a simulation row")
             .clicked()
         {
@@ -172,8 +183,7 @@ fn body(
                 Err(e) => *status = e,
             }
         }
-        if ui
-            .button("Start")
+        if toolbar_btn(ui, icons, "connect", "Start", true)
             .on_hover_text("Start all simulations")
             .clicked()
         {
@@ -182,8 +192,7 @@ fn body(
                 Err(e) => *status = e,
             }
         }
-        if ui
-            .button("Stop")
+        if toolbar_btn(ui, icons, "disconnect", "Stop", true)
             .on_hover_text("Stop all simulations")
             .clicked()
         {
@@ -193,8 +202,7 @@ fn body(
             }
         }
         let sel = client.selected.clone();
-        if ui
-            .add_enabled(sel.is_some(), egui::Button::new("Delete"))
+        if toolbar_btn(ui, icons, "trash", "Delete", sel.is_some())
             .on_hover_text("Delete selected row")
             .clicked()
         {
@@ -314,11 +322,14 @@ fn draw_row(
             ui.set_min_width(COL_GEN);
             let mut gt = gen_type.clone();
             egui::ComboBox::from_id_salt(format!("sim_gen_{}", row.id))
-                .selected_text(&gt)
+                .selected_text(sim_client::generator_display_name(&gt))
                 .width(COL_GEN - 8.0)
                 .show_ui(ui, |ui| {
                     for t in GEN_TYPES {
-                        if ui.selectable_label(gt == *t, *t).clicked() {
+                        if ui
+                            .selectable_label(gt == *t, sim_client::generator_display_name(t))
+                            .clicked()
+                        {
                             gt = (*t).to_string();
                             draft.generator = default_generator(t);
                             dirty = true;
@@ -779,6 +790,26 @@ fn truncate(s: &str, max_chars: usize) -> String {
     } else {
         head
     }
+}
+
+
+/// Icon + label button matching Profiles Connect / Publish chrome.
+fn toolbar_btn(
+    ui: &mut egui::Ui,
+    icons: &IconSet,
+    icon: &str,
+    label: &str,
+    enabled: bool,
+) -> egui::Response {
+    let btn = if let Some(tex) = icons.get(icon) {
+        egui::Button::image_and_text(
+            egui::Image::new(tex).fit_to_exact_size(egui::vec2(TINY_ICON, TINY_ICON)),
+            label,
+        )
+    } else {
+        egui::Button::new(label)
+    };
+    ui.add_enabled(enabled, btn.min_size(egui::vec2(88.0, 28.0)))
 }
 
 fn default_profile(sessions: &SessionManager, profiles: &ProfileStore) -> String {
