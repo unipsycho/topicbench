@@ -5,7 +5,7 @@
 use crate::mqtt::pins::{DetectedValue, HistorySample, PinBoard, StickyTopic, StickyViewMode};
 use crate::mqtt::profile::ProfileStore;
 use crate::mqtt::session::{SessionManager, SessionState};
-use crate::mqtt::settings::{AppSettings, StickyLayoutMode};
+use crate::mqtt::settings::{AppSettings, StickyLayoutMode, FONT_ZOOM_STEP_FACTOR};
 use crate::pro::{self, Entitlement};
 use crate::ui::flash;
 use crate::ui::hover_tip;
@@ -920,12 +920,14 @@ fn paint_multi_series_plot(ui: &mut egui::Ui, series: &[(&StickyTopic, Color32)]
                 }
             }
 
-            // Size from per-line galleys so colored text measures correctly.
-            let pad = 6.0_f32;
+            // Tip font: 3 ribbon-zoom steps (~10% each) larger than Small at default UI size.
+            let mut tip_font = font.clone();
+            tip_font.size = (tip_font.size * (1.0 + 3.0 * FONT_ZOOM_STEP_FACTOR)).max(8.0);
+            let pad = 8.0_f32;
             let galleys: Vec<_> = lines
                 .iter()
                 .map(|(text, color)| {
-                    ui.fonts(|f| f.layout_no_wrap(text.clone(), font.clone(), *color))
+                    ui.fonts(|f| f.layout_no_wrap(text.clone(), tip_font.clone(), *color))
                 })
                 .collect();
             let box_w = galleys
