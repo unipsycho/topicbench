@@ -27,10 +27,18 @@ keyring = { version = "3", features = ["apple-native", "windows-native", "sync-s
 ureq = { version = "2.12", features = ["json"] }
 semver = "1"
 sha2 = "0.10"
+# Pro license file: ed25519 verify (public key in OSS; private key never shipped).
+ed25519-dalek = { version = "2", features = ["rand_core"] }
+rand = "0.8"
+base64 = "0.22"
 
 [build-dependencies]
 # Embed mqtt-monitor.exe icon on Windows (and cross-compile via MinGW windres).
 winres = "0.1"
+
+[[bin]]
+name = "topicbench-license"
+path = "src/bin/topicbench-license.rs"
 
 [package.metadata.packager]
 product-name = "TopicBench"
