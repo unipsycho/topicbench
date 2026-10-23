@@ -510,12 +510,20 @@ impl MqttMonitorApp {
             ui.label(RichText::new("·").color(CHROME_MUTED));
             ui.add_space(8.0);
             ui.label(RichText::new(msgs).color(CHROME_CAPTION));
-            ui.add_space(12.0);
-            ui.label(RichText::new("·").color(CHROME_MUTED));
-            ui.add_space(12.0);
+
+            // Compact Simulation summary (no per-topic publish spam).
+            if let Some(sim_label) = self.sim_client.status_strip_label() {
+                ui.add_space(12.0);
+                ui.label(RichText::new("·").color(CHROME_MUTED));
+                ui.add_space(12.0);
+                ui.label(RichText::new(sim_label).color(CHROME_CAPTION));
+            }
 
             let alpha = status_strip_fade_alpha(self.status_changed_at, Instant::now());
             if alpha > 0.01 && !self.status.is_empty() {
+                ui.add_space(12.0);
+                ui.label(RichText::new("·").color(CHROME_MUTED));
+                ui.add_space(12.0);
                 let a = (255.0 * alpha) as u8;
                 ui.label(
                     RichText::new(&self.status).color(Color32::from_rgba_unmultiplied(

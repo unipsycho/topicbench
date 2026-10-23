@@ -260,6 +260,11 @@ impl eframe::App for MqttMonitorApp {
                 &mut self.status,
             );
         }
+        // Simulation list poll is off-thread; keep it warm for the status strip
+        // even when the Simulation panel is closed.
+        if crate::pro::has(crate::pro::Entitlement::McpServer) {
+            self.sim_client.poll_if_due(false);
+        }
         // Stats ribbon labels: rebuild frozen snapshot at most once per second.
         let _ = self.sessions.traffic_stats.refresh_display_if_due();
 

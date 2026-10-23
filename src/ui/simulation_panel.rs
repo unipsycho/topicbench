@@ -208,10 +208,11 @@ fn body(
         return;
     }
 
-    if let Some(err) = &client.last_error {
+    // Sticky banner only after sustained failures (avoids on/off flash under load).
+    if let Some(err) = client.banner_error() {
         ui.colored_label(Color32::from_rgb(220, 140, 100), err);
         ui.label(
-            RichText::new("Start the sidecar: cargo run --release --bin topicbench-pro")
+            RichText::new("Retrying in the background — keep topicbench-pro running.")
                 .small()
                 .color(CHROME_MUTED),
         );
