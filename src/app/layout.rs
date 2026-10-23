@@ -286,11 +286,7 @@ impl MqttMonitorApp {
         let status = egui::TopBottomPanel::top("status_strip")
             .exact_height(STATUS_STRIP_H)
             .show_separator_line(false)
-            .frame(
-                egui::Frame::NONE
-                    .fill(CHROME_BG)
-                    .stroke(egui::Stroke::new(1.0_f32, CHROME_SEP)),
-            )
+            .frame(egui::Frame::NONE.fill(CHROME_BG))
             .show(ctx, |ui| {
                 reserve_side_panel_space(ui);
             });
@@ -789,8 +785,9 @@ fn top_chrome_overlay(
     rect: egui::Rect,
     add_contents: impl FnOnce(&mut egui::Ui),
 ) {
-    // Status strip is shorter — match its tighter inner margin.
-    let inner = if rect.height() <= STATUS_STRIP_H + 1.0 {
+    // Status strip is shorter — tighter margin, no box stroke (ribbon keeps chrome border).
+    let is_status = rect.height() <= STATUS_STRIP_H + 1.0;
+    let inner = if is_status {
         egui::Margin::symmetric(10, 3)
     } else {
         egui::Margin::symmetric(8, 4)
@@ -805,14 +802,16 @@ fn top_chrome_overlay(
             ui.set_min_size(rect.size());
             ui.set_max_size(rect.size());
             ui.set_clip_rect(rect);
-            egui::Frame::NONE
+            let mut frame = egui::Frame::NONE
                 .fill(CHROME_BG)
-                .inner_margin(inner)
-                .stroke(egui::Stroke::new(1.0_f32, CHROME_SEP))
-                .show(ui, |ui| {
-                    ui.set_min_height(ui.available_height());
-                    add_contents(ui);
-                });
+                .inner_margin(inner);
+            if !is_status {
+                frame = frame.stroke(egui::Stroke::new(1.0_f32, CHROME_SEP));
+            }
+            frame.show(ui, |ui| {
+                ui.set_min_height(ui.available_height());
+                add_contents(ui);
+            });
         });
 }
 
