@@ -35,14 +35,15 @@ const INTERVAL_TICKS_MS: &[u64] = &[
 ];
 
 // Spreadsheet column widths (keep rows aligned).
+// Refresh→Prec→Value→Generator are tight; Settings gets the reclaimed width.
 const COL_PROFILE: f32 = 110.0;
 const COL_TOPIC: f32 = 160.0;
 const COL_FIELD: f32 = 130.0;
-const COL_REFRESH: f32 = 200.0;
-const COL_PREC: f32 = 56.0;
-const COL_VALUE: f32 = 120.0;
-const COL_GEN: f32 = 128.0;
-const COL_SETTINGS: f32 = 280.0;
+const COL_REFRESH: f32 = 158.0;
+const COL_PREC: f32 = 44.0;
+const COL_VALUE: f32 = 92.0;
+const COL_GEN: f32 = 118.0;
+const COL_SETTINGS: f32 = 400.0;
 
 /// Floating Simulation window only (`floating == true`). Docked UI paints in the
 /// central column via [`draw_docked`].
@@ -274,8 +275,8 @@ fn body(
     let sheet = |ui: &mut egui::Ui| {
         egui::Grid::new("sim_sheet")
             .num_columns(8)
-            .spacing([10.0, 6.0])
-            .min_col_width(40.0)
+            .spacing([5.0, 6.0])
+            .min_col_width(36.0)
             .striped(true)
             .show(ui, |ui| {
                 // Profile → Topic → Field → Refresh → Prec → Value → Generator → Settings
@@ -433,7 +434,7 @@ fn draw_row(
         egui::Layout::left_to_right(egui::Align::Center),
         |ui| {
             ui.set_min_width(COL_REFRESH);
-            ui.spacing_mut().item_spacing.x = 6.0;
+            ui.spacing_mut().item_spacing.x = 4.0;
             let mut idx = interval_tick_index(draft.interval_ms) as f32;
             let max_i = (INTERVAL_TICKS_MS.len() - 1) as f32;
             if ui
@@ -450,11 +451,15 @@ fn draw_row(
                 draft.interval_ms = INTERVAL_TICKS_MS[i];
                 dirty = true;
             }
-            ui.label(
-                RichText::new(format_interval_ms(draft.interval_ms))
-                    .small()
-                    .monospace()
-                    .color(CHROME_TEXT),
+            // Fixed-ish label width so "100 ms" / "10 s" stay readable without padding the column.
+            ui.add_sized(
+                [52.0, 18.0],
+                egui::Label::new(
+                    RichText::new(format_interval_ms(draft.interval_ms))
+                        .small()
+                        .monospace()
+                        .color(CHROME_TEXT),
+                ),
             );
         },
     );
@@ -486,7 +491,7 @@ fn draw_row(
             ui.set_min_width(COL_VALUE);
             let resp = ui.selectable_label(
                 selected,
-                RichText::new(truncate(&val, 14))
+                RichText::new(truncate(&val, 11))
                     .monospace()
                     .color(if running {
                         Color32::from_rgb(140, 210, 160)
