@@ -110,7 +110,7 @@ pub struct MqttMonitorApp {
     pro_bridge: Option<crate::pro::bridge::BridgeHandle>,
     /// Pro Simulation panel (ribbon → Pro → Simulation).
     simulation_open: bool,
-    /// True = floating Window; false = docked right SidePanel.
+    /// True = floating Window; false = docked in the main middle column.
     simulation_floating: bool,
     /// HTTP client state for `topicbench-pro` `/sim`.
     sim_client: crate::pro::sim_client::SimClientState,
