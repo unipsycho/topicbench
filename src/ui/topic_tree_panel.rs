@@ -546,7 +546,7 @@ fn revision_count_label(ui: &mut egui::Ui, count: u64) {
     let color = CHROME_MUTED;
     let text_w = ui.fonts(|f| f.layout_no_wrap(text.clone(), font.clone(), color).size().x);
     // Right pad keeps the last digit inside clip; left pad separates from payload.
-    let pad_r = 3.0_f32;
+    let pad_r = 5.0_f32;
     let pad_l = 4.0_f32;
     let slot_w = (text_w + pad_l + pad_r).ceil().max(12.0);
     let row_h = ui

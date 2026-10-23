@@ -43,15 +43,21 @@ pub fn flash_stroke(until: Option<Instant>, now: Instant) -> Option<Stroke> {
 }
 
 /// Draw a 1px flash (or fallback) stroke **inside** `rect` — never expands layout.
+/// Shrink 1px so right-edge AA / corner curves clear the ScrollArea clip (sticky heading
+/// fill curves stay visible; flush Inside strokes were still getting chopped).
 pub fn paint_inset(ui: &Ui, rect: Rect, stroke: Option<Stroke>) {
     if let Some(stroke) = stroke {
         ui.painter()
-            .rect_stroke(rect, 2.0, stroke, StrokeKind::Inside);
+            .rect_stroke(rect.shrink(1.0), 2.0, stroke, StrokeKind::Inside);
     }
 }
 
 /// Sticky/card chrome: always 1px inside; flash color when pulsing.
 pub fn paint_inset_or(ui: &Ui, rect: Rect, flash: Option<Stroke>, fallback: Stroke) {
-    ui.painter()
-        .rect_stroke(rect, 2.0, flash.unwrap_or(fallback), StrokeKind::Inside);
+    ui.painter().rect_stroke(
+        rect.shrink(1.0),
+        2.0,
+        flash.unwrap_or(fallback),
+        StrokeKind::Inside,
+    );
 }
