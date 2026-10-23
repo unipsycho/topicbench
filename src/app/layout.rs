@@ -226,7 +226,7 @@ impl MqttMonitorApp {
         });
     }
 
-    /// Floating / docked Simulation spreadsheet (Pro sidecar HTTP).
+    /// Floating Simulation window (docked UI paints inside the central column).
     pub(super) fn draw_simulation_panel(&mut self, ctx: &egui::Context) {
         let licensed = crate::pro::has(crate::pro::Entitlement::Simulation);
         let was_open = self.simulation_open;
@@ -608,6 +608,33 @@ impl MqttMonitorApp {
                                 &self.search,
                                 &mut self.status,
                             );
+                            ui.add_space(8.0);
+                            ui.separator();
+                            ui.add_space(8.0);
+                        }
+
+                        // Wide Simulation docks in the middle column (not a side panel).
+                        if self.simulation_open && !self.simulation_floating {
+                            let licensed =
+                                crate::pro::has(crate::pro::Entitlement::Simulation);
+                            let was_open = self.simulation_open;
+                            let was_float = self.simulation_floating;
+                            simulation_panel::draw_docked(
+                                ui,
+                                &mut self.simulation_open,
+                                &mut self.simulation_floating,
+                                licensed,
+                                &mut self.sim_client,
+                                &self.sessions,
+                                &self.profiles,
+                                &self.icons,
+                                &mut self.status,
+                            );
+                            if self.simulation_open != was_open
+                                || self.simulation_floating != was_float
+                            {
+                                self.persist_panels();
+                            }
                             ui.add_space(8.0);
                             ui.separator();
                             ui.add_space(8.0);
