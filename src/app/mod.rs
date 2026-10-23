@@ -108,6 +108,12 @@ pub struct MqttMonitorApp {
     /// Pro MCP localhost Unix-socket bridge (None when not entitled / failed to bind).
     /// Settings → MCP will start/stop this later; v1 auto-starts when `mcp_server` is licensed.
     pro_bridge: Option<crate::pro::bridge::BridgeHandle>,
+    /// Pro Simulation panel (ribbon → Pro → Simulation).
+    simulation_open: bool,
+    /// True = floating Window; false = docked right SidePanel.
+    simulation_floating: bool,
+    /// HTTP client state for `topicbench-pro` `/sim`.
+    sim_client: crate::pro::sim_client::SimClientState,
 }
 
 impl MqttMonitorApp {
@@ -158,6 +164,8 @@ impl MqttMonitorApp {
         } else {
             None
         };
+        let simulation_open = settings.show_simulation;
+        let simulation_floating = settings.simulation_floating;
         Self {
             profiles,
             sessions,
@@ -195,6 +203,9 @@ impl MqttMonitorApp {
             update_auto_check_done: false,
             update_modal_fallback_note: None,
             pro_bridge,
+            simulation_open,
+            simulation_floating,
+            sim_client: crate::pro::sim_client::SimClientState::new(),
         }
     }
 }
@@ -346,6 +357,7 @@ impl eframe::App for MqttMonitorApp {
         self.draw_top_chrome_overlays(ctx, top_chrome);
         self.draw_undocked_topic_trees(ctx);
         self.draw_undocked_payloads(ctx);
+        self.draw_simulation_panel(ctx);
         self.draw_overlays(ctx);
 
         // Panels/actions may have rewritten `status` — refresh fade clock.

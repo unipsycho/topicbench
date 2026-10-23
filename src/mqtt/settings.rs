@@ -140,6 +140,12 @@ pub struct AppSettings {
     pub show_stickies: bool,
     #[serde(default = "default_true")]
     pub show_topic_tree: bool,
+    /// Pro Simulation panel open/closed.
+    #[serde(default)]
+    pub show_simulation: bool,
+    /// Simulation panel floats as a window when true; docked right when false.
+    #[serde(default = "default_true")]
+    pub simulation_floating: bool,
     /// Search bar text (supports `|` OR terms) — restored on reload.
     #[serde(default)]
     pub search_query: String,
@@ -198,6 +204,8 @@ impl Default for AppSettings {
             show_payload: false,
             show_stickies: true,
             show_topic_tree: true,
+            show_simulation: false,
+            simulation_floating: true,
             search_query: String::new(),
             search_scope: SearchScope::All,
             search_apply_to_stickies: true,
@@ -324,6 +332,12 @@ impl AppSettings {
         self.show_payload = payload;
         self.show_stickies = stickies;
         self.show_topic_tree = topic_tree;
+    }
+
+    /// Persist Simulation panel open + float/dock preference.
+    pub fn set_simulation_panel(&mut self, open: bool, floating: bool) {
+        self.show_simulation = open;
+        self.simulation_floating = floating;
     }
 
     /// Snapshot search bar query + scope + stickies apply (call before save).

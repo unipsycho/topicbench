@@ -13,6 +13,7 @@ pub mod ribbon_layout;
 pub mod search_bar;
 pub mod settings_panel;
 pub mod shortcuts;
+pub mod simulation_panel;
 pub mod splash;
 pub mod stats_ribbon;
 pub mod topic_tree_panel;

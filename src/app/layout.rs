@@ -5,13 +5,13 @@ use crate::mqtt::publish::PublishFromTree;
 use crate::mqtt::session::SessionState;
 use crate::ui::icons::{
     self, ribbon_compact_columns, CHROME_BG, CHROME_CAPTION, CHROME_MUTED, CHROME_SEP, CHROME_TEXT,
-    TINT_APP, TINT_PANELS, TINT_PROFILES,
+    TINT_APP, TINT_PANELS, TINT_PRO, TINT_PROFILES,
 };
 use crate::ui::ribbon_layout::{self, SectionMode};
 use crate::ui::shortcuts;
 use crate::ui::{
-    payload_panel, pin_board, profiles, publish_panel, stats_ribbon, topic_tree_panel,
-    traffic_panel,
+    payload_panel, pin_board, profiles, publish_panel, simulation_panel, stats_ribbon,
+    topic_tree_panel, traffic_panel,
 };
 use eframe::egui::{
     self, Align, Color32, FontFamily, FontId, RichText, TextStyle, TextureHandle,
@@ -195,6 +195,56 @@ impl MqttMonitorApp {
                 self.persist_panels();
             }
         });
+    }
+
+    /// Pro ribbon group: Simulation (locked chrome when unlicensed).
+    fn draw_ribbon_pro(&mut self, ui: &mut egui::Ui, mode: SectionMode) {
+        icons::ribbon_group(ui, "Pro", TINT_PRO, |ui| {
+            let licensed = crate::pro::has(crate::pro::Entitlement::Simulation);
+            let tip = if licensed {
+                "Open Simulation panel (topic / payload generators)".to_string()
+            } else {
+                "Simulation — requires TopicBench Pro".to_string()
+            };
+            let selected = self.simulation_open;
+            let clicked = if mode == SectionMode::Full {
+                self.icons
+                    .command(ui, "data_table", "Simulation", selected, &tip)
+                    .clicked()
+            } else {
+                self.icons
+                    .command_compact(ui, "data_table", selected, &tip)
+                    .clicked()
+            };
+            if clicked {
+                self.simulation_open = !self.simulation_open;
+                self.persist_panels();
+                if self.simulation_open && licensed {
+                    self.sim_client.poll_if_due(true);
+                }
+            }
+        });
+    }
+
+    /// Floating / docked Simulation spreadsheet (Pro sidecar HTTP).
+    pub(super) fn draw_simulation_panel(&mut self, ctx: &egui::Context) {
+        let licensed = crate::pro::has(crate::pro::Entitlement::Simulation);
+        let was_open = self.simulation_open;
+        let was_float = self.simulation_floating;
+        simulation_panel::draw(
+            ctx,
+            &mut self.simulation_open,
+            &mut self.simulation_floating,
+            licensed,
+            &mut self.sim_client,
+            &self.sessions,
+            &self.profiles,
+            &self.icons,
+            &mut self.status,
+        );
+        if self.simulation_open != was_open || self.simulation_floating != was_float {
+            self.persist_panels();
+        }
     }
 
     /// App ribbon group: Settings + zoom (full or compact).
@@ -419,6 +469,8 @@ impl MqttMonitorApp {
             self.draw_ribbon_profiles(ui, plan.profiles);
             icons::ribbon_separator(ui);
             self.draw_ribbon_panels(ui, plan.panels);
+            icons::ribbon_separator(ui);
+            self.draw_ribbon_pro(ui, plan.pro);
             icons::ribbon_separator(ui);
             self.draw_ribbon_app(ui, ctx, plan.app);
 
