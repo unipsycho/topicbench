@@ -1,7 +1,10 @@
-//! Entitlement probe for gated features (verify + `has()`).
+//! Pro license probe for gated features (`is_licensed` / `has()`).
 //!
-//! Localhost IPC for Pro MCP lives in [`bridge`] — started only when
-//! [`Entitlement::McpServer`] is unlocked (no Settings Pro panel yet).
+//! One licensed bit unlocks **all** Pro features — no per-feature list in the
+//! license file. Feature-named checks (`has(MultiGraph)`, `has(McpServer)`)
+//! remain for UI clarity but all follow that single bit.
+//!
+//! Localhost IPC for Pro MCP lives in [`bridge`] — started only when licensed.
 
 mod license_format;
 pub mod bridge;
@@ -9,9 +12,9 @@ pub mod bridge;
 use std::sync::OnceLock;
 
 use crate::mqtt::paths;
-use license_format::{load_license_path, LicensePayload, LICENSE_FILE_ALT, LICENSE_FILE_NAME};
+use license_format::{load_license_path, LICENSE_FILE_ALT, LICENSE_FILE_NAME};
 
-/// Named capability flags.
+/// Named capability flags (UI / call sites). All true when Pro is licensed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Entitlement {
     MultiGraph,
@@ -28,107 +31,33 @@ pub enum Entitlement {
     AutoSuggestSims,
 }
 
-impl Entitlement {
-    fn from_token(s: &str) -> Option<Self> {
-        match s.trim().to_ascii_lowercase().as_str() {
-            "multi_graph" | "multigraph" | "combined_graph" => Some(Self::MultiGraph),
-            "mcp_server" | "mcp" => Some(Self::McpServer),
-            "webhooks" | "webhook" => Some(Self::Webhooks),
-            "simulation" | "sim" => Some(Self::Simulation),
-            "scenario_player" | "scenario" => Some(Self::ScenarioPlayer),
-            "record_simulate" | "record_sim" => Some(Self::RecordSimulate),
-            "tree_export" | "export" => Some(Self::TreeExport),
-            "history_scrubber" | "scrubber" => Some(Self::HistoryScrubber),
-            "csv_export" | "csv" | "parquet" => Some(Self::CsvExport),
-            "bookmarks" | "bookmark" => Some(Self::Bookmarks),
-            "color_rules" | "colors" => Some(Self::ColorRules),
-            "auto_suggest_sims" | "auto_suggest" => Some(Self::AutoSuggestSims),
-            _ => None,
-        }
-    }
-}
-
-/// Snapshot of which capabilities are unlocked.
+/// Snapshot of which capabilities are unlocked (all-or-nothing).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Entitlements {
-    pub multi_graph: bool,
-    pub mcp_server: bool,
-    pub webhooks: bool,
-    pub simulation: bool,
-    pub scenario_player: bool,
-    pub record_simulate: bool,
-    pub tree_export: bool,
-    pub history_scrubber: bool,
-    pub csv_export: bool,
-    pub bookmarks: bool,
-    pub color_rules: bool,
-    pub auto_suggest_sims: bool,
+    licensed: bool,
 }
 
 impl Entitlements {
     pub fn free() -> Self {
-        Self::default()
+        Self { licensed: false }
     }
 
+    /// Full Pro — every feature unlocked.
+    pub fn all() -> Self {
+        Self { licensed: true }
+    }
+
+    #[allow(dead_code)]
     pub fn all_enabled() -> Self {
-        Self {
-            multi_graph: true,
-            mcp_server: true,
-            webhooks: true,
-            simulation: true,
-            scenario_player: true,
-            record_simulate: true,
-            tree_export: true,
-            history_scrubber: true,
-            csv_export: true,
-            bookmarks: true,
-            color_rules: true,
-            auto_suggest_sims: true,
-        }
+        Self::all()
     }
 
-    pub fn get(self, flag: Entitlement) -> bool {
-        match flag {
-            Entitlement::MultiGraph => self.multi_graph,
-            Entitlement::McpServer => self.mcp_server,
-            Entitlement::Webhooks => self.webhooks,
-            Entitlement::Simulation => self.simulation,
-            Entitlement::ScenarioPlayer => self.scenario_player,
-            Entitlement::RecordSimulate => self.record_simulate,
-            Entitlement::TreeExport => self.tree_export,
-            Entitlement::HistoryScrubber => self.history_scrubber,
-            Entitlement::CsvExport => self.csv_export,
-            Entitlement::Bookmarks => self.bookmarks,
-            Entitlement::ColorRules => self.color_rules,
-            Entitlement::AutoSuggestSims => self.auto_suggest_sims,
-        }
+    pub fn is_licensed(self) -> bool {
+        self.licensed
     }
 
-    fn enable(&mut self, flag: Entitlement) {
-        match flag {
-            Entitlement::MultiGraph => self.multi_graph = true,
-            Entitlement::McpServer => self.mcp_server = true,
-            Entitlement::Webhooks => self.webhooks = true,
-            Entitlement::Simulation => self.simulation = true,
-            Entitlement::ScenarioPlayer => self.scenario_player = true,
-            Entitlement::RecordSimulate => self.record_simulate = true,
-            Entitlement::TreeExport => self.tree_export = true,
-            Entitlement::HistoryScrubber => self.history_scrubber = true,
-            Entitlement::CsvExport => self.csv_export = true,
-            Entitlement::Bookmarks => self.bookmarks = true,
-            Entitlement::ColorRules => self.color_rules = true,
-            Entitlement::AutoSuggestSims => self.auto_suggest_sims = true,
-        }
-    }
-
-    fn from_license_payload(payload: &LicensePayload) -> Self {
-        let mut ents = Self::free();
-        for token in &payload.entitlements {
-            if let Some(flag) = Entitlement::from_token(token) {
-                ents.enable(flag);
-            }
-        }
-        ents
+    pub fn get(self, _flag: Entitlement) -> bool {
+        self.licensed
     }
 }
 
@@ -164,25 +93,21 @@ pub struct ProBridge {
 }
 
 impl ProBridge {
-    /// Resolve entitlements for UI gates.
+    /// Resolve Pro license for UI gates (all features or none).
     pub fn probe() -> Self {
-        if let Some(ents) = try_dev_entitlements() {
+        if try_dev_unlock() {
             return Self {
-                entitlements: ents,
+                entitlements: Entitlements::all(),
                 status: ProStatus::NotInstalled,
             };
         }
 
-        if let Some(payload) = try_load_signed_license() {
-            let entitlements = Entitlements::from_license_payload(&payload);
+        if try_load_signed_license() {
             if env_truthy("TOPICBENCH_PRO_DEBUG") {
-                eprintln!(
-                    "topicbench: licensed multi_graph={} mcp_server={} simulation={}",
-                    entitlements.multi_graph, entitlements.mcp_server, entitlements.simulation
-                );
+                eprintln!("topicbench: Pro licensed (all features)");
             }
             return Self {
-                entitlements,
+                entitlements: Entitlements::all(),
                 status: ProStatus::Licensed,
             };
         }
@@ -200,6 +125,10 @@ impl ProBridge {
     #[allow(dead_code)]
     pub fn entitlements(&self) -> Entitlements {
         self.entitlements
+    }
+
+    pub fn is_licensed(&self) -> bool {
+        self.entitlements.is_licensed()
     }
 
     pub fn has(&self, flag: Entitlement) -> bool {
@@ -223,7 +152,12 @@ pub fn bridge() -> &'static ProBridge {
     BRIDGE.get_or_init(ProBridge::probe)
 }
 
-/// True when entitlement is unlocked.
+/// True when Pro is licensed (all features available).
+pub fn is_licensed() -> bool {
+    bridge().is_licensed()
+}
+
+/// True when entitlement is unlocked (same as [`is_licensed`] for every flag).
 pub fn has(flag: Entitlement) -> bool {
     bridge().has(flag)
 }
@@ -233,35 +167,27 @@ pub fn status_label() -> &'static str {
     bridge().status().label()
 }
 
-fn try_dev_entitlements() -> Option<Entitlements> {
+/// DEV preview: any truthy `TOPICBENCH_PRO_DEV`, or non-empty `TOPICBENCH_PRO_ENTITLEMENTS`.
+fn try_dev_unlock() -> bool {
     if env_truthy("TOPICBENCH_PRO_DEV") {
-        return Some(Entitlements::all_enabled());
+        return true;
     }
-    let Ok(raw) = std::env::var("TOPICBENCH_PRO_ENTITLEMENTS") else {
-        return None;
-    };
-    if raw.trim().is_empty() {
-        return None;
+    match std::env::var("TOPICBENCH_PRO_ENTITLEMENTS") {
+        Ok(raw) => !raw.trim().is_empty(),
+        Err(_) => false,
     }
-    let mut ents = Entitlements::free();
-    for token in raw.split(',') {
-        if let Some(flag) = Entitlement::from_token(token) {
-            ents.enable(flag);
-        }
-    }
-    Some(ents)
 }
 
-fn try_load_signed_license() -> Option<LicensePayload> {
+fn try_load_signed_license() -> bool {
     for name in [LICENSE_FILE_NAME, LICENSE_FILE_ALT] {
         let path = paths::config_file(name);
         match load_license_path(&path) {
-            Ok(Some(payload)) => return Some(payload),
+            Ok(Some(_)) => return true,
             Ok(None) => continue,
             Err(_) => continue,
         }
     }
-    None
+    false
 }
 
 fn env_truthy(key: &str) -> bool {
@@ -281,33 +207,18 @@ mod tests {
     #[test]
     fn free_defaults_false() {
         let e = Entitlements::free();
-        assert!(!e.multi_graph);
-        assert!(!e.mcp_server);
-        assert!(!e.simulation);
+        assert!(!e.is_licensed());
+        assert!(!e.get(Entitlement::MultiGraph));
+        assert!(!e.get(Entitlement::McpServer));
     }
 
     #[test]
-    fn token_parse() {
-        assert_eq!(
-            Entitlement::from_token("multi_graph"),
-            Some(Entitlement::MultiGraph)
-        );
-        assert_eq!(
-            Entitlement::from_token("MCP"),
-            Some(Entitlement::McpServer)
-        );
-    }
-
-    #[test]
-    fn license_payload_maps_flags() {
-        let payload = LicensePayload {
-            entitlements: vec!["multi_graph".into(), "simulation".into()],
-            expires: None,
-            licensee: None,
-        };
-        let e = Entitlements::from_license_payload(&payload);
-        assert!(e.multi_graph);
-        assert!(e.simulation);
-        assert!(!e.mcp_server);
+    fn all_unlocks_every_flag() {
+        let e = Entitlements::all();
+        assert!(e.is_licensed());
+        assert!(e.get(Entitlement::MultiGraph));
+        assert!(e.get(Entitlement::McpServer));
+        assert!(e.get(Entitlement::Simulation));
+        assert!(e.get(Entitlement::TreeExport));
     }
 }

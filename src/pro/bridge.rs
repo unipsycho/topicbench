@@ -4,8 +4,8 @@
 //! with one JSON object per line (request → response). MQTT truth stays in
 //! SessionHub; this only serializes tool calls onto the same UI paths.
 //!
-//! Started only when `pro::has(Entitlement::McpServer)`. Without the entitlement
-//! the socket is never bound (free builds get no working MCP stack).
+//! Started only when Pro is licensed (`pro::has(Entitlement::McpServer)` /
+//! `pro::is_licensed()`). Without a license the socket is never bound.
 //!
 //! Settings → MCP panel will plug in later (enable/token/port); for v1 Pro owns
 //! the HTTP listener and reads token from `~/.config/topicbench/mcp-token`.
@@ -840,7 +840,7 @@ fn server_status(sessions: &SessionManager, shared: &Arc<Mutex<Shared>>) -> serd
         "sessions": sessions.open.len(),
         "buffer_len": buf_len,
         "buffer_cap": MSG_BUF_CAP,
-        "entitlement": "mcp_server",
+        "licensed": true,
     })
 }
 
