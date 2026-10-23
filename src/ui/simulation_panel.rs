@@ -327,7 +327,9 @@ fn body(
                 }
             }
             if toolbar_btn(ui, icons, "folder_open", "Import", true)
-                .on_hover_text("Import simulation definitions JSON (replaces list)")
+                .on_hover_text(
+                    "Import simulation JSON (array or {simulations:[…]}) — Replace / Merge / Cancel",
+                )
                 .clicked()
             {
                 if let Some(path) = rfd::FileDialog::new()
@@ -335,31 +337,58 @@ fn body(
                     .add_filter("JSON", &["json"])
                     .pick_file()
                 {
-                    let proceed = if client.rows.is_empty() {
-                        true
+                    // Empty list: load without prompting. Else Replace / Merge / Cancel.
+                    let mode = if client.rows.is_empty() {
+                        Some("replace")
                     } else {
-                        matches!(
-                            rfd::MessageDialog::new()
-                                .set_level(rfd::MessageLevel::Warning)
-                                .set_title("Replace simulations?")
-                                .set_description(
-                                    "Import replaces the current simulation list. Continue?",
-                                )
-                                .set_buttons(rfd::MessageButtons::YesNo)
-                                .show(),
-                            rfd::MessageDialogResult::Yes
-                        )
+                        match rfd::MessageDialog::new()
+                            .set_level(rfd::MessageLevel::Info)
+                            .set_title("Import simulations")
+                            .set_description(
+                                "Replace the current list, or Merge (update matching \
+                                 profile+topic+field rows and append the rest)?\n\
+                                 File may be a bare array or { \"simulations\": […] }.",
+                            )
+                            .set_buttons(rfd::MessageButtons::YesNoCancelCustom(
+                                "Replace".into(),
+                                "Merge".into(),
+                                "Cancel".into(),
+                            ))
+                            .show()
+                        {
+                            rfd::MessageDialogResult::Yes => Some("replace"),
+                            rfd::MessageDialogResult::No => Some("merge"),
+                            rfd::MessageDialogResult::Custom(s)
+                                if s.eq_ignore_ascii_case("replace") =>
+                            {
+                                Some("replace")
+                            }
+                            rfd::MessageDialogResult::Custom(s)
+                                if s.eq_ignore_ascii_case("merge") =>
+                            {
+                                Some("merge")
+                            }
+                            _ => None,
+                        }
                     };
-                    if proceed {
+                    if let Some(mode) = mode {
                         match std::fs::read_to_string(&path) {
                             Ok(raw) => match serde_json::from_str::<serde_json::Value>(&raw) {
-                                Ok(v) => match client.import_sims(&v) {
-                                    Ok(n) => *status = format!("Imported {n} simulations"),
-                                    Err(e) => *status = e,
+                                Ok(v) => match client.import_sims_mode(&v, mode) {
+                                    Ok(n) => {
+                                        *status =
+                                            format!("Imported {n} simulations ({mode})")
+                                    }
+                                    Err(e) => *status = format!("Import failed: {e}"),
                                 },
-                                Err(e) => *status = format!("parse JSON: {e}"),
+                                Err(e) => {
+                                    *status = format!("Import failed: parse JSON: {e}")
+                                }
                             },
-                            Err(e) => *status = format!("read {}: {e}", path.display()),
+                            Err(e) => {
+                                *status =
+                                    format!("Import failed: read {}: {e}", path.display())
+                            }
                         }
                     }
                 }

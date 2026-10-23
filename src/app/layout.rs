@@ -462,20 +462,35 @@ impl MqttMonitorApp {
             icons::ribbon_separator(ui);
             self.draw_ribbon_app(ui, ctx, plan.app);
 
-            // Far right: zoom stack (always), then Stats to its left when shown.
-            // right_to_left paints the first child at the trailing edge.
-            let remaining = ui.available_width();
-            if remaining > 8.0 {
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
-                    ui.set_max_width(remaining);
+            // Reserve a fixed trailing strip so zoom (+ Stats) always sit on the
+            // far right — never gated on leftover width (wide Full layout used to
+            // eat the row and hide the stacked +/−).
+            let sep_w = icons::estimate_separator_w();
+            let trailing_w = icons::estimate_zoom_stack_w()
+                + sep_w
+                + if plan.show_stats {
+                    stats_ribbon::estimate_width() + sep_w
+                } else {
+                    0.0
+                };
+            let avail = ui.available_width();
+            // Slack (if any) stays left of the trailing cluster.
+            if avail > trailing_w {
+                ui.add_space(avail - trailing_w);
+            }
+            ui.allocate_ui_with_layout(
+                egui::vec2(trailing_w.min(avail), icons::CMD_H),
+                egui::Layout::right_to_left(egui::Align::Min),
+                |ui| {
+                    // First in RTL = far-right edge: zoom stack always.
                     self.draw_ribbon_zoom(ui, ctx);
                     icons::ribbon_separator(ui);
                     if plan.show_stats {
                         stats_ribbon::draw_group(ui, &self.sessions.traffic_stats);
                         icons::ribbon_separator(ui);
                     }
-                });
-            }
+                },
+            );
         });
     }
 
