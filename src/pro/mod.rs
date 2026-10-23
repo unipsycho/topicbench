@@ -1,4 +1,7 @@
-//! TopicBench Pro — OSS capability probe / entitlement bridge.
+//! TopicBench Pro — thin OSS capability probe / entitlement bridge.
+//!
+//! Public OSS must not depend on the private `topicbench-pro` crate. Minting and
+//! paid engines live there; this module only probes entitlements.
 //!
 //! Probe order (`ProBridge::probe`):
 //! 1. **DEV env** (`TOPICBENCH_PRO_DEV` / `TOPICBENCH_PRO_ENTITLEMENTS`) — UI preview; wins
