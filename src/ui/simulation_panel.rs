@@ -25,15 +25,14 @@ const GEN_TYPES: &[&str] = &[
     "bool_toggle",
     "iso_timestamp",
     "enum_cycle",
-    "expr",
+    "formula",
 ];
 
 // Spreadsheet column widths (keep rows aligned).
 const COL_TOPIC: f32 = 220.0;
 const COL_GEN: f32 = 110.0;
-const COL_SETTINGS: f32 = 420.0;
-const COL_VALUE: f32 = 100.0;
-const COL_RUN: f32 = 48.0;
+const COL_SETTINGS: f32 = 520.0;
+const COL_VALUE: f32 = 120.0;
 
 /// Draw floating Window and/or docked SidePanel for Simulation.
 pub fn draw(
@@ -222,7 +221,7 @@ fn body(
         .auto_shrink([false, false])
         .show(ui, |ui| {
             egui::Grid::new("sim_sheet")
-                .num_columns(5)
+                .num_columns(4)
                 .spacing([10.0, 6.0])
                 .min_col_width(40.0)
                 .striped(true)
@@ -232,7 +231,6 @@ fn body(
                     header_cell(ui, COL_GEN, "Generator");
                     header_cell(ui, COL_SETTINGS, "Settings");
                     header_cell(ui, COL_VALUE, "Current value");
-                    header_cell(ui, COL_RUN, "Run");
                     ui.end_row();
 
                     let rows = client.rows.clone();
@@ -400,8 +398,25 @@ fn draw_row(
                 }
             }
 
+            // Decimal precision for published numbers
+            ui.label(RichText::new("prec").small().color(CHROME_MUTED));
+            let mut prec = draft.precision as i32;
+            if ui
+                .add(
+                    egui::DragValue::new(&mut prec)
+                        .range(0..=12)
+                        .speed(0.2)
+                        .prefix(""),
+                )
+                .on_hover_text("Digits after decimal when publishing numbers")
+                .changed()
+            {
+                draft.precision = prec.clamp(0, 12) as u8;
+                dirty = true;
+            }
+
             // Generator-specific inline controls
-            if edit_generator_inline(ui, &row.id, &gen_type, &mut draft.generator) {
+            if edit_generator_inline(ui, &row.id, &gen_type, &mut draft.generator, client) {
                 dirty = true;
             }
         },
@@ -431,27 +446,6 @@ fn draw_row(
         },
     );
 
-    // Running indicator only (no per-row start/stop)
-    ui.allocate_ui_with_layout(
-        Vec2::new(COL_RUN, 28.0),
-        egui::Layout::left_to_right(egui::Align::Center),
-        |ui| {
-            ui.set_min_width(COL_RUN);
-            let (lbl, col) = if running {
-                ("▶", Color32::from_rgb(140, 210, 160))
-            } else {
-                ("■", CHROME_MUTED)
-            };
-            if ui
-                .add(egui::Label::new(RichText::new(lbl).color(col)).sense(egui::Sense::click()))
-                .on_hover_text(if running { "Running" } else { "Stopped" })
-                .clicked()
-            {
-                client.selected = Some(row.id.clone());
-            }
-        },
-    );
-
     if dirty {
         match client.upsert(&draft) {
             Ok(_) => {}
@@ -466,6 +460,7 @@ fn edit_generator_inline(
     row_id: &str,
     gen_type: &str,
     generator: &mut Value,
+    client: &mut SimClientState,
 ) -> bool {
     let mut dirty = false;
     match gen_type {
@@ -583,22 +578,59 @@ fn edit_generator_inline(
                 dirty = true;
             }
         }
-        "expr" => {
+        "formula" | "expr" => {
             let mut formula = generator
                 .get("formula")
                 .and_then(|v| v.as_str())
-                .unwrap_or("sin(t)")
+                .unwrap_or(r#"topic("lab/temp_c") * 1.8 + 32"#)
                 .to_string();
-            if ui
-                .add(
-                    egui::TextEdit::singleline(&mut formula)
-                        .desired_width(140.0)
-                        .hint_text("expr"),
-                )
-                .changed()
-            {
-                *generator = json!({"type": "expr", "formula": formula});
+            let resp = ui.add(
+                egui::TextEdit::singleline(&mut formula)
+                    .desired_width(168.0)
+                    .hint_text(r#"topic("a/b") * 1.8 + 32"#),
+            );
+            if resp.changed() {
+                *generator = json!({"type": "formula", "formula": formula.clone()});
                 dirty = true;
+            }
+            // Live syntax check via sidecar; cache per row until formula changes.
+            let cache_id = egui::Id::new(("sim_formula_ok", row_id));
+            let need = ui.ctx().data(|d| {
+                d.get_temp::<(String, bool)>(cache_id)
+                    .map(|(f, _)| f != formula)
+                    .unwrap_or(true)
+            });
+            if need {
+                let ok = !formula.trim().is_empty()
+                    && client.validate_formula(&formula).is_ok();
+                ui.ctx()
+                    .data_mut(|d| d.insert_temp(cache_id, (formula.clone(), ok)));
+            }
+            let ok = ui.ctx().data(|d| {
+                d.get_temp::<(String, bool)>(cache_id)
+                    .map(|(_, o)| o)
+                    .unwrap_or(false)
+            });
+            let border = if ok {
+                Color32::from_rgb(90, 180, 120)
+            } else {
+                Color32::from_rgb(200, 90, 90)
+            };
+            ui.painter().rect_stroke(
+                resp.rect.expand(1.0),
+                3.0,
+                egui::Stroke::new(1.5, border),
+                egui::StrokeKind::Outside,
+            );
+            if !ok {
+                resp.on_hover_text(
+                    "Invalid formula — use t, n, sin/cos/abs/min/max/rand/randn, \
+                     topic(\"path\"), topic(\"path\", \"field\"), sim(\"id\")",
+                );
+            } else {
+                resp.on_hover_text(
+                    r#"Calculated channel: topic("lab/temp_c") * 1.8 + 32"#,
+                );
             }
         }
         _ => {}
@@ -690,22 +722,6 @@ fn range_sliders(ui: &mut egui::Ui, row_id: &str, min: &mut f64, max: &mut f64) 
     }
     ui.label(RichText::new("max").small().color(CHROME_MUTED));
     if ui.add(egui::DragValue::new(max).speed(0.1)).changed() {
-        dirty = true;
-    }
-    // Compact dual-ish slider on the span (drags max; useful quick feel).
-    let span_lo = (*min).min(*max);
-    let span_hi = (*min).max(*max).max(span_lo + 1e-6);
-    let mut hi = *max;
-    if ui
-        .add(
-            egui::Slider::new(&mut hi, (span_lo - 50.0)..=(span_hi + 50.0))
-                .show_value(false)
-                .clamping(egui::SliderClamping::Never),
-        )
-        .on_hover_text(format!("max → {hi:.3}"))
-        .changed()
-    {
-        *max = hi;
         dirty = true;
     }
     if *min > *max {
@@ -815,7 +831,7 @@ fn default_generator(t: &str) -> Value {
         "bool_toggle" => json!({"type": "bool_toggle", "start": false}),
         "iso_timestamp" => json!({"type": "iso_timestamp"}),
         "enum_cycle" => json!({"type": "enum_cycle", "values": ["a", "b", "c"]}),
-        "expr" => json!({"type": "expr", "formula": "sin(t)"}),
+        "formula" | "expr" => json!({"type": "formula", "formula": r#"topic("lab/temp_c") * 1.8 + 32"#}),
         _ => json!({"type": "sine", "min": 0.0, "max": 100.0, "period_s": 10.0}),
     }
 }

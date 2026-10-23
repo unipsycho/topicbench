@@ -35,6 +35,9 @@ pub struct SimRow {
     pub field_path: String,
     #[serde(default)]
     pub generator: Value,
+    /// Decimal digits when publishing numbers (default 3).
+    #[serde(default = "default_precision")]
+    pub precision: u8,
     #[serde(default)]
     pub auto_start: bool,
 }
@@ -44,6 +47,9 @@ fn default_interval() -> u64 {
 }
 fn default_mode() -> String {
     "whole_payload".into()
+}
+fn default_precision() -> u8 {
+    3
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -156,6 +162,22 @@ impl SimClientState {
         let _ = self.http("POST", "/sim/stop_all", None)?;
         self.poll_if_due(true);
         Ok(())
+    }
+
+    /// Syntax-check a formula via the sidecar (topic/sim stubs resolve to 0).
+    pub fn validate_formula(&mut self, formula: &str) -> Result<(), String> {
+        let body = serde_json::to_vec(&serde_json::json!({ "formula": formula }))
+            .map_err(|e| e.to_string())?;
+        let v = self.http("POST", "/sim/validate_formula", Some(body))?;
+        if v.get("ok").and_then(|o| o.as_bool()).unwrap_or(false) {
+            Ok(())
+        } else {
+            Err(v
+                .get("error")
+                .and_then(|e| e.as_str())
+                .unwrap_or("invalid formula")
+                .to_string())
+        }
     }
 
     fn token(&mut self) -> Result<String, String> {
@@ -272,16 +294,17 @@ pub fn blank_row(profile: &str, topic: &str) -> SimRow {
         template: String::new(),
         field_path: String::new(),
         generator: serde_json::json!({"type": "sine", "min": 0.0, "max": 100.0, "period_s": 10.0}),
+        precision: 3,
         auto_start: false,
     }
 }
 
 /// Compact generator label for the grid column.
 pub fn generator_label(gen: &Value) -> String {
-    gen.get("type")
-        .and_then(|t| t.as_str())
-        .unwrap_or("?")
-        .to_string()
+    match gen.get("type").and_then(|t| t.as_str()).unwrap_or("?") {
+        "expr" | "formula" => "formula".into(),
+        other => other.to_string(),
+    }
 }
 
 /// Human-readable current value cell.
