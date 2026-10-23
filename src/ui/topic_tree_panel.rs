@@ -585,9 +585,13 @@ fn leaf_row(
         Color32::TRANSPARENT
     };
 
-    let row = egui::Frame::NONE.fill(row_fill).show(ui, |ui| {
-        // Span the full panel width so payload truncates only at the true right edge.
-        let row_w = ui.available_width();
+    // Full avail puts the right stroke on the ScrollArea clip plane (square/missing
+    // edge). Clear a few px inside content — scrollbar gutter unchanged.
+    let row_w = (ui.available_width() - flash::ITEM_CLIP_CLEAR).max(32.0);
+    let row = egui::Frame::NONE
+        .fill(row_fill)
+        .corner_radius(3.0) // same visible right curve idea as sticky heading fill
+        .show(ui, |ui| {
         ui.set_min_width(row_w);
         ui.horizontal(|ui| {
             ui.set_min_width(row_w);
@@ -717,8 +721,14 @@ fn leaf_row(
             });
         });
     });
-    // Inset flash — same row size with or without pulse.
-    flash::paint_inset(ui, row.response.rect, flash_stroke);
+    // Flash, or a steady select edge so the right border stays visible when idle.
+    let edge = flash_stroke.or_else(|| {
+        selected.then_some(egui::Stroke::new(
+            1.0_f32,
+            Color32::from_rgb(70, 130, 190),
+        ))
+    });
+    flash::paint_inset(ui, row.response.rect, edge);
 
     // Double-click leaf / payload row → Publish (also select for Payload).
     if dbl {

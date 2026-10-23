@@ -7,6 +7,10 @@ use std::time::Instant;
 
 use crate::mqtt::topic_tree::{TopicNode, FLASH_MS};
 
+/// Keep per-item chrome this many px left of the ScrollArea content clip so Inside
+/// strokes / corner curves stay visible. Does **not** change scrollbar gutter width.
+pub const ITEM_CLIP_CLEAR: f32 = 3.0;
+
 /// True while a flash pulse is still fading.
 pub fn flash_active(until: Option<Instant>, now: Instant) -> bool {
     until.map(|t| now < t).unwrap_or(false)

@@ -271,6 +271,9 @@ fn draw_sticky(
                 bottom: 2,
             })
             .show(ui, |ui| {
+                // Stop short of the content clip so the right card stroke stays visible.
+                let max_w = (ui.available_width() - flash::ITEM_CLIP_CLEAR).max(80.0);
+                ui.set_max_width(max_w);
                 let mut mode_changed: Option<StickyViewMode> = None;
                 let mut combined_changed: Option<bool> = None;
                 let mut unstick = false;
@@ -731,16 +734,17 @@ fn draw_combined_graph(
     let mut plot_h =
         AppSettings::clamp_combined_graph_height(settings.combined_graph_height);
 
-    // Match sticky heading/cards: fill + corners, no Frame stroke. Frame strokes sit on
-    // the clip edge and lose the right curve; inset paint stays inside the allocated rect.
+    // Match sticky heading/cards: fill + corners, no Frame stroke. Stop short of the
+    // content clip so the right inset stroke isn't flush with ScrollArea's max x.
     let border = Stroke::new(1.0_f32, CHROME_ACCENT_BORDER);
     let frame = egui::Frame::NONE
         .fill(Color32::from_rgb(32, 34, 40))
         .corner_radius(4.0)
         .inner_margin(egui::Margin::symmetric(10, 8))
         .show(ui, |ui| {
-            // Same full-width stretch as section_header_bar.
-            ui.set_min_width(ui.available_width());
+            let w = (ui.available_width() - flash::ITEM_CLIP_CLEAR).max(48.0);
+            ui.set_min_width(w);
+            ui.set_max_width(w);
             ui.horizontal(|ui| {
                 ui.label(RichText::new("Combined graph").strong().color(CHROME_TEXT));
                 if !series.is_empty() {
