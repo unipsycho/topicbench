@@ -247,17 +247,12 @@ impl MqttMonitorApp {
         }
     }
 
-    /// App ribbon group: Settings + zoom (full or compact).
-    fn draw_ribbon_app(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, mode: SectionMode) {
+    /// App ribbon group: Settings only (zoom lives far-right of Stats).
+    fn draw_ribbon_app(&mut self, ui: &mut egui::Ui, _ctx: &egui::Context, mode: SectionMode) {
         icons::ribbon_group(ui, "App", TINT_APP, |ui| {
             let tip_set = shortcuts::tip("Open settings window", "Ctrl+,");
-            let tip_out = shortcuts::tip("Decrease font size (−4 steps from default)", "Ctrl+-");
-            let tip_in =
-                shortcuts::tip("Increase font size (+5 steps from default)", "Ctrl+= / Ctrl++");
-            let mut clicks = [false; 3];
-            if mode == SectionMode::Full {
-                clicks[0] = self
-                    .icons
+            let clicked = if mode == SectionMode::Full {
+                self.icons
                     .command(
                         ui,
                         "configuration_sliders",
@@ -265,56 +260,49 @@ impl MqttMonitorApp {
                         self.settings_open,
                         &tip_set,
                     )
-                    .clicked();
-                clicks[1] = self
-                    .icons
-                    .command(ui, "zoom_out", "Zoom−", false, &tip_out)
-                    .clicked();
-                clicks[2] = self
-                    .icons
-                    .command(ui, "zoom_in", "Zoom+", false, &tip_in)
-                    .clicked();
+                    .clicked()
             } else {
-                ribbon_compact_columns(ui, 3, |i, ui| {
-                    clicks[i] = match i {
-                        0 => self
-                            .icons
-                            .command_compact(
-                                ui,
-                                "configuration_sliders",
-                                self.settings_open,
-                                &tip_set,
-                            )
-                            .clicked(),
-                        1 => self
-                            .icons
-                            .command_compact(ui, "zoom_out", false, &tip_out)
-                            .clicked(),
-                        _ => self
-                            .icons
-                            .command_compact(ui, "zoom_in", false, &tip_in)
-                            .clicked(),
-                    };
-                });
-            }
-            if clicks[0] {
+                self.icons
+                    .command_compact(ui, "configuration_sliders", self.settings_open, &tip_set)
+                    .clicked()
+            };
+            if clicked {
                 self.open_settings();
             }
-            if clicks[1] {
-                if self.settings.zoom_font_out() {
-                    let _ = self.settings.save();
-                    apply_font_zoom(ctx, self.settings.font_zoom_factor());
-                    self.status = format!("Font zoom {}", self.settings.font_zoom_step);
-                }
-            }
-            if clicks[2] {
-                if self.settings.zoom_font_in() {
-                    let _ = self.settings.save();
-                    apply_font_zoom(ctx, self.settings.font_zoom_factor());
-                    self.status = format!("Font zoom {}", self.settings.font_zoom_step);
-                }
-            }
         });
+    }
+
+    /// Far-right zoom +/− — icon-only, stacked, fixed width (hit targets don't shift).
+    fn draw_ribbon_zoom(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
+        let tip_out = shortcuts::tip("Decrease font size (−4 steps from default)", "Ctrl+-");
+        let tip_in =
+            shortcuts::tip("Increase font size (+5 steps from default)", "Ctrl+= / Ctrl++");
+        ui.allocate_ui_with_layout(
+            egui::vec2(icons::ZOOM_STACK_W, icons::CMD_H),
+            egui::Layout::top_down(egui::Align::Center),
+            |ui| {
+                ui.spacing_mut().item_spacing.y = 0.0;
+                // Zoom in (+) on top, zoom out (−) below.
+                if self.icons.command_zoom_icon(ui, "zoom_in", &tip_in).clicked() {
+                    if self.settings.zoom_font_in() {
+                        let _ = self.settings.save();
+                        apply_font_zoom(ctx, self.settings.font_zoom_factor());
+                        self.status = format!("Font zoom {}", self.settings.font_zoom_step);
+                    }
+                }
+                if self
+                    .icons
+                    .command_zoom_icon(ui, "zoom_out", &tip_out)
+                    .clicked()
+                {
+                    if self.settings.zoom_font_out() {
+                        let _ = self.settings.save();
+                        apply_font_zoom(ctx, self.settings.font_zoom_factor());
+                        self.status = format!("Font zoom {}", self.settings.font_zoom_step);
+                    }
+                }
+            },
+        );
     }
 
     /// Reserve top chrome space only — real ribbon/status paint after CentralPanel
@@ -474,15 +462,19 @@ impl MqttMonitorApp {
             icons::ribbon_separator(ui);
             self.draw_ribbon_app(ui, ctx, plan.app);
 
-            if plan.show_stats {
-                let remaining = ui.available_width();
-                if remaining > 8.0 {
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
-                        ui.set_max_width(remaining);
+            // Far right: zoom stack (always), then Stats to its left when shown.
+            // right_to_left paints the first child at the trailing edge.
+            let remaining = ui.available_width();
+            if remaining > 8.0 {
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
+                    ui.set_max_width(remaining);
+                    self.draw_ribbon_zoom(ui, ctx);
+                    icons::ribbon_separator(ui);
+                    if plan.show_stats {
                         stats_ribbon::draw_group(ui, &self.sessions.traffic_stats);
                         icons::ribbon_separator(ui);
-                    });
-                }
+                    }
+                });
             }
         });
     }
