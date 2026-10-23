@@ -105,6 +105,9 @@ pub struct MqttMonitorApp {
     update_auto_check_done: bool,
     /// Extra note when install fell back to opening the browser.
     update_modal_fallback_note: Option<String>,
+    /// Pro MCP localhost Unix-socket bridge (None when not entitled / failed to bind).
+    /// Settings → MCP will start/stop this later; v1 auto-starts when `mcp_server` is licensed.
+    pro_bridge: Option<crate::pro::bridge::BridgeHandle>,
 }
 
 impl MqttMonitorApp {
@@ -137,6 +140,24 @@ impl MqttMonitorApp {
         );
         let sessions = SessionManager::default();
         sessions.bind_egui_ctx(&cc.egui_ctx);
+        // Gate bridge listen behind mcp_server entitlement (Pro MCP sidecar talks here).
+        let pro_bridge = if crate::pro::has(crate::pro::Entitlement::McpServer) {
+            match crate::pro::bridge::BridgeHandle::start(&cc.egui_ctx) {
+                Ok(h) => {
+                    eprintln!(
+                        "topicbench: Pro bridge listening on {}",
+                        h.socket_path.display()
+                    );
+                    Some(h)
+                }
+                Err(e) => {
+                    eprintln!("topicbench: Pro bridge not started: {e}");
+                    None
+                }
+            }
+        } else {
+            None
+        };
         Self {
             profiles,
             sessions,
@@ -173,6 +194,7 @@ impl MqttMonitorApp {
             update_check_quiet: true,
             update_auto_check_done: false,
             update_modal_fallback_note: None,
+            pro_bridge,
         }
     }
 }
@@ -204,6 +226,28 @@ impl eframe::App for MqttMonitorApp {
         let need_repaint = poll.need_repaint();
         if let Some(msg) = poll.status {
             self.status = msg;
+        }
+        // Fan MQTT applies into the Pro bridge buffer so wait_for_message / GUI stay in sync.
+        if let Some(bridge) = self.pro_bridge.as_ref() {
+            bridge.bind_egui_ctx(ctx);
+            for m in &poll.applied {
+                bridge.on_message(
+                    &m.profile_id,
+                    &m.profile_name,
+                    &m.topic,
+                    &m.payload,
+                    m.retain,
+                );
+            }
+            let max_pkt =
+                crate::mqtt::settings::AppSettings::clamp_max_packet(self.settings.max_packet_bytes);
+            bridge.poll(
+                &self.profiles,
+                &mut self.sessions,
+                max_pkt,
+                ctx,
+                &mut self.status,
+            );
         }
         // Stats ribbon labels: rebuild frozen snapshot at most once per second.
         let _ = self.sessions.traffic_stats.refresh_display_if_due();

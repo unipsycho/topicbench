@@ -30,6 +30,16 @@ const INBOX_SAMPLE_CAP: usize = 600;
 /// Unfocused: floor sample spacing so Combined spans minutes under flood.
 const INBOX_SAMPLE_GAP_BACKGROUND: Duration = Duration::from_millis(50);
 
+/// One message applied to the topic tree this poll (for Pro MCP bridge fan-out).
+#[derive(Clone, Debug)]
+pub struct AppliedMessage {
+    pub profile_id: String,
+    pub profile_name: String,
+    pub topic: String,
+    pub payload: String,
+    pub retain: bool,
+}
+
 /// Result of applying the background inbox on the UI thread.
 pub struct PollOutcome {
     pub status: Option<String>,
@@ -37,6 +47,8 @@ pub struct PollOutcome {
     pub had_messages: bool,
     /// Inbox still has coalesced topics — need another focused frame.
     pub hit_cap: bool,
+    /// Latest payload per topic applied this drain (coalesced — one entry per key).
+    pub applied: Vec<AppliedMessage>,
 }
 
 impl PollOutcome {
@@ -617,6 +629,7 @@ impl SessionManager {
         let mut status: Option<String> = None;
         let mut resub: Vec<(String, Vec<String>)> = Vec::new();
         let mut had_msgs = false;
+        let mut applied: Vec<AppliedMessage> = Vec::new();
 
         for batch in batches {
             if batch.status.is_some() {
@@ -675,6 +688,14 @@ impl SessionManager {
                     session.traffic.pop_back();
                 }
                 let name = session.profile_name.clone();
+                // Fan-out latest payload for Pro MCP bridge (one entry per coalesced key).
+                applied.push(AppliedMessage {
+                    profile_id: profile_id.clone(),
+                    profile_name: name.clone(),
+                    topic: topic.clone(),
+                    payload: msg.payload.clone(),
+                    retain: msg.retain,
+                });
                 // Replay timed samples into sticky/Combined history (preserves off-focus).
                 let samples: Vec<(Instant, String)> = if msg.samples.is_empty() {
                     vec![(now, msg.payload)]
@@ -708,6 +729,7 @@ impl SessionManager {
                     .lock()
                     .unwrap_or_else(|e| e.into_inner())
                     .is_empty(),
+            applied,
         }
     }
 

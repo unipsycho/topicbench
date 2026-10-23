@@ -1,6 +1,10 @@
 //! Entitlement probe for gated features (verify + `has()`).
+//!
+//! Localhost IPC for Pro MCP lives in [`bridge`] — started only when
+//! [`Entitlement::McpServer`] is unlocked (no Settings Pro panel yet).
 
 mod license_format;
+pub mod bridge;
 
 use std::sync::OnceLock;
 
