@@ -105,8 +105,6 @@ pub struct MqttMonitorApp {
     update_auto_check_done: bool,
     /// Extra note when install fell back to opening the browser.
     update_modal_fallback_note: Option<String>,
-    /// Session-only Pro combined multi-series graph panel (not persisted).
-    pub(crate) combined_graph_open: bool,
 }
 
 impl MqttMonitorApp {
@@ -175,7 +173,6 @@ impl MqttMonitorApp {
             update_check_quiet: true,
             update_auto_check_done: false,
             update_modal_fallback_note: None,
-            combined_graph_open: false,
         }
     }
 }

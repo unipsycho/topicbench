@@ -528,12 +528,18 @@ impl MqttMonitorApp {
             payload_rect = Some(r.response.rect);
         }
 
-        // Match SidePanel vertical margin (2) — default CentralPanel uses 8 and drops the header.
+        // Match SidePanel vertical margin (2). Extra right inset so Combined/sticky
+        // 1px frame strokes aren't sliced by the Payload splitter (clip_rect_margin = 0).
         egui::CentralPanel::default()
             .frame(
                 egui::Frame::NONE
                     .fill(CHROME_BG)
-                    .inner_margin(egui::Margin::symmetric(8, 2)),
+                    .inner_margin(egui::Margin {
+                        left: 8,
+                        right: 14,
+                        top: 2,
+                        bottom: 2,
+                    }),
             )
             .show(ctx, |ui| {
                 // Clip to the central region only (outer CentralPanel clip is the full screen).
@@ -570,7 +576,6 @@ impl MqttMonitorApp {
                                 &self.icons,
                                 &self.search,
                                 &mut self.status,
-                                &mut self.combined_graph_open,
                             );
                             ui.add_space(8.0);
                             ui.separator();
