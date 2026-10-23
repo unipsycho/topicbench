@@ -323,7 +323,7 @@ pub fn generator_display_name(type_id: &str) -> &'static str {
         "sine" => "Sine",
         "triangle" => "Triangle",
         "ramp" => "Ramp",
-        "uniform" => "Uniform",
+        "uniform" => "Random",
         "gaussian" => "Gaussian",
         "random_walk" => "Random Walk",
         "bool_toggle" => "Bool Toggle",

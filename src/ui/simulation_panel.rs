@@ -12,7 +12,7 @@ use crate::ui::icons::{
 use eframe::egui::{self, Color32, RichText, Vec2};
 use serde_json::{json, Value};
 
-/// Wire ids ordered by display label (Bool Toggle, Constant, … Uniform).
+/// Wire ids ordered by display label (Bool Toggle … Random, Random Walk …).
 const GEN_TYPES: &[&str] = &[
     "bool_toggle",
     "constant",
@@ -22,20 +22,27 @@ const GEN_TYPES: &[&str] = &[
     "iso_timestamp",
     "enum_cycle",
     "ramp",
+    "uniform", // display: Random
     "random_walk",
     "sine",
     "triangle",
-    "uniform",
+];
+
+/// Refresh-interval ticks (ms): fine near 50/100/250, coarser mid, ~1s above 1s.
+const INTERVAL_TICKS_MS: &[u64] = &[
+    50, 75, 100, 125, 150, 200, 250, 300, 400, 500, 750, 1000, 1500, 2000, 3000, 4000, 5000,
+    6000, 7000, 8000, 9000, 10_000,
 ];
 
 // Spreadsheet column widths (keep rows aligned).
 const COL_PROFILE: f32 = 110.0;
 const COL_TOPIC: f32 = 160.0;
 const COL_FIELD: f32 = 130.0;
-const COL_GEN: f32 = 128.0;
-const COL_SETTINGS: f32 = 360.0;
+const COL_REFRESH: f32 = 200.0;
 const COL_PREC: f32 = 56.0;
 const COL_VALUE: f32 = 120.0;
+const COL_GEN: f32 = 128.0;
+const COL_SETTINGS: f32 = 280.0;
 
 /// Floating Simulation window only (`floating == true`). Docked UI paints in the
 /// central column via [`draw_docked`].
@@ -266,19 +273,20 @@ fn body(
 
     let sheet = |ui: &mut egui::Ui| {
         egui::Grid::new("sim_sheet")
-            .num_columns(7)
+            .num_columns(8)
             .spacing([10.0, 6.0])
             .min_col_width(40.0)
             .striped(true)
             .show(ui, |ui| {
-                // Header — Profile | Topic | Field | Generator | Settings | Prec | Value
+                // Profile → Topic → Field → Refresh → Prec → Value → Generator → Settings
                 header_cell(ui, COL_PROFILE, "Profile");
                 header_cell(ui, COL_TOPIC, "Topic");
                 header_cell(ui, COL_FIELD, "Field");
-                header_cell(ui, COL_GEN, "Generator");
-                header_cell(ui, COL_SETTINGS, "Settings");
+                header_cell(ui, COL_REFRESH, "Refresh");
                 header_cell(ui, COL_PREC, "Prec");
                 header_cell(ui, COL_VALUE, "Current value");
+                header_cell(ui, COL_GEN, "Generator");
+                header_cell(ui, COL_SETTINGS, "Settings");
                 ui.end_row();
 
                 let rows = client.rows.clone();
@@ -419,70 +427,39 @@ fn draw_row(
         },
     );
 
-    // Generator type
+    // Refresh — stepped interval (fine at low ms, ~1s above 1s)
     ui.allocate_ui_with_layout(
-        Vec2::new(COL_GEN, 28.0),
+        Vec2::new(COL_REFRESH, 28.0),
         egui::Layout::left_to_right(egui::Align::Center),
         |ui| {
-            ui.set_min_width(COL_GEN);
-            let mut gt = gen_type.clone();
-            egui::ComboBox::from_id_salt(format!("sim_gen_{}", row.id))
-                .selected_text(sim_client::generator_display_name(&gt))
-                .width(COL_GEN - 8.0)
-                .show_ui(ui, |ui| {
-                    for t in GEN_TYPES {
-                        if ui
-                            .selectable_label(gt == *t, sim_client::generator_display_name(t))
-                            .clicked()
-                        {
-                            gt = (*t).to_string();
-                            draft.generator = default_generator(t);
-                            dirty = true;
-                        }
-                    }
-                });
-        },
-    );
-
-    // Settings — interval + generator params
-    ui.allocate_ui_with_layout(
-        Vec2::new(COL_SETTINGS, 28.0),
-        egui::Layout::left_to_right(egui::Align::Center),
-        |ui| {
-            ui.set_min_width(COL_SETTINGS);
+            ui.set_min_width(COL_REFRESH);
             ui.spacing_mut().item_spacing.x = 6.0;
-            ui.set_max_height(28.0);
-
-            ui.label(RichText::new("ms").small().color(CHROME_MUTED));
-            let mut ms = draft.interval_ms as f32;
+            let mut idx = interval_tick_index(draft.interval_ms) as f32;
+            let max_i = (INTERVAL_TICKS_MS.len() - 1) as f32;
             if ui
                 .add(
-                    egui::Slider::new(&mut ms, 50.0..=10_000.0)
+                    egui::Slider::new(&mut idx, 0.0..=max_i)
+                        .integer()
                         .show_value(false)
                         .clamping(egui::SliderClamping::Always),
                 )
-                .on_hover_text(format!("{} ms", draft.interval_ms))
+                .on_hover_text("Publish interval (fine at low ms, ~1s steps above 1s)")
                 .changed()
             {
-                draft.interval_ms = ms.round() as u64;
+                let i = idx.round().clamp(0.0, max_i) as usize;
+                draft.interval_ms = INTERVAL_TICKS_MS[i];
                 dirty = true;
             }
-            let mut ms_i = draft.interval_ms as i32;
-            if ui
-                .add(egui::DragValue::new(&mut ms_i).range(50..=600_000).speed(10))
-                .changed()
-            {
-                draft.interval_ms = ms_i as u64;
-                dirty = true;
-            }
-
-            if edit_generator_inline(ui, &row.id, &gen_type, &mut draft.generator, client) {
-                dirty = true;
-            }
+            ui.label(
+                RichText::new(format_interval_ms(draft.interval_ms))
+                    .small()
+                    .monospace()
+                    .color(CHROME_TEXT),
+            );
         },
     );
 
-    // Prec — decimal digits for published numbers (own column; label is the heading)
+    // Prec — decimal digits for published numbers
     ui.allocate_ui_with_layout(
         Vec2::new(COL_PREC, 28.0),
         egui::Layout::left_to_right(egui::Align::Center),
@@ -490,11 +467,7 @@ fn draw_row(
             ui.set_min_width(COL_PREC);
             let mut prec = draft.precision as i32;
             if ui
-                .add(
-                    egui::DragValue::new(&mut prec)
-                        .range(0..=12)
-                        .speed(0.2),
-                )
+                .add(egui::DragValue::new(&mut prec).range(0..=12).speed(0.2))
                 .on_hover_text("Digits after decimal when publishing numbers")
                 .changed()
             {
@@ -525,6 +498,45 @@ fn draw_row(
                 client.selected = Some(row.id.clone());
             }
             resp.on_hover_text(&val);
+        },
+    );
+
+    // Generator type
+    ui.allocate_ui_with_layout(
+        Vec2::new(COL_GEN, 28.0),
+        egui::Layout::left_to_right(egui::Align::Center),
+        |ui| {
+            ui.set_min_width(COL_GEN);
+            let mut gt = gen_type.clone();
+            egui::ComboBox::from_id_salt(format!("sim_gen_{}", row.id))
+                .selected_text(sim_client::generator_display_name(&gt))
+                .width(COL_GEN - 8.0)
+                .show_ui(ui, |ui| {
+                    for t in GEN_TYPES {
+                        if ui
+                            .selectable_label(gt == *t, sim_client::generator_display_name(t))
+                            .clicked()
+                        {
+                            gt = (*t).to_string();
+                            draft.generator = default_generator(t);
+                            dirty = true;
+                        }
+                    }
+                });
+        },
+    );
+
+    // Settings — generator-specific params only
+    ui.allocate_ui_with_layout(
+        Vec2::new(COL_SETTINGS, 28.0),
+        egui::Layout::left_to_right(egui::Align::Center),
+        |ui| {
+            ui.set_min_width(COL_SETTINGS);
+            ui.spacing_mut().item_spacing.x = 6.0;
+            ui.set_max_height(28.0);
+            if edit_generator_inline(ui, &row.id, &gen_type, &mut draft.generator, client) {
+                dirty = true;
+            }
         },
     );
 
@@ -881,6 +893,32 @@ fn truncate(s: &str, max_chars: usize) -> String {
 
 
 /// Icon + label button matching Profiles Connect / Publish chrome.
+
+/// Nearest tick index for `interval_ms` (clamped to the tick table).
+fn interval_tick_index(ms: u64) -> usize {
+    let mut best = 0usize;
+    let mut best_d = u64::MAX;
+    for (i, &t) in INTERVAL_TICKS_MS.iter().enumerate() {
+        let d = ms.abs_diff(t);
+        if d < best_d {
+            best_d = d;
+            best = i;
+        }
+    }
+    best
+}
+
+/// Compact interval label: `100 ms` or `2 s`.
+fn format_interval_ms(ms: u64) -> String {
+    if ms >= 1000 && ms % 1000 == 0 {
+        format!("{} s", ms / 1000)
+    } else if ms >= 1000 {
+        format!("{:.1} s", ms as f64 / 1000.0)
+    } else {
+        format!("{ms} ms")
+    }
+}
+
 fn toolbar_btn(
     ui: &mut egui::Ui,
     icons: &IconSet,
