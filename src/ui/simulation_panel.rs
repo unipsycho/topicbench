@@ -112,14 +112,20 @@ fn header_bar(
                 Color32::from_rgb(78, 82, 92),
             )
         };
-        egui::Frame::NONE
-            .fill(bg)
-            .stroke(egui::Stroke::new(1.0, border))
-            .corner_radius(9.0)
-            .inner_margin(egui::Margin::symmetric(9, 1))
-            .show(ui, |ui| {
-                ui.label(RichText::new(label).size(12.0).strong().color(fg));
-            });
+        // Cap height so the Frame does not stretch to the 36px section-icon row.
+        // Centered in the header → visible air above/below the pill.
+        ui.scope(|ui| {
+            ui.set_height(20.0);
+            ui.set_max_height(20.0);
+            egui::Frame::NONE
+                .fill(bg)
+                .stroke(egui::Stroke::new(1.0_f32, border))
+                .corner_radius(8.0)
+                .inner_margin(egui::Margin::symmetric(8, 2))
+                .show(ui, |ui| {
+                    ui.label(RichText::new(label).size(12.0).strong().color(fg));
+                });
+        });
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             if icons
                 .tiny(ui, "remove_x", false, "Close Simulation panel")
