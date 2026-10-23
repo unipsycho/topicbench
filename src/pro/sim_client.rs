@@ -172,15 +172,39 @@ impl SimClientState {
         Ok(())
     }
 
-    /// Replace all sims with JSON array or `{simulations:[…]}` (Export shape).
+    /// Replace all sims. Accepts a bare array or `{ "simulations": […], … }`
+    /// (Export / simulations.json shape). Unknown top-level keys are ignored.
     pub fn import_sims(&mut self, json: &Value) -> Result<usize, String> {
-        let body = serde_json::to_vec(json).map_err(|e| e.to_string())?;
+        self.import_sims_mode(json, "replace")
+    }
+
+    /// Import with `replace` or `merge`. Normalizes both file shapes before POST.
+    pub fn import_sims_mode(&mut self, json: &Value, mode: &str) -> Result<usize, String> {
+        let sims = extract_simulations_array(json)?;
+        let mode = if mode.eq_ignore_ascii_case("merge") {
+            "merge"
+        } else {
+            "replace"
+        };
+        let body = serde_json::to_vec(&serde_json::json!({
+            "mode": mode,
+            "simulations": sims,
+        }))
+        .map_err(|e| e.to_string())?;
         let v = self.http("POST", "/sim/import", Some(body))?;
+        if let Some(err) = v.get("error").and_then(|e| e.as_str()) {
+            return Err(err.to_string());
+        }
         self.poll_if_due(true);
-        Ok(v.get("simulations")
+        let n = v
+            .get("simulations")
             .and_then(|a| a.as_array())
             .map(|a| a.len())
-            .unwrap_or(self.rows.len()))
+            .ok_or_else(|| {
+                "import response missing simulations array — is topicbench-pro up to date?"
+                    .to_string()
+            })?;
+        Ok(n)
     }
 
     /// Current defs as `{simulations:[…]}`.
@@ -320,6 +344,35 @@ impl SimClientState {
             )),
         }
     }
+}
+
+/// Pull the simulations array from a bare `[…]` or `{ "simulations": […], … }`.
+/// Unknown top-level object keys are ignored. Clear error on wrong shape.
+pub fn extract_simulations_array(json: &Value) -> Result<&Vec<Value>, String> {
+    if let Some(arr) = json.as_array() {
+        return Ok(arr);
+    }
+    if let Some(obj) = json.as_object() {
+        if let Some(arr) = obj.get("simulations").and_then(|v| v.as_array()) {
+            return Ok(arr);
+        }
+        let keys: Vec<&str> = obj.keys().map(|k| k.as_str()).collect();
+        return Err(format!(
+            "import JSON must be an array or {{ \"simulations\": […] }} — \
+             found object with keys {keys:?} (missing \"simulations\")"
+        ));
+    }
+    Err(format!(
+        "import JSON must be an array or {{ \"simulations\": […] }} — found {}",
+        match json {
+            Value::Null => "null",
+            Value::Bool(_) => "bool",
+            Value::Number(_) => "number",
+            Value::String(_) => "string",
+            Value::Array(_) => "array",
+            Value::Object(_) => "object",
+        }
+    ))
 }
 
 fn token_path() -> PathBuf {
