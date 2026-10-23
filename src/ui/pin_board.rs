@@ -6,6 +6,9 @@ use crate::mqtt::pins::{DetectedValue, HistorySample, PinBoard, StickyTopic, Sti
 use crate::mqtt::profile::ProfileStore;
 use crate::mqtt::session::{SessionManager, SessionState};
 use crate::mqtt::settings::{AppSettings, StickyLayoutMode, FONT_ZOOM_STEP_FACTOR};
+use crate::pro::history_client::{
+    self, HistoryForwarder, ScrubState, ScrubUi,
+};
 use crate::pro::{self, Entitlement};
 use crate::ui::flash;
 use crate::ui::hover_tip;
@@ -39,6 +42,8 @@ pub fn draw(
     icons: &IconSet,
     filter: &SearchFilter,
     status: &mut String,
+    history_fwd: Option<&HistoryForwarder>,
+    scrub_ui: &mut ScrubUi,
 ) {
     icons::section_header_bar(ui, |ui| {
         icons::section_icon(ui, icons, "sticky_topic");
@@ -79,6 +84,8 @@ pub fn draw(
             icons,
             status,
             &mut combined_open,
+            history_fwd,
+            &mut scrub_ui.combined,
         );
         ui.add_space(8.0);
     }
@@ -172,6 +179,8 @@ pub fn draw(
                         false,
                         status,
                         &mut combined_open,
+                        history_fwd,
+                        scrub_ui,
                     ) {
                         pending_reorder = Some(r);
                     }
@@ -193,6 +202,8 @@ pub fn draw(
                             true,
                             status,
                             &mut combined_open,
+                            history_fwd,
+                            scrub_ui,
                         ) {
                             pending_reorder = Some(r);
                         }
@@ -244,6 +255,8 @@ fn draw_sticky(
     compact: bool,
     status: &mut String,
     combined_graph_open: &mut bool,
+    history_fwd: Option<&HistoryForwarder>,
+    scrub_ui: &mut ScrubUi,
 ) -> Option<(String, String, bool)> {
     let Some(pin) = pins.items.get(key).cloned() else {
         return None;
@@ -281,13 +294,13 @@ fn draw_sticky(
                 let mut copy_topic = false;
 
                 // Height is only topic row + icon row; value panel matches that strip.
+                let mode = pins
+                    .items
+                    .get(key)
+                    .map(|p| p.view_mode)
+                    .unwrap_or(StickyViewMode::Raw);
                 ui.horizontal(|ui| {
                     ui.spacing_mut().item_spacing.x = 4.0;
-                    let mode = pins
-                        .items
-                        .get(key)
-                        .map(|p| p.view_mode)
-                        .unwrap_or(StickyViewMode::Raw);
 
                     // Topic takes its natural width; only shrink so the value/chart keeps a floor.
                     let tiny_btn = icons::TINY_ICON + 4.0; // matches IconSet::tiny hit target
@@ -434,6 +447,8 @@ fn draw_sticky(
                         .rect_filled(sep, 0.0, Color32::from_rgb(55, 58, 66));
 
                     let right_w = ui.available_width().max(min_value_w * 0.5);
+                    let scrub_graph =
+                        mode == StickyViewMode::Graph && pro::has(Entitlement::HistoryScrubber);
                     ui.allocate_ui_with_layout(
                         egui::vec2(right_w, height),
                         egui::Layout::top_down(Align::LEFT),
@@ -444,12 +459,38 @@ fn draw_sticky(
                                 match mode {
                                     StickyViewMode::Raw => draw_raw_strip(ui, p, key, height),
                                     StickyViewMode::Value => draw_value_strip(ui, p, key, height),
-                                    StickyViewMode::Graph => draw_graph_strip(ui, p, height),
+                                    StickyViewMode::Graph if scrub_graph => {
+                                        // Value readout only — Instant plot + scrub below.
+                                        draw_graph_value_only(ui, p, height);
+                                    }
+                                    StickyViewMode::Graph => {
+                                        draw_graph_strip(
+                                            ui,
+                                            p,
+                                            height,
+                                            history_fwd,
+                                            scrub_ui.for_sticky(key),
+                                        );
+                                    }
                                 }
                             }
                         },
                     );
                 });
+
+                // Pro History scrubber: full-width Instant plot under the sticky header row.
+                if mode == StickyViewMode::Graph && pro::has(Entitlement::HistoryScrubber) {
+                    if let Some(p) = pins.items.get(key) {
+                        let scrub = scrub_ui.for_sticky(key);
+                        let series = [(p, Color32::from_rgb(80, 180, 120))];
+                        paint_multi_series_plot(ui, &series, 96.0, history_fwd, Some(scrub));
+                        if let Some(domain) = series_time_value_domain(&series) {
+                            let (t0, t1) =
+                                extend_domain_with_pro(&series, history_fwd, domain.t0, domain.t1);
+                            draw_scrub_chrome(ui, scrub, t0, t1, history_fwd, &series);
+                        }
+                    }
+                }
 
                 if copy_topic {
                     ui.ctx().copy_text(pin.topic.clone());
@@ -708,6 +749,8 @@ fn draw_combined_graph(
     icons: &IconSet,
     status: &mut String,
     open: &mut bool,
+    history_fwd: Option<&HistoryForwarder>,
+    scrub: &mut ScrubState,
 ) {
     // Only stickies with Combined include on (default off).
     let mut series: Vec<(&StickyTopic, Color32)> = Vec::new();
@@ -781,7 +824,14 @@ fn draw_combined_graph(
                 return;
             }
 
-            paint_multi_series_plot(ui, &series, plot_h);
+            paint_multi_series_plot(ui, &series, plot_h, history_fwd, Some(scrub));
+            if pro::has(Entitlement::HistoryScrubber) {
+                if let Some(domain) = series_time_value_domain(&series) {
+                    let (t0, t1) =
+                        extend_domain_with_pro(&series, history_fwd, domain.t0, domain.t1);
+                    draw_scrub_chrome(ui, scrub, t0, t1, history_fwd, &series);
+                }
+            }
             ui.add_space(6.0);
             draw_combined_legend(ui, &series);
 
@@ -829,19 +879,31 @@ fn draw_combined_graph(
 }
 
 /// Shared Y auto-scale + Instant X; HH:MM clock labels; hover readout at cursor.
-fn paint_multi_series_plot(ui: &mut egui::Ui, series: &[(&StickyTopic, Color32)], height: f32) {
+fn paint_multi_series_plot(
+    ui: &mut egui::Ui,
+    series: &[(&StickyTopic, Color32)],
+    height: f32,
+    history_fwd: Option<&HistoryForwarder>,
+    scrub: Option<&ScrubState>,
+) {
     let Some(domain) = series_time_value_domain(series) else {
         ui.weak("No numeric samples.");
         return;
     };
     let SeriesDomain {
-        t0,
-        t1,
+        mut t0,
+        mut t1,
         y_lo,
         y_hi,
         min_v,
         max_v,
     } = domain;
+    // Extend X domain with Pro deep store when scrubber is licensed.
+    if pro::has(Entitlement::HistoryScrubber) {
+        let (a, b) = extend_domain_with_pro(series, history_fwd, t0, t1);
+        t0 = a;
+        t1 = b;
+    }
     let y_span = (y_hi - y_lo).max(1e-9);
     let dt = t1.saturating_duration_since(t0).as_secs_f32().max(1e-3);
 
@@ -884,13 +946,10 @@ fn paint_multi_series_plot(ui: &mut egui::Ui, series: &[(&StickyTopic, Color32)]
         }
 
         for (pin, color) in series {
+            let points_data = merged_series_points(pin, history_fwd, t0, t1);
             let mut points = Vec::new();
-            for s in &pin.history {
-                let Some(v) = s.numeric else { continue };
-                if !v.is_finite() {
-                    continue;
-                }
-                let x_t = s.at.saturating_duration_since(t0).as_secs_f32() / dt;
+            for (at, v) in &points_data {
+                let x_t = at.saturating_duration_since(t0).as_secs_f32() / dt;
                 let x = plot.left() + x_t.clamp(0.0, 1.0) * plot.width();
                 let y = plot.bottom() - (((v - y_lo) / y_span) as f32) * plot.height();
                 points.push(Pos2::new(x, y));
@@ -899,6 +958,20 @@ fn paint_multi_series_plot(ui: &mut egui::Ui, series: &[(&StickyTopic, Color32)]
                 painter.add(egui::Shape::line(points, Stroke::new(1.6_f32, *color)));
             } else if let Some(p) = points.first() {
                 painter.circle_filled(*p, 3.0, *color);
+            }
+        }
+
+        // Scrub playhead (when paused / scrubbing).
+        if let Some(scrub) = scrub {
+            if !scrub.live {
+                let at = scrub.playhead_or_tail(t1);
+                let x_t = at.saturating_duration_since(t0).as_secs_f32() / dt;
+                let x = plot.left() + x_t.clamp(0.0, 1.0) * plot.width();
+                painter.vline(
+                    x,
+                    plot.y_range(),
+                    Stroke::new(1.5_f32, Color32::from_rgb(220, 160, 70)),
+                );
             }
         }
 
@@ -926,11 +999,11 @@ fn paint_multi_series_plot(ui: &mut egui::Ui, series: &[(&StickyTopic, Color32)]
             lines.push((instant_hhmmss(at), CHROME_TEXT));
             for (pin, color) in series {
                 let short = sticky_short_label(&pin.topic);
-                let val = value_at_time(pin, at)
+                let val = value_at_merged(pin, history_fwd, at)
                     .map(fmt_scale)
                     .unwrap_or_else(|| "—".into());
                 lines.push((format!("{short}: {val}"), *color));
-                if let Some(v) = value_at_time(pin, at) {
+                if let Some(v) = value_at_merged(pin, history_fwd, at) {
                     let y = plot.bottom()
                         - (((v - y_lo) / y_span) as f32).clamp(0.0, 1.0) * plot.height();
                     painter.circle_filled(Pos2::new(x, y), 3.5, *color);
@@ -1071,6 +1144,170 @@ fn series_time_value_domain(series: &[(&StickyTopic, Color32)]) -> Option<Series
         min_v,
         max_v,
     })
+}
+
+/// Merge short OSS ring with Pro deep samples for one sticky over [t0, t1].
+fn merged_series_points(
+    pin: &StickyTopic,
+    history_fwd: Option<&HistoryForwarder>,
+    t0: Instant,
+    t1: Instant,
+) -> Vec<(Instant, f64)> {
+    let mut pts: Vec<(Instant, f64)> = pin
+        .history
+        .iter()
+        .filter_map(|s| s.numeric.filter(|v| v.is_finite()).map(|v| (s.at, v)))
+        .collect();
+    if let Some(fwd) = history_fwd {
+        if pro::has(Entitlement::HistoryScrubber) && fwd.sidecar_up() {
+            let from_ms = history_client::instant_to_t_ms(t0);
+            let to_ms = history_client::instant_to_t_ms(t1);
+            let series_id = PinBoard::key(&pin.profile_id, &pin.topic);
+            for s in fwd.query_cached(&series_id, from_ms, to_ms, 8000) {
+                pts.push((history_client::t_ms_to_instant(s.t_ms), s.v));
+            }
+        }
+    }
+    pts.sort_by(|a, b| a.0.cmp(&b.0));
+    pts.dedup_by(|a, b| a.0 == b.0);
+    pts
+}
+
+fn value_at_merged(
+    pin: &StickyTopic,
+    history_fwd: Option<&HistoryForwarder>,
+    at: Instant,
+) -> Option<f64> {
+    let pts = merged_series_points(
+        pin,
+        history_fwd,
+        at.checked_sub(Duration::from_secs(3600))
+            .unwrap_or(at),
+        at.checked_add(Duration::from_secs(1)).unwrap_or(at),
+    );
+    value_at_points(&pts, at)
+}
+
+fn value_at_points(pts: &[(Instant, f64)], at: Instant) -> Option<f64> {
+    let mut before: Option<(Instant, f64)> = None;
+    let mut after: Option<(Instant, f64)> = None;
+    for &(t, v) in pts {
+        if t <= at {
+            if before.map(|(tb, _)| t >= tb).unwrap_or(true) {
+                before = Some((t, v));
+            }
+        } else if after.map(|(ta, _)| t < ta).unwrap_or(true) {
+            after = Some((t, v));
+        }
+    }
+    match (before, after) {
+        (Some((tb, vb)), Some((ta, va))) => {
+            let span = ta.saturating_duration_since(tb).as_secs_f64().max(1e-9);
+            let u = at.saturating_duration_since(tb).as_secs_f64() / span;
+            Some(vb + (va - vb) * u)
+        }
+        (Some((_, v)), None) | (None, Some((_, v))) => Some(v),
+        (None, None) => None,
+    }
+}
+
+/// Widen Instant domain using Pro `/history/meta` when available.
+fn extend_domain_with_pro(
+    series: &[(&StickyTopic, Color32)],
+    history_fwd: Option<&HistoryForwarder>,
+    t0: Instant,
+    t1: Instant,
+) -> (Instant, Instant) {
+    let Some(fwd) = history_fwd else {
+        return (t0, t1);
+    };
+    if !fwd.sidecar_up() && series.is_empty() {
+        return (t0, t1);
+    }
+    let mut out0 = t0;
+    let mut out1 = t1;
+    for (pin, _) in series {
+        let id = PinBoard::key(&pin.profile_id, &pin.topic);
+        if let Some(m) = fwd.meta(&id) {
+            if let Some(f) = m.from_ms {
+                let inst = history_client::t_ms_to_instant(f);
+                if inst < out0 {
+                    out0 = inst;
+                }
+            }
+            if let Some(t) = m.to_ms {
+                let inst = history_client::t_ms_to_instant(t);
+                if inst > out1 {
+                    out1 = inst;
+                }
+            }
+        }
+    }
+    (out0, out1)
+}
+
+/// Scrub slider + Resume live (Pro HistoryScrubber chrome).
+fn draw_scrub_chrome(
+    ui: &mut egui::Ui,
+    scrub: &mut ScrubState,
+    t0: Instant,
+    t1: Instant,
+    history_fwd: Option<&HistoryForwarder>,
+    series: &[(&StickyTopic, Color32)],
+) {
+    let dt = t1.saturating_duration_since(t0).as_secs_f32().max(1e-3);
+    let play = scrub.playhead_or_tail(t1);
+    let mut frac = play
+        .saturating_duration_since(t0)
+        .as_secs_f32()
+        .clamp(0.0, dt)
+        / dt;
+
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 8.0;
+        ui.label(RichText::new("Scrub").small().color(CHROME_MUTED));
+        let slider = ui.add(
+            egui::Slider::new(&mut frac, 0.0..=1.0)
+                .show_value(false)
+                .trailing_fill(true),
+        );
+        if slider.changed() || slider.dragged() {
+            let at = t0 + Duration::from_secs_f32(frac * dt);
+            scrub.pause_at(at);
+        }
+        let tip_at = scrub.playhead_or_tail(t1);
+        let mut tip = instant_hhmmss(tip_at);
+        for (pin, _) in series.iter().take(3) {
+            if let Some(v) = value_at_merged(pin, history_fwd, tip_at) {
+                tip.push_str(&format!(" · {}: {}", sticky_short_label(&pin.topic), fmt_scale(v)));
+            }
+        }
+        slider.on_hover_text(tip);
+
+        if scrub.live {
+            ui.label(RichText::new("Live").small().color(Color32::from_rgb(90, 180, 110)));
+        } else if ui
+            .add(egui::Button::new(RichText::new("Resume live").small()))
+            .on_hover_text("Snap playhead to the latest sample")
+            .clicked()
+        {
+            scrub.resume_live();
+        }
+
+        // Opt-in disk persist for first series (compact control).
+        if let (Some(fwd), Some((pin, _))) = (history_fwd, series.first()) {
+            let id = PinBoard::key(&pin.profile_id, &pin.topic);
+            let persist = fwd.meta(&id).map(|m| m.persist).unwrap_or(false);
+            let label = if persist { "Disk on" } else { "Disk off" };
+            if ui
+                .add(egui::Button::new(RichText::new(label).small()))
+                .on_hover_text("Opt-in Pro disk retention for this series (~/.config/topicbench/pro/history/)")
+                .clicked()
+            {
+                let _ = fwd.set_persist(&id, !persist);
+            }
+        }
+    });
 }
 
 /// Value at hover time: linear interpolate between bracketing samples, else hold-last.
@@ -1399,7 +1636,51 @@ fn draw_combined_legend(ui: &mut egui::Ui, series: &[(&StickyTopic, Color32)]) {
     });
 }
 
-fn draw_graph_strip(ui: &mut egui::Ui, pin: &StickyTopic, height: f32) {
+/// Compact last-value readout for Graph stickies when Instant scrub plot is below.
+fn draw_graph_value_only(ui: &mut egui::Ui, pin: &StickyTopic, height: f32) {
+    ui.set_min_height((height - 2.0).max(16.0));
+    ui.with_layout(egui::Layout::left_to_right(Align::Center), |ui| {
+        match DetectedValue::from_payload(&pin.last_payload) {
+            DetectedValue::Bool(on) => {
+                let label = if on { "true" } else { "false" };
+                let color = if on {
+                    Color32::from_rgb(70, 170, 100)
+                } else {
+                    Color32::from_rgb(140, 140, 140)
+                };
+                ui.label(RichText::new(label).size(22.0).strong().color(color));
+            }
+            DetectedValue::Number(n) => {
+                ui.label(
+                    RichText::new(format!("{n}"))
+                        .size(22.0)
+                        .strong()
+                        .monospace(),
+                );
+            }
+            DetectedValue::Text(_) => {
+                if let Some(v) = pin.history.iter().rev().find_map(|s| s.numeric) {
+                    ui.label(
+                        RichText::new(format!("{v}"))
+                            .size(22.0)
+                            .strong()
+                            .monospace(),
+                    );
+                } else {
+                    ui.weak("—");
+                }
+            }
+        }
+    });
+}
+
+fn draw_graph_strip(
+    ui: &mut egui::Ui,
+    pin: &StickyTopic,
+    height: f32,
+    _history_fwd: Option<&HistoryForwarder>,
+    _scrub: &mut ScrubState,
+) {
     let samples = &pin.history;
     if samples.is_empty() {
         ui.weak("No history yet.");
