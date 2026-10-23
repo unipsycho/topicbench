@@ -34,9 +34,11 @@ const COL_TOPIC: f32 = 160.0;
 const COL_FIELD: f32 = 130.0;
 const COL_GEN: f32 = 128.0;
 const COL_SETTINGS: f32 = 360.0;
+const COL_PREC: f32 = 56.0;
 const COL_VALUE: f32 = 120.0;
 
-/// Draw floating Window and/or docked SidePanel for Simulation.
+/// Floating Simulation window only (`floating == true`). Docked UI paints in the
+/// central column via [`draw_docked`].
 pub fn draw(
     ctx: &egui::Context,
     open: &mut bool,
@@ -48,7 +50,7 @@ pub fn draw(
     icons: &IconSet,
     status: &mut String,
 ) {
-    if !*open {
+    if !*open || !*floating {
         return;
     }
 
@@ -58,33 +60,50 @@ pub fn draw(
         ctx.request_repaint_after(std::time::Duration::from_millis(500));
     }
 
-    if *floating {
-        // Single chrome: inner header only (title + pill + dock + close).
-        // Hide outer egui title bar so there is no second “Simulation”, close, or collapse ▾.
-        egui::Window::new("Simulation")
-            .id(egui::Id::new("topicbench_simulation_win"))
-            .title_bar(false)
-            .collapsible(false)
-            .default_size([1100.0, 360.0])
-            .min_width(900.0)
-            .min_height(220.0)
-            .frame(egui::Frame::window(&ctx.style()).fill(CHROME_BG))
-            .show(ctx, |ui| {
-                header_bar(ui, icons, floating, open, client);
-                ui.separator();
-                body(ui, licensed, client, sessions, profiles, icons, status);
-            });
-    } else {
-        egui::SidePanel::right("topicbench_simulation_dock")
-            .default_width(520.0)
-            .min_width(420.0)
-            .frame(egui::Frame::NONE.fill(CHROME_BG).inner_margin(8.0))
-            .show(ctx, |ui| {
-                header_bar(ui, icons, floating, open, client);
-                ui.separator();
-                body(ui, licensed, client, sessions, profiles, icons, status);
-            });
+    // Single chrome: inner header only (title + pill + dock + close).
+    // Hide outer egui title bar so there is no second “Simulation”, close, or collapse ▾.
+    egui::Window::new("Simulation")
+        .id(egui::Id::new("topicbench_simulation_win"))
+        .title_bar(false)
+        .collapsible(false)
+        .default_size([1100.0, 360.0])
+        .min_width(900.0)
+        .min_height(220.0)
+        .frame(egui::Frame::window(&ctx.style()).fill(CHROME_BG))
+        .show(ctx, |ui| {
+            header_bar(ui, icons, floating, open, client);
+            ui.separator();
+            // Window owns both axes — sheet scrolls inside.
+            body(ui, licensed, client, sessions, profiles, icons, status, true);
+        });
+}
+
+/// Docked Simulation section for the main middle column (same target as stickies / topic tree).
+pub fn draw_docked(
+    ui: &mut egui::Ui,
+    open: &mut bool,
+    floating: &mut bool,
+    licensed: bool,
+    client: &mut SimClientState,
+    sessions: &SessionManager,
+    profiles: &ProfileStore,
+    icons: &IconSet,
+    status: &mut String,
+) {
+    if !*open || *floating {
+        return;
     }
+
+    if licensed {
+        client.poll_if_due(false);
+        ui.ctx()
+            .request_repaint_after(std::time::Duration::from_millis(500));
+    }
+
+    header_bar(ui, icons, floating, open, client);
+    ui.separator();
+    // Parent central ScrollArea owns vertical; sheet only scrolls horizontally.
+    body(ui, licensed, client, sessions, profiles, icons, status, false);
 }
 
 fn header_bar(
@@ -137,7 +156,7 @@ fn header_bar(
                 *open = false;
             }
             let dock_tip = if *floating {
-                "Dock to right side"
+                "Dock to main column"
             } else {
                 "Float as window"
             };
@@ -161,6 +180,8 @@ fn body(
     profiles: &ProfileStore,
     icons: &IconSet,
     status: &mut String,
+    // True in the floating window (both-axis scroll); false when docked in central column.
+    scroll_both: bool,
 ) {
     if !licensed {
         ui.add_space(12.0);
@@ -239,67 +260,44 @@ fn body(
                 }
             }
         }
-        // One precision for all rows (header control).
-        ui.separator();
-        ui.label(RichText::new("prec").small().color(CHROME_MUTED));
-        let mut prec = client
-            .rows
-            .first()
-            .map(|r| r.precision as i32)
-            .unwrap_or(3);
-        if ui
-            .add_enabled(
-                !client.rows.is_empty(),
-                egui::DragValue::new(&mut prec).range(0..=12).speed(0.2),
-            )
-            .on_hover_text("Decimal digits for all simulations")
-            .changed()
-        {
-            let prec = prec.clamp(0, 12) as u8;
-            let rows = client.rows.clone();
-            for mut row in rows {
-                if row.precision == prec {
-                    continue;
-                }
-                row.precision = prec;
-                if let Some(slot) = client.rows.iter_mut().find(|r| r.id == row.id) {
-                    slot.precision = prec;
-                }
-                if let Err(e) = client.upsert(&row) {
-                    *status = e;
-                    break;
-                }
-            }
-        }
     });
 
     ui.add_space(4.0);
 
-    egui::ScrollArea::both()
-        .auto_shrink([false, false])
-        .show(ui, |ui| {
-            egui::Grid::new("sim_sheet")
-                .num_columns(6)
-                .spacing([10.0, 6.0])
-                .min_col_width(40.0)
-                .striped(true)
-                .show(ui, |ui| {
-                    // Header — Profile | Topic | Field | Generator | Settings | Value
-                    header_cell(ui, COL_PROFILE, "Profile");
-                    header_cell(ui, COL_TOPIC, "Topic");
-                    header_cell(ui, COL_FIELD, "Field");
-                    header_cell(ui, COL_GEN, "Generator");
-                    header_cell(ui, COL_SETTINGS, "Settings");
-                    header_cell(ui, COL_VALUE, "Current value");
-                    ui.end_row();
+    let sheet = |ui: &mut egui::Ui| {
+        egui::Grid::new("sim_sheet")
+            .num_columns(7)
+            .spacing([10.0, 6.0])
+            .min_col_width(40.0)
+            .striped(true)
+            .show(ui, |ui| {
+                // Header — Profile | Topic | Field | Generator | Settings | Prec | Value
+                header_cell(ui, COL_PROFILE, "Profile");
+                header_cell(ui, COL_TOPIC, "Topic");
+                header_cell(ui, COL_FIELD, "Field");
+                header_cell(ui, COL_GEN, "Generator");
+                header_cell(ui, COL_SETTINGS, "Settings");
+                header_cell(ui, COL_PREC, "Prec");
+                header_cell(ui, COL_VALUE, "Current value");
+                ui.end_row();
 
-                    let rows = client.rows.clone();
-                    for row in rows {
-                        draw_row(ui, &row, client, sessions, profiles, status);
-                        ui.end_row();
-                    }
-                });
-        });
+                let rows = client.rows.clone();
+                for row in rows {
+                    draw_row(ui, &row, client, sessions, profiles, status);
+                    ui.end_row();
+                }
+            });
+    };
+
+    if scroll_both {
+        egui::ScrollArea::both()
+            .auto_shrink([false, false])
+            .show(ui, sheet);
+    } else {
+        egui::ScrollArea::horizontal()
+            .auto_shrink([false, false])
+            .show(ui, sheet);
+    }
 }
 
 fn header_cell(ui: &mut egui::Ui, width: f32, label: &str) {
@@ -446,7 +444,7 @@ fn draw_row(
         },
     );
 
-    // Settings — interval + generator params (precision lives in toolbar)
+    // Settings — interval + generator params
     ui.allocate_ui_with_layout(
         Vec2::new(COL_SETTINGS, 28.0),
         egui::Layout::left_to_right(egui::Align::Center),
@@ -479,6 +477,28 @@ fn draw_row(
             }
 
             if edit_generator_inline(ui, &row.id, &gen_type, &mut draft.generator, client) {
+                dirty = true;
+            }
+        },
+    );
+
+    // Prec — decimal digits for published numbers (own column; label is the heading)
+    ui.allocate_ui_with_layout(
+        Vec2::new(COL_PREC, 28.0),
+        egui::Layout::left_to_right(egui::Align::Center),
+        |ui| {
+            ui.set_min_width(COL_PREC);
+            let mut prec = draft.precision as i32;
+            if ui
+                .add(
+                    egui::DragValue::new(&mut prec)
+                        .range(0..=12)
+                        .speed(0.2),
+                )
+                .on_hover_text("Digits after decimal when publishing numbers")
+                .changed()
+            {
+                draft.precision = prec.clamp(0, 12) as u8;
                 dirty = true;
             }
         },
