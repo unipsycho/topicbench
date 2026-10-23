@@ -166,8 +166,51 @@ impl SimClientState {
     }
 
     pub fn stop_all(&mut self) -> Result<(), String> {
+        // Also cancels CSV playback on the sidecar.
         let _ = self.http("POST", "/sim/stop_all", None)?;
         self.poll_if_due(true);
+        Ok(())
+    }
+
+    /// Replace all sims with JSON array or `{simulations:[…]}` (Export shape).
+    pub fn import_sims(&mut self, json: &Value) -> Result<usize, String> {
+        let body = serde_json::to_vec(json).map_err(|e| e.to_string())?;
+        let v = self.http("POST", "/sim/import", Some(body))?;
+        self.poll_if_due(true);
+        Ok(v.get("simulations")
+            .and_then(|a| a.as_array())
+            .map(|a| a.len())
+            .unwrap_or(self.rows.len()))
+    }
+
+    /// Current defs as `{simulations:[…]}`.
+    pub fn export_sims(&mut self) -> Result<Value, String> {
+        self.http("GET", "/sim/export", None)
+    }
+
+    /// Start CSV tape playback (all topics). Empty profile → CSV hint / server default.
+    pub fn start_playback(&mut self, csv: &str, profile: &str) -> Result<(), String> {
+        let body = serde_json::to_vec(&serde_json::json!({
+            "csv": csv,
+            "profile": profile,
+        }))
+        .map_err(|e| e.to_string())?;
+        let v = self.http("POST", "/sim/playback", Some(body))?;
+        if v.get("ok").and_then(|o| o.as_bool()).unwrap_or(false)
+            || v.get("running").and_then(|o| o.as_bool()).unwrap_or(false)
+        {
+            Ok(())
+        } else {
+            Err(v
+                .get("error")
+                .and_then(|e| e.as_str())
+                .unwrap_or("playback failed")
+                .to_string())
+        }
+    }
+
+    pub fn stop_playback(&mut self) -> Result<(), String> {
+        let _ = self.http("POST", "/sim/playback/stop", None)?;
         Ok(())
     }
 

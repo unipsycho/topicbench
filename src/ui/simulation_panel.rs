@@ -268,6 +268,103 @@ fn body(
                 }
             }
         }
+
+        // Far right: Import / Export / Playback (CSV tape).
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            ui.spacing_mut().item_spacing.x = 6.0;
+            if toolbar_btn(ui, icons, "message_history", "Playback", true)
+                .on_hover_text("Play a topicbench-recording CSV (all topics)")
+                .clicked()
+            {
+                if let Some(path) = rfd::FileDialog::new()
+                    .set_title("Playback CSV recording")
+                    .add_filter("CSV", &["csv"])
+                    .pick_file()
+                {
+                    match std::fs::read_to_string(&path) {
+                        Ok(csv) => {
+                            let profile = default_profile(sessions, profiles);
+                            match client.start_playback(&csv, &profile) {
+                                Ok(()) => {
+                                    *status = format!(
+                                        "Playback started ({})",
+                                        path.file_name()
+                                            .and_then(|n| n.to_str())
+                                            .unwrap_or("csv")
+                                    );
+                                }
+                                Err(e) => *status = e,
+                            }
+                        }
+                        Err(e) => *status = format!("read {}: {e}", path.display()),
+                    }
+                }
+            }
+            if toolbar_btn(ui, icons, "export_download", "Export", true)
+                .on_hover_text("Export simulation definitions as JSON")
+                .clicked()
+            {
+                match client.export_sims() {
+                    Ok(json) => {
+                        if let Some(path) = rfd::FileDialog::new()
+                            .set_title("Export simulations")
+                            .add_filter("JSON", &["json"])
+                            .set_file_name("simulations.json")
+                            .save_file()
+                        {
+                            match serde_json::to_string_pretty(&json) {
+                                Ok(text) => match std::fs::write(&path, format!("{text}\n")) {
+                                    Ok(()) => {
+                                        *status = format!("Exported {}", path.display());
+                                    }
+                                    Err(e) => *status = format!("write: {e}"),
+                                },
+                                Err(e) => *status = format!("json: {e}"),
+                            }
+                        }
+                    }
+                    Err(e) => *status = e,
+                }
+            }
+            if toolbar_btn(ui, icons, "folder_open", "Import", true)
+                .on_hover_text("Import simulation definitions JSON (replaces list)")
+                .clicked()
+            {
+                if let Some(path) = rfd::FileDialog::new()
+                    .set_title("Import simulations")
+                    .add_filter("JSON", &["json"])
+                    .pick_file()
+                {
+                    let proceed = if client.rows.is_empty() {
+                        true
+                    } else {
+                        matches!(
+                            rfd::MessageDialog::new()
+                                .set_level(rfd::MessageLevel::Warning)
+                                .set_title("Replace simulations?")
+                                .set_description(
+                                    "Import replaces the current simulation list. Continue?",
+                                )
+                                .set_buttons(rfd::MessageButtons::YesNo)
+                                .show(),
+                            rfd::MessageDialogResult::Yes
+                        )
+                    };
+                    if proceed {
+                        match std::fs::read_to_string(&path) {
+                            Ok(raw) => match serde_json::from_str::<serde_json::Value>(&raw) {
+                                Ok(v) => match client.import_sims(&v) {
+                                    Ok(n) => *status = format!("Imported {n} simulations"),
+                                    Err(e) => *status = e,
+                                },
+                                Err(e) => *status = format!("parse JSON: {e}"),
+                            },
+                            Err(e) => *status = format!("read {}: {e}", path.display()),
+                        }
+                    }
+                }
+            }
+        });
     });
 
     ui.add_space(4.0);
