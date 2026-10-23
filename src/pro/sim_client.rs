@@ -172,26 +172,21 @@ impl SimClientState {
         Ok(())
     }
 
-    /// Replace all sims. Accepts a bare array or `{ "simulations": […], … }`
-    /// (Export / simulations.json shape). Unknown top-level keys are ignored.
+    /// Replace all sims. Body must be a bare JSON array of defs.
     pub fn import_sims(&mut self, json: &Value) -> Result<usize, String> {
         self.import_sims_mode(json, "replace")
     }
 
-    /// Import with `replace` or `merge`. Normalizes both file shapes before POST.
+    /// Import with `replace` or `merge`. File/body must be a bare `[…]` array.
     pub fn import_sims_mode(&mut self, json: &Value, mode: &str) -> Result<usize, String> {
-        let sims = extract_simulations_array(json)?;
+        let sims = require_bare_sim_array(json)?;
         let mode = if mode.eq_ignore_ascii_case("merge") {
             "merge"
         } else {
             "replace"
         };
-        let body = serde_json::to_vec(&serde_json::json!({
-            "mode": mode,
-            "simulations": sims,
-        }))
-        .map_err(|e| e.to_string())?;
-        let v = self.http("POST", "/sim/import", Some(body))?;
+        let body = serde_json::to_vec(sims).map_err(|e| e.to_string())?;
+        let v = self.http("POST", &format!("/sim/import?mode={mode}"), Some(body))?;
         if let Some(err) = v.get("error").and_then(|e| e.as_str()) {
             return Err(err.to_string());
         }
@@ -207,9 +202,17 @@ impl SimClientState {
         Ok(n)
     }
 
-    /// Current defs as `{simulations:[…]}`.
+    /// Current defs as a bare JSON array (same as Import file shape).
     pub fn export_sims(&mut self) -> Result<Value, String> {
-        self.http("GET", "/sim/export", None)
+        let v = self.http("GET", "/sim/export", None)?;
+        // Sidecar returns a bare array; tolerate a mistaken wrapper once.
+        if v.is_array() {
+            Ok(v)
+        } else if let Some(a) = v.get("simulations") {
+            Ok(a.clone())
+        } else {
+            Err("export response was not a JSON array".into())
+        }
     }
 
     /// Start CSV tape playback (all topics). Empty profile → CSV hint / server default.
@@ -346,24 +349,20 @@ impl SimClientState {
     }
 }
 
-/// Pull the simulations array from a bare `[…]` or `{ "simulations": […], … }`.
-/// Unknown top-level object keys are ignored. Clear error on wrong shape.
-pub fn extract_simulations_array(json: &Value) -> Result<&Vec<Value>, String> {
+/// Import/export file shape: bare JSON array of sim defs only.
+pub fn require_bare_sim_array(json: &Value) -> Result<&Vec<Value>, String> {
     if let Some(arr) = json.as_array() {
         return Ok(arr);
     }
-    if let Some(obj) = json.as_object() {
-        if let Some(arr) = obj.get("simulations").and_then(|v| v.as_array()) {
-            return Ok(arr);
-        }
-        let keys: Vec<&str> = obj.keys().map(|k| k.as_str()).collect();
-        return Err(format!(
-            "import JSON must be an array or {{ \"simulations\": […] }} — \
-             found object with keys {keys:?} (missing \"simulations\")"
-        ));
+    if json.as_object().is_some() {
+        return Err(
+            "import JSON must be a bare array [ … ] — \
+             wrapped { \"simulations\": […] } is not supported"
+                .into(),
+        );
     }
     Err(format!(
-        "import JSON must be an array or {{ \"simulations\": […] }} — found {}",
+        "import JSON must be a bare array [ … ] — found {}",
         match json {
             Value::Null => "null",
             Value::Bool(_) => "bool",
