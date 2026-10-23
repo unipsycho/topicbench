@@ -536,7 +536,7 @@ impl MqttMonitorApp {
                     .fill(CHROME_BG)
                     .inner_margin(egui::Margin {
                         left: 8,
-                        right: 24,
+                        right: 48,
                         top: 2,
                         bottom: 2,
                     }),
