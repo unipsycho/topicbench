@@ -127,6 +127,13 @@ impl SimClientState {
             .cloned()
             .ok_or_else(|| "missing simulation in response".to_string())?;
         let row: SimRow = serde_json::from_value(sim).map_err(|e| e.to_string())?;
+        // Apply response locally first so the next paint keeps the new mode
+        // even if a concurrent list poll would have been stale mid-edit.
+        if let Some(slot) = self.rows.iter_mut().find(|r| r.id == row.id) {
+            *slot = row.clone();
+        } else {
+            self.rows.push(row.clone());
+        }
         self.poll_if_due(true);
         Ok(row)
     }

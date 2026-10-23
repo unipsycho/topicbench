@@ -12,19 +12,20 @@ use crate::ui::icons::{
 use eframe::egui::{self, Color32, RichText, Vec2};
 use serde_json::{json, Value};
 
+/// Wire ids ordered by display label (Bool Toggle, Constant, … Uniform).
 const GEN_TYPES: &[&str] = &[
+    "bool_toggle",
     "constant",
     "counter",
-    "sine",
-    "triangle",
-    "ramp",
-    "uniform",
+    "formula",
     "gaussian",
-    "random_walk",
-    "bool_toggle",
     "iso_timestamp",
     "enum_cycle",
-    "formula",
+    "ramp",
+    "random_walk",
+    "sine",
+    "triangle",
+    "uniform",
 ];
 
 // Spreadsheet column widths (keep rows aligned).
@@ -395,29 +396,45 @@ fn draw_row(
                 dirty = true;
             }
 
-            // Mode
+            // Mode — Whole = replace payload; Field = patch one JSON path.
+            let mode_before = draft.mode.clone();
+            let mode_label = if draft.mode == "field_patch" {
+                "Field"
+            } else {
+                "Whole"
+            };
             egui::ComboBox::from_id_salt(format!("sim_mode_{}", row.id))
-                .selected_text(if draft.mode == "field_patch" {
-                    "field"
-                } else {
-                    "whole"
-                })
-                .width(64.0)
+                .selected_text(mode_label)
+                .width(72.0)
                 .show_ui(ui, |ui| {
-                    for (val, lab) in [("whole_payload", "whole"), ("field_patch", "field")] {
-                        if ui.selectable_label(draft.mode == val, lab).clicked() {
-                            draft.mode = val.to_string();
-                            dirty = true;
-                        }
-                    }
+                    ui.selectable_value(
+                        &mut draft.mode,
+                        "whole_payload".into(),
+                        "Whole",
+                    )
+                    .on_hover_text("Publish the generated value as the whole payload");
+                    ui.selectable_value(
+                        &mut draft.mode,
+                        "field_patch".into(),
+                        "Field",
+                    )
+                    .on_hover_text("Patch one JSON field path inside the template/payload");
                 });
+            if draft.mode != mode_before {
+                dirty = true;
+                // Seed a path so Field mode can persist (Pro used to reject empty path).
+                if draft.mode == "field_patch" && draft.field_path.trim().is_empty() {
+                    draft.field_path = "value".into();
+                }
+            }
             if draft.mode == "field_patch" {
                 if ui
                     .add(
                         egui::TextEdit::singleline(&mut draft.field_path)
-                            .desired_width(72.0)
-                            .hint_text("path"),
+                            .desired_width(88.0)
+                            .hint_text("field.path"),
                     )
+                    .on_hover_text("JSON dot path to patch (e.g. sensors.temp)")
                     .changed()
                 {
                     dirty = true;
@@ -473,8 +490,16 @@ fn draw_row(
     );
 
     if dirty {
+        // Optimistic local patch so a 500ms list poll cannot flash the old mode.
+        if let Some(slot) = client.rows.iter_mut().find(|r| r.id == draft.id) {
+            *slot = draft.clone();
+        }
         match client.upsert(&draft) {
-            Ok(_) => {}
+            Ok(saved) => {
+                if let Some(slot) = client.rows.iter_mut().find(|r| r.id == saved.id) {
+                    *slot = saved;
+                }
+            }
             Err(e) => *status = e,
         }
     }
