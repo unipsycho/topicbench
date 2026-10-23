@@ -95,14 +95,32 @@ fn header_bar(
     icons::section_header_bar(ui, |ui| {
         icons::section_icon(ui, icons, "data_table");
         icons::section_title(ui, "Simulation");
-        // Compact run state always next to the title.
+        // Status pill — padded chip next to title (dark chrome, not a purple default).
+        ui.add_space(8.0);
         let any_running = client.statuses.iter().any(|s| s.running);
-        let (label, color) = if any_running {
-            ("Running", Color32::from_rgb(140, 210, 160))
+        let (label, fg, bg, border) = if any_running {
+            (
+                "Running",
+                Color32::from_rgb(170, 225, 180),
+                Color32::from_rgb(32, 52, 40),
+                Color32::from_rgb(80, 150, 100),
+            )
         } else {
-            ("Stopped", CHROME_MUTED)
+            (
+                "Stopped",
+                CHROME_MUTED,
+                Color32::from_rgb(46, 48, 54),
+                Color32::from_rgb(78, 82, 92),
+            )
         };
-        ui.label(RichText::new(label).small().color(color));
+        egui::Frame::NONE
+            .fill(bg)
+            .stroke(egui::Stroke::new(1.0, border))
+            .corner_radius(11.0)
+            .inner_margin(egui::Margin::symmetric(10, 3))
+            .show(ui, |ui| {
+                ui.label(RichText::new(label).size(13.0).strong().color(fg));
+            });
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             if icons
                 .tiny(ui, "remove_x", false, "Close Simulation panel")
