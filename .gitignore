@@ -9,3 +9,9 @@ Cargo.lock.bak
 *.exe
 /dist/
 /vendor/
+# TopicBench Pro signing private keys (never commit).
+/dev/pro-keys/
+*.sk
+*.sk.hex
+ed25519.sk
+ed25519.sk.hex

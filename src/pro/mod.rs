@@ -1,13 +1,23 @@
 //! TopicBench Pro — OSS capability probe / entitlement bridge.
 //!
-//! Free build always probes as **unlicensed** unless a **dev-only** env override
-//! unlocks flags for UI preview. Real license + sidecar IPC land later.
+//! Probe order (`ProBridge::probe`):
+//! 1. **DEV env** (`TOPICBENCH_PRO_DEV` / `TOPICBENCH_PRO_ENTITLEMENTS`) — UI preview; wins
+//! 2. **Signed license file** under `~/.config/topicbench/license.json` (or `.lic`) → `Licensed`
+//! 3. Else free / not installed
 //!
 //! Dev preview (not shown in Settings — do not treat as a license switch):
 //! - `TOPICBENCH_PRO_DEV=1` — all entitlement flags true
 //! - `TOPICBENCH_PRO_ENTITLEMENTS=multi_graph,mcp_server,…` — comma-separated flags
+//!
+//! Settings → TopicBench Pro (Activate / status) is intentionally omitted for now;
+//! when it lands, it should write the same license file and re-probe (see `license_format`).
+
+mod license_format;
 
 use std::sync::OnceLock;
+
+use crate::mqtt::paths;
+use license_format::{load_license_path, LicensePayload, LICENSE_FILE_ALT, LICENSE_FILE_NAME};
 
 /// Named paid capability flags (match [pro-feature-ideas] / open-core plan).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -118,17 +128,27 @@ impl Entitlements {
             Entitlement::AutoSuggestSims => self.auto_suggest_sims = true,
         }
     }
+
+    fn from_license_payload(payload: &LicensePayload) -> Self {
+        let mut ents = Self::free();
+        for token in &payload.entitlements {
+            if let Some(flag) = Entitlement::from_token(token) {
+                ents.enable(flag);
+            }
+        }
+        ents
+    }
 }
 
 /// Install / license state for Settings copy (never claims Licensed without a real key).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[allow(dead_code)] // Free / Licensed used when sidecar handshake lands.
+#[allow(dead_code)] // Free used when sidecar handshake lands.
 pub enum ProStatus {
     /// Pro companion not detected (default OSS scaffold).
     NotInstalled,
     /// Pro present but no valid license (future sidecar handshake).
     Free,
-    /// Valid signed license (future).
+    /// Valid signed license file (or future sidecar).
     Licensed,
 }
 
@@ -142,7 +162,7 @@ impl ProStatus {
     }
 }
 
-/// Capability probe — today always free; ready for localhost sidecar IPC.
+/// Capability probe — ready for localhost sidecar IPC after file license.
 #[allow(dead_code)] // Sidecar / plugin probes will implement this.
 pub trait CapabilityProbe: Send + Sync {
     fn status(&self) -> ProStatus;
@@ -151,22 +171,45 @@ pub trait CapabilityProbe: Send + Sync {
 
 /// OSS-side bridge. Handshake / IPC TODO for TopicBench Pro sidecar.
 pub struct ProBridge {
-    /// Entitlements after optional DEV env merge (UI gates use these).
+    /// Entitlements after DEV / license resolution (UI gates use these).
     entitlements: Entitlements,
     status: ProStatus,
 }
 
 impl ProBridge {
-    /// Probe Pro. Scaffold: no sidecar → NotInstalled + free flags, then DEV env merge.
+    /// Probe Pro. Order: DEV env → signed license file → free / not installed.
     pub fn probe() -> Self {
-        // TODO(pro-ipc): connect to TopicBench Pro on localhost (versioned handshake),
-        // call GetEntitlements, verify signed blob; do not treat “binary exists” as licensed.
-        let status = ProStatus::NotInstalled;
-        let mut entitlements = Entitlements::free();
-        apply_dev_overrides(&mut entitlements);
+        // 1) DEV overrides win for local UI preview (status stays NotInstalled —
+        //    Settings must never show “Licensed” from env alone).
+        if let Some(ents) = try_dev_entitlements() {
+            return Self {
+                entitlements: ents,
+                status: ProStatus::NotInstalled,
+            };
+        }
+
+        // 2) Signed offline license under ~/.config/topicbench/
+        // TODO(pro-ipc): after file license, optionally also handshake sidecar;
+        // do not treat “Pro binary exists” as licensed without entitlements.
+        if let Some(payload) = try_load_signed_license() {
+            let entitlements = Entitlements::from_license_payload(&payload);
+            // Optional: TOPICBENCH_PRO_DEBUG=1 → stderr probe line (no Settings UI yet).
+            if env_truthy("TOPICBENCH_PRO_DEBUG") {
+                eprintln!(
+                    "topicbench pro: Licensed (file) multi_graph={} mcp_server={} simulation={}",
+                    entitlements.multi_graph, entitlements.mcp_server, entitlements.simulation
+                );
+            }
+            return Self {
+                entitlements,
+                status: ProStatus::Licensed,
+            };
+        }
+
+        // 3) Free OSS
         Self {
-            entitlements,
-            status,
+            entitlements: Entitlements::free(),
+            status: ProStatus::NotInstalled,
         }
     }
 
@@ -194,7 +237,8 @@ impl CapabilityProbe for ProBridge {
     }
 }
 
-/// Process-wide bridge (re-probed once at first use; DEV env read at that time).
+/// Process-wide bridge (re-probed once at first use; DEV / license read at that time).
+/// Future Settings Activate should document restart, or clear this OnceLock / re-probe.
 pub fn bridge() -> &'static ProBridge {
     static BRIDGE: OnceLock<ProBridge> = OnceLock::new();
     BRIDGE.get_or_init(ProBridge::probe)
@@ -212,22 +256,43 @@ pub fn status_label() -> &'static str {
     bridge().status().label()
 }
 
-/// Merge DEV-only env into entitlements. Never persist; never shown as a Settings “Activate”.
-fn apply_dev_overrides(ents: &mut Entitlements) {
+/// DEV-only entitlements when env is set; `None` → fall through to license file.
+fn try_dev_entitlements() -> Option<Entitlements> {
     // TOPICBENCH_PRO_DEV=1|true|yes → all flags on (UI preview).
     if env_truthy("TOPICBENCH_PRO_DEV") {
-        *ents = Entitlements::all_enabled();
-        return;
+        return Some(Entitlements::all_enabled());
     }
     // TOPICBENCH_PRO_ENTITLEMENTS=multi_graph,mcp_server
     let Ok(raw) = std::env::var("TOPICBENCH_PRO_ENTITLEMENTS") else {
-        return;
+        return None;
     };
+    if raw.trim().is_empty() {
+        return None;
+    }
+    let mut ents = Entitlements::free();
     for token in raw.split(',') {
         if let Some(flag) = Entitlement::from_token(token) {
             ents.enable(flag);
         }
     }
+    Some(ents)
+}
+
+/// Try `license.json` then `license.lic`. Invalid/expired/missing → None (free).
+fn try_load_signed_license() -> Option<LicensePayload> {
+    for name in [LICENSE_FILE_NAME, LICENSE_FILE_ALT] {
+        let path = paths::config_file(name);
+        match load_license_path(&path) {
+            Ok(Some(payload)) => return Some(payload),
+            Ok(None) => continue,
+            Err(_) => {
+                // Bad signature / expired / corrupt — ignore and try next / fall free.
+                // (No Settings UI yet to surface the error; keep honest-user quiet.)
+                continue;
+            }
+        }
+    }
+    None
 }
 
 fn env_truthy(key: &str) -> bool {
@@ -262,5 +327,18 @@ mod tests {
             Entitlement::from_token("MCP"),
             Some(Entitlement::McpServer)
         );
+    }
+
+    #[test]
+    fn license_payload_maps_flags() {
+        let payload = LicensePayload {
+            entitlements: vec!["multi_graph".into(), "simulation".into()],
+            expires: None,
+            licensee: None,
+        };
+        let e = Entitlements::from_license_payload(&payload);
+        assert!(e.multi_graph);
+        assert!(e.simulation);
+        assert!(!e.mcp_server);
     }
 }
