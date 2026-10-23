@@ -1,6 +1,7 @@
 //! Pro Simulation spreadsheet panel (floating or docked).
 //!
-//! Talks HTTP to `topicbench-pro` `/sim`. No formula engine in OSS.
+//! One horizontal line per row; Start/Stop apply to **all** sims.
+//! Talks HTTP to `topicbench-pro` `/sim` — no formula engine in OSS.
 
 use crate::mqtt::profile::ProfileStore;
 use crate::mqtt::session::SessionManager;
@@ -9,8 +10,8 @@ use crate::ui::icons::{
     self, IconSet, CHROME_ACCENT_BORDER, CHROME_ACCENT_SOFT, CHROME_BG, CHROME_CAPTION,
     CHROME_MUTED, CHROME_TEXT,
 };
-use eframe::egui::{self, Color32, RichText};
-use serde_json::json;
+use eframe::egui::{self, Color32, RichText, Vec2};
+use serde_json::{json, Value};
 
 const GEN_TYPES: &[&str] = &[
     "constant",
@@ -26,6 +27,13 @@ const GEN_TYPES: &[&str] = &[
     "enum_cycle",
     "expr",
 ];
+
+// Spreadsheet column widths (keep rows aligned).
+const COL_TOPIC: f32 = 220.0;
+const COL_GEN: f32 = 110.0;
+const COL_SETTINGS: f32 = 420.0;
+const COL_VALUE: f32 = 100.0;
+const COL_RUN: f32 = 48.0;
 
 /// Draw floating Window and/or docked SidePanel for Simulation.
 pub fn draw(
@@ -47,8 +55,8 @@ pub fn draw(
         let mut win_open = true;
         egui::Window::new("Simulation")
             .id(egui::Id::new("topicbench_simulation_win"))
-            .default_size([920.0, 360.0])
-            .min_width(640.0)
+            .default_size([980.0, 360.0])
+            .min_width(780.0)
             .min_height(220.0)
             .frame(egui::Frame::window(&ctx.style()).fill(CHROME_BG))
             .open(&mut win_open)
@@ -62,8 +70,8 @@ pub fn draw(
         }
     } else {
         egui::SidePanel::right("topicbench_simulation_dock")
-            .default_width(420.0)
-            .min_width(320.0)
+            .default_width(520.0)
+            .min_width(420.0)
             .frame(egui::Frame::NONE.fill(CHROME_BG).inner_margin(8.0))
             .show(ctx, |ui| {
                 header_bar(ui, icons, floating, open);
@@ -72,19 +80,13 @@ pub fn draw(
             });
     }
 
-    // Keep ~2 Hz refresh while open + licensed.
     if licensed {
         client.poll_if_due(false);
         ctx.request_repaint_after(std::time::Duration::from_millis(500));
     }
 }
 
-fn header_bar(
-    ui: &mut egui::Ui,
-    icons: &IconSet,
-    floating: &mut bool,
-    open: &mut bool,
-) {
+fn header_bar(ui: &mut egui::Ui, icons: &IconSet, floating: &mut bool, open: &mut bool) {
     icons::section_header_bar(ui, |ui| {
         icons::section_icon(ui, icons, "data_table");
         icons::section_title(ui, "Simulation");
@@ -146,12 +148,11 @@ fn body(
         );
     } else if !client.sidecar_up && client.rows.is_empty() {
         ui.label(
-            RichText::new("Connecting to topicbench-pro…")
-                .color(CHROME_MUTED),
+            RichText::new("Connecting to topicbench-pro…").color(CHROME_MUTED),
         );
     }
 
-    // Toolbar
+    // Toolbar — Start/Stop affect every simulation.
     ui.horizontal(|ui| {
         if ui
             .add(
@@ -172,35 +173,19 @@ fn body(
                 Err(e) => *status = e,
             }
         }
-        let sel = client.selected.clone();
-        let start_en = sel.is_some();
         if ui
-            .add_enabled(start_en, egui::Button::new("Start"))
-            .on_hover_text("Start selected simulation")
+            .button("Start")
+            .on_hover_text("Start all simulations")
             .clicked()
         {
-            if let Some(id) = &sel {
-                match client.start(id) {
-                    Ok(()) => *status = format!("Started {id}"),
-                    Err(e) => *status = e,
-                }
+            match client.start_all() {
+                Ok(()) => *status = "Started all simulations".into(),
+                Err(e) => *status = e,
             }
         }
         if ui
-            .add_enabled(start_en, egui::Button::new("Stop"))
-            .on_hover_text("Stop selected simulation")
-            .clicked()
-        {
-            if let Some(id) = &sel {
-                match client.stop(id) {
-                    Ok(()) => *status = format!("Stopped {id}"),
-                    Err(e) => *status = e,
-                }
-            }
-        }
-        if ui
-            .button("Stop all")
-            .on_hover_text("Stop every running simulation")
+            .button("Stop")
+            .on_hover_text("Stop all simulations")
             .clicked()
         {
             match client.stop_all() {
@@ -208,9 +193,10 @@ fn body(
                 Err(e) => *status = e,
             }
         }
+        let sel = client.selected.clone();
         if ui
-            .add_enabled(start_en, egui::Button::new("Delete"))
-            .on_hover_text("Delete selected simulation")
+            .add_enabled(sel.is_some(), egui::Button::new("Delete"))
+            .on_hover_text("Delete selected row")
             .clicked()
         {
             if let Some(id) = &sel {
@@ -232,26 +218,41 @@ fn body(
 
     ui.add_space(4.0);
 
-    // Spreadsheet header
-    egui::Grid::new("sim_grid_hdr")
-        .num_columns(5)
-        .spacing([8.0, 4.0])
-        .min_col_width(80.0)
-        .show(ui, |ui| {
-            for h in ["Topic / profile", "Generator", "Settings", "Current value", "Run"] {
-                ui.label(RichText::new(h).strong().color(CHROME_CAPTION));
-            }
-            ui.end_row();
-        });
-
-    egui::ScrollArea::vertical()
+    egui::ScrollArea::both()
         .auto_shrink([false, false])
         .show(ui, |ui| {
-            let rows = client.rows.clone();
-            for row in rows {
-                draw_row(ui, &row, client, sessions, profiles, status);
-            }
+            egui::Grid::new("sim_sheet")
+                .num_columns(5)
+                .spacing([10.0, 6.0])
+                .min_col_width(40.0)
+                .striped(true)
+                .show(ui, |ui| {
+                    // Header
+                    header_cell(ui, COL_TOPIC, "Topic / profile");
+                    header_cell(ui, COL_GEN, "Generator");
+                    header_cell(ui, COL_SETTINGS, "Settings");
+                    header_cell(ui, COL_VALUE, "Current value");
+                    header_cell(ui, COL_RUN, "Run");
+                    ui.end_row();
+
+                    let rows = client.rows.clone();
+                    for row in rows {
+                        draw_row(ui, &row, client, sessions, profiles, status);
+                        ui.end_row();
+                    }
+                });
         });
+}
+
+fn header_cell(ui: &mut egui::Ui, width: f32, label: &str) {
+    ui.allocate_ui_with_layout(
+        Vec2::new(width, 18.0),
+        egui::Layout::left_to_right(egui::Align::Center),
+        |ui| {
+            ui.set_min_width(width);
+            ui.label(RichText::new(label).strong().color(CHROME_CAPTION));
+        },
+    );
 }
 
 fn draw_row(
@@ -267,200 +268,508 @@ fn draw_row(
     let running = st.as_ref().map(|s| s.running).unwrap_or(false);
     let mut draft = row.clone();
     let mut dirty = false;
+    let gen_type = sim_client::generator_label(&draft.generator);
 
-    let frame = if selected {
-        egui::Frame::NONE
-            .fill(CHROME_ACCENT_SOFT)
-            .stroke(egui::Stroke::new(1.0_f32, CHROME_ACCENT_BORDER))
-            .inner_margin(4.0)
-            .corner_radius(3.0)
-    } else {
-        egui::Frame::NONE.inner_margin(4.0)
-    };
-
-    frame.show(ui, |ui| {
-        egui::Grid::new(format!("sim_row_{}", row.id))
-            .num_columns(5)
-            .spacing([8.0, 4.0])
-            .min_col_width(80.0)
-            .show(ui, |ui| {
-                // Topic + profile
-                ui.vertical(|ui| {
-                    if ui
-                        .add(
-                            egui::TextEdit::singleline(&mut draft.topic)
-                                .desired_width(200.0)
-                                .hint_text("topic"),
-                        )
-                        .changed()
-                    {
-                        dirty = true;
-                    }
-                    egui::ComboBox::from_id_salt(format!("sim_prof_{}", row.id))
-                        .selected_text(profile_label(profiles, &draft.profile))
-                        .width(200.0)
-                        .show_ui(ui, |ui| {
-                            for p in profiles.profiles.values() {
-                                let connected = sessions
-                                    .open
-                                    .get(&p.id)
-                                    .map(|s| {
-                                        matches!(
-                                            s.state,
-                                            crate::mqtt::session::SessionState::Connected
-                                        )
-                                    })
-                                    .unwrap_or(false);
-                                let label = if connected {
-                                    format!("● {}", p.name)
-                                } else {
-                                    format!("○ {}", p.name)
-                                };
-                                if ui
-                                    .selectable_label(draft.profile == p.id, label)
-                                    .clicked()
-                                {
-                                    draft.profile = p.id.clone();
-                                    dirty = true;
-                                }
-                            }
-                        });
-                });
-
-                // Generator type
-                let mut gen_type = sim_client::generator_label(&draft.generator);
-                egui::ComboBox::from_id_salt(format!("sim_gen_{}", row.id))
-                    .selected_text(&gen_type)
-                    .width(110.0)
-                    .show_ui(ui, |ui| {
-                        for t in GEN_TYPES {
-                            if ui.selectable_label(gen_type == *t, *t).clicked() {
-                                gen_type = (*t).to_string();
-                                draft.generator = default_generator(t);
-                                dirty = true;
-                            }
-                        }
-                    });
-
-                // Settings: interval + mode (+ field path / expr)
-                ui.vertical(|ui| {
-                    ui.horizontal(|ui| {
-                        ui.label(RichText::new("ms").small().color(CHROME_MUTED));
-                        let mut ms = draft.interval_ms as i32;
-                        if ui
-                            .add(egui::DragValue::new(&mut ms).range(50..=600_000))
-                            .changed()
-                        {
-                            draft.interval_ms = ms as u64;
-                            dirty = true;
-                        }
-                    });
-                    let modes = [("whole_payload", "whole"), ("field_patch", "field")];
-                    egui::ComboBox::from_id_salt(format!("sim_mode_{}", row.id))
-                        .selected_text(if draft.mode == "field_patch" {
-                            "field"
-                        } else {
-                            "whole"
-                        })
-                        .width(80.0)
-                        .show_ui(ui, |ui| {
-                            for (val, lab) in modes {
-                                if ui.selectable_label(draft.mode == val, lab).clicked() {
-                                    draft.mode = val.to_string();
-                                    dirty = true;
-                                }
-                            }
-                        });
-                    if draft.mode == "field_patch" {
-                        if ui
-                            .add(
-                                egui::TextEdit::singleline(&mut draft.field_path)
-                                    .desired_width(140.0)
-                                    .hint_text("field.path"),
-                            )
-                            .changed()
-                        {
-                            dirty = true;
-                        }
-                    }
-                    if gen_type == "expr" {
-                        let mut formula = draft
-                            .generator
-                            .get("formula")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("sin(t)")
-                            .to_string();
-                        if ui
-                            .add(
-                                egui::TextEdit::singleline(&mut formula)
-                                    .desired_width(140.0)
-                                    .hint_text("expr"),
-                            )
-                            .changed()
-                        {
-                            draft.generator = json!({"type": "expr", "formula": formula});
-                            dirty = true;
-                        }
-                    }
-                    if gen_type == "constant" {
-                        let mut c = draft
-                            .generator
-                            .get("value")
-                            .map(|v| match v {
-                                serde_json::Value::String(s) => s.clone(),
-                                other => other.to_string(),
+    // Topic / profile — single line
+    ui.allocate_ui_with_layout(
+        Vec2::new(COL_TOPIC, 28.0),
+        egui::Layout::left_to_right(egui::Align::Center),
+        |ui| {
+            ui.set_min_width(COL_TOPIC);
+            ui.spacing_mut().item_spacing.x = 4.0;
+            if ui
+                .add(
+                    egui::TextEdit::singleline(&mut draft.topic)
+                        .desired_width(118.0)
+                        .hint_text("topic"),
+                )
+                .changed()
+            {
+                dirty = true;
+            }
+            egui::ComboBox::from_id_salt(format!("sim_prof_{}", row.id))
+                .selected_text(profile_label(profiles, &draft.profile))
+                .width(90.0)
+                .show_ui(ui, |ui| {
+                    for p in profiles.profiles.values() {
+                        let connected = sessions
+                            .open
+                            .get(&p.id)
+                            .map(|s| {
+                                matches!(s.state, crate::mqtt::session::SessionState::Connected)
                             })
-                            .unwrap_or_else(|| "0".into());
+                            .unwrap_or(false);
+                        let label = if connected {
+                            format!("● {}", p.name)
+                        } else {
+                            format!("○ {}", p.name)
+                        };
                         if ui
-                            .add(
-                                egui::TextEdit::singleline(&mut c)
-                                    .desired_width(80.0)
-                                    .hint_text("value"),
-                            )
-                            .changed()
+                            .selectable_label(draft.profile == p.id, label)
+                            .clicked()
                         {
-                            let value = serde_json::from_str::<serde_json::Value>(&c)
-                                .unwrap_or(serde_json::Value::String(c));
-                            draft.generator = json!({"type": "constant", "value": value});
+                            draft.profile = p.id.clone();
                             dirty = true;
                         }
                     }
                 });
+        },
+    );
 
-                // Current value
-                ui.label(
-                    RichText::new(sim_client::value_label(st.as_ref()))
-                        .monospace()
-                        .color(if running {
-                            Color32::from_rgb(140, 210, 160)
-                        } else {
-                            CHROME_TEXT
-                        }),
-                );
+    // Generator type
+    ui.allocate_ui_with_layout(
+        Vec2::new(COL_GEN, 28.0),
+        egui::Layout::left_to_right(egui::Align::Center),
+        |ui| {
+            ui.set_min_width(COL_GEN);
+            let mut gt = gen_type.clone();
+            egui::ComboBox::from_id_salt(format!("sim_gen_{}", row.id))
+                .selected_text(&gt)
+                .width(COL_GEN - 8.0)
+                .show_ui(ui, |ui| {
+                    for t in GEN_TYPES {
+                        if ui.selectable_label(gt == *t, *t).clicked() {
+                            gt = (*t).to_string();
+                            draft.generator = default_generator(t);
+                            dirty = true;
+                        }
+                    }
+                });
+        },
+    );
 
-                // Running + select
-                ui.vertical(|ui| {
-                    let run_lbl = if running { "▶ run" } else { "■ stop" };
-                    let run_col = if running {
+    // Settings — all inline
+    ui.allocate_ui_with_layout(
+        Vec2::new(COL_SETTINGS, 28.0),
+        egui::Layout::left_to_right(egui::Align::Center),
+        |ui| {
+            ui.set_min_width(COL_SETTINGS);
+            ui.spacing_mut().item_spacing.x = 6.0;
+            ui.set_max_height(28.0);
+
+            // Interval
+            ui.label(RichText::new("ms").small().color(CHROME_MUTED));
+            let mut ms = draft.interval_ms as f32;
+            if ui
+                .add(
+                    egui::Slider::new(&mut ms, 50.0..=10_000.0)
+                        .show_value(false)
+                        .clamping(egui::SliderClamping::Always),
+                )
+                .on_hover_text(format!("{} ms", draft.interval_ms))
+                .changed()
+            {
+                draft.interval_ms = ms.round() as u64;
+                dirty = true;
+            }
+            let mut ms_i = draft.interval_ms as i32;
+            if ui
+                .add(egui::DragValue::new(&mut ms_i).range(50..=600_000).speed(10))
+                .changed()
+            {
+                draft.interval_ms = ms_i as u64;
+                dirty = true;
+            }
+
+            // Mode
+            egui::ComboBox::from_id_salt(format!("sim_mode_{}", row.id))
+                .selected_text(if draft.mode == "field_patch" {
+                    "field"
+                } else {
+                    "whole"
+                })
+                .width(64.0)
+                .show_ui(ui, |ui| {
+                    for (val, lab) in [("whole_payload", "whole"), ("field_patch", "field")] {
+                        if ui.selectable_label(draft.mode == val, lab).clicked() {
+                            draft.mode = val.to_string();
+                            dirty = true;
+                        }
+                    }
+                });
+            if draft.mode == "field_patch" {
+                if ui
+                    .add(
+                        egui::TextEdit::singleline(&mut draft.field_path)
+                            .desired_width(72.0)
+                            .hint_text("path"),
+                    )
+                    .changed()
+                {
+                    dirty = true;
+                }
+            }
+
+            // Generator-specific inline controls
+            if edit_generator_inline(ui, &row.id, &gen_type, &mut draft.generator) {
+                dirty = true;
+            }
+        },
+    );
+
+    // Current value — click selects row for Delete
+    let val = sim_client::value_label(st.as_ref());
+    ui.allocate_ui_with_layout(
+        Vec2::new(COL_VALUE, 28.0),
+        egui::Layout::left_to_right(egui::Align::Center),
+        |ui| {
+            ui.set_min_width(COL_VALUE);
+            let resp = ui.selectable_label(
+                selected,
+                RichText::new(truncate(&val, 14))
+                    .monospace()
+                    .color(if running {
                         Color32::from_rgb(140, 210, 160)
                     } else {
-                        CHROME_MUTED
-                    };
-                    ui.label(RichText::new(run_lbl).color(run_col));
-                    if ui.selectable_label(selected, "select").clicked() {
-                        client.selected = Some(row.id.clone());
-                    }
-                });
+                        CHROME_TEXT
+                    }),
+            );
+            if resp.clicked() {
+                client.selected = Some(row.id.clone());
+            }
+            resp.on_hover_text(&val);
+        },
+    );
 
-                ui.end_row();
-            });
-    });
+    // Running indicator only (no per-row start/stop)
+    ui.allocate_ui_with_layout(
+        Vec2::new(COL_RUN, 28.0),
+        egui::Layout::left_to_right(egui::Align::Center),
+        |ui| {
+            ui.set_min_width(COL_RUN);
+            let (lbl, col) = if running {
+                ("▶", Color32::from_rgb(140, 210, 160))
+            } else {
+                ("■", CHROME_MUTED)
+            };
+            if ui
+                .add(egui::Label::new(RichText::new(lbl).color(col)).sense(egui::Sense::click()))
+                .on_hover_text(if running { "Running" } else { "Stopped" })
+                .clicked()
+            {
+                client.selected = Some(row.id.clone());
+            }
+        },
+    );
 
     if dirty {
         match client.upsert(&draft) {
             Ok(_) => {}
             Err(e) => *status = e,
         }
+    }
+}
+
+/// Inline generator params; returns true if changed.
+fn edit_generator_inline(
+    ui: &mut egui::Ui,
+    row_id: &str,
+    gen_type: &str,
+    generator: &mut Value,
+) -> bool {
+    let mut dirty = false;
+    match gen_type {
+        "constant" => {
+            let mut val = num_or_str(generator.get("value"), "0");
+            let mut noise = f64_field(generator, "noise_pct", 0.0) as f32;
+            ui.label(RichText::new("val").small().color(CHROME_MUTED));
+            if ui
+                .add(egui::TextEdit::singleline(&mut val).desired_width(48.0))
+                .changed()
+            {
+                let value = serde_json::from_str::<Value>(&val).unwrap_or(Value::String(val));
+                *generator = json!({"type": "constant", "value": value, "noise_pct": noise as f64});
+                dirty = true;
+            }
+            ui.label(RichText::new("±%").small().color(CHROME_MUTED));
+            if ui
+                .add(
+                    egui::Slider::new(&mut noise, 0.0..=50.0)
+                        .show_value(true)
+                        .suffix("%")
+                        .clamping(egui::SliderClamping::Always),
+                )
+                .changed()
+            {
+                let value = generator.get("value").cloned().unwrap_or(Value::from(0));
+                *generator =
+                    json!({"type": "constant", "value": value, "noise_pct": noise as f64});
+                dirty = true;
+            }
+        }
+        "counter" => {
+            let mut start = f64_field(generator, "start", 0.0);
+            let mut step = f64_field(generator, "step", 1.0);
+            ui.label(RichText::new("start").small().color(CHROME_MUTED));
+            if ui.add(egui::DragValue::new(&mut start).speed(0.1)).changed() {
+                *generator = json!({"type": "counter", "start": start, "step": step});
+                dirty = true;
+            }
+            ui.label(RichText::new("step").small().color(CHROME_MUTED));
+            if ui.add(egui::DragValue::new(&mut step).speed(0.1)).changed() {
+                *generator = json!({"type": "counter", "start": start, "step": step});
+                dirty = true;
+            }
+        }
+        "sine" | "triangle" => {
+            dirty |= edit_min_max_period(ui, row_id, gen_type, generator, true);
+        }
+        "ramp" => {
+            dirty |= edit_min_max_duration(ui, row_id, generator);
+        }
+        "uniform" | "gaussian" => {
+            dirty |= edit_min_max_only(ui, row_id, gen_type, generator);
+        }
+        "random_walk" => {
+            let mut min = f64_field(generator, "min", 0.0);
+            let mut max = f64_field(generator, "max", 1.0);
+            let mut step = f64_field(generator, "step", 0.1);
+            dirty |= range_sliders(ui, row_id, &mut min, &mut max);
+            ui.label(RichText::new("step").small().color(CHROME_MUTED));
+            if ui.add(egui::DragValue::new(&mut step).speed(0.01)).changed() {
+                dirty = true;
+            }
+            if dirty {
+                *generator = json!({"type": "random_walk", "min": min, "max": max, "step": step});
+            }
+        }
+        "bool_toggle" => {
+            let mut start = generator
+                .get("start")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            if ui.checkbox(&mut start, "start").changed() {
+                *generator = json!({"type": "bool_toggle", "start": start});
+                dirty = true;
+            }
+        }
+        "iso_timestamp" => {
+            ui.label(RichText::new("UTC").small().color(CHROME_MUTED));
+        }
+        "enum_cycle" => {
+            let mut raw = generator
+                .get("values")
+                .map(|v| {
+                    v.as_array()
+                        .map(|a| {
+                            a.iter()
+                                .map(|x| match x {
+                                    Value::String(s) => s.clone(),
+                                    other => other.to_string(),
+                                })
+                                .collect::<Vec<_>>()
+                                .join(",")
+                        })
+                        .unwrap_or_default()
+                })
+                .unwrap_or_else(|| "a,b,c".into());
+            if ui
+                .add(
+                    egui::TextEdit::singleline(&mut raw)
+                        .desired_width(120.0)
+                        .hint_text("a,b,c"),
+                )
+                .changed()
+            {
+                let values: Vec<Value> = raw
+                    .split(',')
+                    .map(|s| s.trim())
+                    .filter(|s| !s.is_empty())
+                    .map(|s| {
+                        serde_json::from_str::<Value>(s).unwrap_or(Value::String(s.to_string()))
+                    })
+                    .collect();
+                *generator = json!({"type": "enum_cycle", "values": values});
+                dirty = true;
+            }
+        }
+        "expr" => {
+            let mut formula = generator
+                .get("formula")
+                .and_then(|v| v.as_str())
+                .unwrap_or("sin(t)")
+                .to_string();
+            if ui
+                .add(
+                    egui::TextEdit::singleline(&mut formula)
+                        .desired_width(140.0)
+                        .hint_text("expr"),
+                )
+                .changed()
+            {
+                *generator = json!({"type": "expr", "formula": formula});
+                dirty = true;
+            }
+        }
+        _ => {}
+    }
+    dirty
+}
+
+fn edit_min_max_period(
+    ui: &mut egui::Ui,
+    row_id: &str,
+    gen_type: &str,
+    generator: &mut Value,
+    with_period: bool,
+) -> bool {
+    let (mut min, mut max) = resolved_min_max(generator);
+    let mut period = f64_field(generator, "period_s", 10.0);
+    let mut dirty = range_sliders(ui, row_id, &mut min, &mut max);
+    if with_period {
+        ui.label(RichText::new("T").small().color(CHROME_MUTED));
+        if ui
+            .add(egui::DragValue::new(&mut period).range(0.1..=3600.0).speed(0.1))
+            .changed()
+        {
+            dirty = true;
+        }
+    }
+    if dirty {
+        *generator = json!({
+            "type": gen_type,
+            "min": min,
+            "max": max,
+            "period_s": period,
+        });
+    }
+    dirty
+}
+
+fn edit_min_max_duration(ui: &mut egui::Ui, row_id: &str, generator: &mut Value) -> bool {
+    let (mut min, mut max) = resolved_min_max(generator);
+    // Support legacy start/end already mapped by resolved_min_max.
+    let mut duration = f64_field(generator, "duration_s", 10.0);
+    let mut loop_ = generator
+        .get("loop")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(true);
+    let mut dirty = range_sliders(ui, row_id, &mut min, &mut max);
+    ui.label(RichText::new("dur").small().color(CHROME_MUTED));
+    if ui
+        .add(egui::DragValue::new(&mut duration).range(0.1..=3600.0).speed(0.1))
+        .changed()
+    {
+        dirty = true;
+    }
+    if ui.checkbox(&mut loop_, "loop").changed() {
+        dirty = true;
+    }
+    if dirty {
+        *generator = json!({
+            "type": "ramp",
+            "min": min,
+            "max": max,
+            "duration_s": duration,
+            "loop": loop_,
+        });
+    }
+    dirty
+}
+
+fn edit_min_max_only(
+    ui: &mut egui::Ui,
+    row_id: &str,
+    gen_type: &str,
+    generator: &mut Value,
+) -> bool {
+    let (mut min, mut max) = resolved_min_max(generator);
+    let dirty = range_sliders(ui, row_id, &mut min, &mut max);
+    if dirty {
+        *generator = json!({"type": gen_type, "min": min, "max": max});
+    }
+    dirty
+}
+
+fn range_sliders(ui: &mut egui::Ui, row_id: &str, min: &mut f64, max: &mut f64) -> bool {
+    let _ = row_id;
+    let mut dirty = false;
+    ui.label(RichText::new("min").small().color(CHROME_MUTED));
+    if ui.add(egui::DragValue::new(min).speed(0.1)).changed() {
+        dirty = true;
+    }
+    ui.label(RichText::new("max").small().color(CHROME_MUTED));
+    if ui.add(egui::DragValue::new(max).speed(0.1)).changed() {
+        dirty = true;
+    }
+    // Compact dual-ish slider on the span (drags max; useful quick feel).
+    let span_lo = (*min).min(*max);
+    let span_hi = (*min).max(*max).max(span_lo + 1e-6);
+    let mut hi = *max;
+    if ui
+        .add(
+            egui::Slider::new(&mut hi, (span_lo - 50.0)..=(span_hi + 50.0))
+                .show_value(false)
+                .clamping(egui::SliderClamping::Never),
+        )
+        .on_hover_text(format!("max → {hi:.3}"))
+        .changed()
+    {
+        *max = hi;
+        dirty = true;
+    }
+    if *min > *max {
+        std::mem::swap(min, max);
+    }
+    dirty
+}
+
+/// Resolve min/max from new fields or legacy amplitude/offset / start/end / mean±std.
+fn resolved_min_max(generator: &Value) -> (f64, f64) {
+    if let (Some(mi), Some(ma)) = (
+        generator.get("min").and_then(|v| v.as_f64()),
+        generator.get("max").and_then(|v| v.as_f64()),
+    ) {
+        return if mi <= ma { (mi, ma) } else { (ma, mi) };
+    }
+    if let (Some(start), Some(end)) = (
+        generator.get("start").and_then(|v| v.as_f64()),
+        generator.get("end").and_then(|v| v.as_f64()),
+    ) {
+        return if start <= end {
+            (start, end)
+        } else {
+            (end, start)
+        };
+    }
+    if let Some(amp) = generator.get("amplitude").and_then(|v| v.as_f64()) {
+        let o = generator
+            .get("offset")
+            .and_then(|v| v.as_f64())
+            .unwrap_or(0.0);
+        return (o - amp, o + amp);
+    }
+    if let (Some(mean), Some(std)) = (
+        generator.get("mean").and_then(|v| v.as_f64()),
+        generator
+            .get("std_dev")
+            .or_else(|| generator.get("std"))
+            .and_then(|v| v.as_f64()),
+    ) {
+        return (mean - 3.0 * std.abs(), mean + 3.0 * std.abs());
+    }
+    (0.0, 100.0)
+}
+
+fn f64_field(gen: &Value, key: &str, default: f64) -> f64 {
+    gen.get(key).and_then(|v| v.as_f64()).unwrap_or(default)
+}
+
+fn num_or_str(v: Option<&Value>, default: &str) -> String {
+    match v {
+        Some(Value::String(s)) => s.clone(),
+        Some(other) => other.to_string(),
+        None => default.to_string(),
+    }
+}
+
+fn truncate(s: &str, max_chars: usize) -> String {
+    let mut it = s.chars();
+    let head: String = it.by_ref().take(max_chars).collect();
+    if it.next().is_some() {
+        format!("{head}…")
+    } else {
+        head
     }
 }
 
@@ -491,24 +800,22 @@ fn profile_label(profiles: &ProfileStore, id: &str) -> String {
         .unwrap_or_else(|| id.to_string())
 }
 
-fn default_generator(t: &str) -> serde_json::Value {
+fn default_generator(t: &str) -> Value {
     match t {
-        "constant" => json!({"type": "constant", "value": 0}),
+        "constant" => json!({"type": "constant", "value": 100, "noise_pct": 0}),
         "counter" => json!({"type": "counter", "start": 0, "step": 1}),
-        "sine" => json!({"type": "sine", "amplitude": 1.0, "period_s": 10.0, "offset": 0.0}),
-        "triangle" => {
-            json!({"type": "triangle", "amplitude": 1.0, "period_s": 10.0, "offset": 0.0})
-        }
+        "sine" => json!({"type": "sine", "min": 0.0, "max": 100.0, "period_s": 10.0}),
+        "triangle" => json!({"type": "triangle", "min": 0.0, "max": 100.0, "period_s": 10.0}),
         "ramp" => {
-            json!({"type": "ramp", "start": 0.0, "end": 1.0, "duration_s": 10.0, "loop": true})
+            json!({"type": "ramp", "min": 0.0, "max": 100.0, "duration_s": 10.0, "loop": true})
         }
-        "uniform" => json!({"type": "uniform", "min": 0.0, "max": 1.0}),
-        "gaussian" => json!({"type": "gaussian", "mean": 0.0, "std_dev": 1.0}),
-        "random_walk" => json!({"type": "random_walk", "start": 0.0, "step": 0.1}),
+        "uniform" => json!({"type": "uniform", "min": 0.0, "max": 100.0}),
+        "gaussian" => json!({"type": "gaussian", "min": 0.0, "max": 100.0}),
+        "random_walk" => json!({"type": "random_walk", "min": 0.0, "max": 100.0, "step": 1.0}),
         "bool_toggle" => json!({"type": "bool_toggle", "start": false}),
         "iso_timestamp" => json!({"type": "iso_timestamp"}),
         "enum_cycle" => json!({"type": "enum_cycle", "values": ["a", "b", "c"]}),
         "expr" => json!({"type": "expr", "formula": "sin(t)"}),
-        _ => json!({"type": "sine", "amplitude": 1.0, "period_s": 10.0, "offset": 0.0}),
+        _ => json!({"type": "sine", "min": 0.0, "max": 100.0, "period_s": 10.0}),
     }
 }

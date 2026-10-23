@@ -140,6 +140,12 @@ impl SimClientState {
         Ok(())
     }
 
+    pub fn start_all(&mut self) -> Result<(), String> {
+        let _ = self.http("POST", "/sim/start_all", None)?;
+        self.poll_if_due(true);
+        Ok(())
+    }
+
     pub fn stop(&mut self, id: &str) -> Result<(), String> {
         let _ = self.http("POST", &format!("/sim/{id}/stop"), None)?;
         self.poll_if_due(true);
@@ -265,7 +271,7 @@ pub fn blank_row(profile: &str, topic: &str) -> SimRow {
         mode: "whole_payload".into(),
         template: String::new(),
         field_path: String::new(),
-        generator: serde_json::json!({"type": "sine", "amplitude": 1.0, "period_s": 10.0, "offset": 0.0}),
+        generator: serde_json::json!({"type": "sine", "min": 0.0, "max": 100.0, "period_s": 10.0}),
         auto_start: false,
     }
 }
