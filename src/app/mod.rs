@@ -241,6 +241,11 @@ impl eframe::App for MqttMonitorApp {
                 .iter()
                 .any(|p| p.search.change_flash_active(now));
         let status_fade = status_strip_fade_alpha(self.status_changed_at, now);
+        // Combined live monitor: while open + Pro, keep ~1 Hz paints even when idle /
+        // unfocused so series advance; rest of UI still follows the throttle below.
+        let combined_live = self.settings.combined_graph_open
+            && crate::pro::has(crate::pro::Entitlement::MultiGraph);
+        let hz = crate::mqtt::session::BACKGROUND_UI_HZ_INTERVAL;
         if focused {
             if need_repaint || flashing || (status_fade > 0.0 && status_fade < 1.0) {
                 ctx.request_repaint();
@@ -254,13 +259,17 @@ impl eframe::App for MqttMonitorApp {
                 if let Some(status_wait) = status_strip_repaint_after(self.status_changed_at, now) {
                     wait = Some(wait.map_or(status_wait, |w| w.min(status_wait)));
                 }
+                if combined_live {
+                    wait = Some(wait.map_or(hz, |w| w.min(hz)));
+                }
                 if let Some(w) = wait {
                     ctx.request_repaint_after(w);
                 }
             }
         } else {
             // Unfocused / other workspace: ~1 Hz heartbeat — alive, not ANR-prone.
-            ctx.request_repaint_after(crate::mqtt::session::BACKGROUND_UI_HZ_INTERVAL);
+            // Combined open uses the same floor (already ~1 Hz).
+            ctx.request_repaint_after(hz);
         }
 
         // Drain update-check / install results (never blocks UI).
