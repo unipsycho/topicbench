@@ -528,15 +528,15 @@ impl MqttMonitorApp {
             payload_rect = Some(r.response.rect);
         }
 
-        // Match SidePanel vertical margin (2). Extra right inset so Combined/sticky
-        // frame + flash strokes stay inside the clip (clip_rect_margin = 0).
+        // Match SidePanel vertical margin (2). Symmetric horizontal inset — do not
+        // pad away from the Payload splitter; floating scrollbars were the real clip.
         egui::CentralPanel::default()
             .frame(
                 egui::Frame::NONE
                     .fill(CHROME_BG)
                     .inner_margin(egui::Margin {
                         left: 8,
-                        right: 48,
+                        right: 8,
                         top: 2,
                         bottom: 2,
                     }),
@@ -547,6 +547,13 @@ impl MqttMonitorApp {
                 ui.set_clip_rect(panel_rect);
                 // No margin bleed above/below the scroll viewport (was painting over ribbon).
                 ui.visuals_mut().clip_rect_margin = 0.0;
+                // egui default floating bars allocate 0 width → content (Combined/sticky
+                // borders, tree #N) paints under the bar. Reserve a real gutter.
+                {
+                    let scroll = &mut ui.spacing_mut().scroll;
+                    scroll.floating_allocated_width =
+                        scroll.bar_width + scroll.bar_inner_margin;
+                }
                 // Keep full panel width (default auto_shrink follows content → early ellipsis).
                 egui::ScrollArea::vertical()
                     .id_salt("central_main")
