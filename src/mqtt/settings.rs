@@ -143,7 +143,7 @@ pub struct AppSettings {
     /// Pro Simulation panel open/closed.
     #[serde(default)]
     pub show_simulation: bool,
-    /// Simulation panel floats as a window when true; docked right when false.
+    /// Simulation panel floats as a window when true; docked in the middle column when false.
     #[serde(default = "default_true")]
     pub simulation_floating: bool,
     /// Search bar text (supports `|` OR terms) — restored on reload.
