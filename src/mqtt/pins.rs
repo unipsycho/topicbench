@@ -53,7 +53,7 @@ pub struct StickyTopic {
     pub message_count: u64,
     pub flash_until: Option<Instant>,
     pub view_mode: StickyViewMode,
-    /// Pro: opt into Combined multi-graph (persisted on profile sticky pref).
+    /// Opt into Combined multi-graph (persisted on profile sticky pref).
     pub in_combined: bool,
     pub history: VecDeque<HistorySample>,
 }

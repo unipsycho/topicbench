@@ -118,10 +118,10 @@ pub struct AppSettings {
     /// Column count when `sticky_layout` is Columns (clamped 2–4).
     #[serde(default = "default_sticky_columns")]
     pub sticky_columns: u8,
-    /// Pro Combined multi-graph plot height (px); user-resizable.
+    /// Combined multi-graph plot height (px); user-resizable.
     #[serde(default = "default_combined_graph_height")]
     pub combined_graph_height: f32,
-    /// Pro Combined multi-graph panel open/closed — restored on reload.
+    /// Combined multi-graph panel open/closed — restored on reload.
     #[serde(default)]
     pub combined_graph_open: bool,
     /// App-wide font zoom step (−4…+5). 0 = default egui sizes.

@@ -68,7 +68,7 @@ pub fn draw(
     let open_before = settings.combined_graph_open;
     let mut combined_open = open_before;
 
-    // Pro combined multi-series graph (only when entitled — hide when free).
+    // Combined multi-series graph (entitlement required).
     if combined_open && pro::has(Entitlement::MultiGraph) {
         draw_combined_graph(
             ui,
@@ -317,7 +317,7 @@ fn draw_sticky(
                         f.layout_no_wrap(pin.topic.clone(), topic_font, Color32::WHITE)
                     });
                     let topic_row_w = tiny_btn + gap + topic_galley.size().x;
-                    // Mode trio + optional Pro combined + #n + copy + unstick.
+                    // Mode trio + optional Combined include + #n + copy + unstick.
                     let multi_graph = pro::has(Entitlement::MultiGraph);
                     let mode_w = 3.0 * tiny_btn
                         + if multi_graph && mode == StickyViewMode::Graph {
@@ -373,7 +373,7 @@ fn draw_sticky(
                                                     live.view_mode = mode;
                                                 }
                                             }
-                                            // Pro: opt into Combined multi-graph (persisted; default off).
+                                            // Opt into Combined multi-graph (persisted; default off).
                                             if multi_graph && live.view_mode == StickyViewMode::Graph
                                             {
                                                 let on = live.in_combined;
@@ -697,7 +697,7 @@ fn combined_export_filename() -> String {
     format!("topicbench-combined-{}.png", now.format("%Y%m%d-%H%M"))
 }
 
-/// Pro: shared time-axis overlay of opted-in Graph stickies with numeric history.
+/// Shared time-axis overlay of opted-in Graph stickies with numeric history.
 #[allow(clippy::too_many_arguments)]
 fn draw_combined_graph(
     ui: &mut egui::Ui,
