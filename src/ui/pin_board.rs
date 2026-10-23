@@ -731,12 +731,16 @@ fn draw_combined_graph(
     let mut plot_h =
         AppSettings::clamp_combined_graph_height(settings.combined_graph_height);
 
-    egui::Frame::NONE
+    // Match sticky heading/cards: fill + corners, no Frame stroke. Frame strokes sit on
+    // the clip edge and lose the right curve; inset paint stays inside the allocated rect.
+    let border = Stroke::new(1.0_f32, CHROME_ACCENT_BORDER);
+    let frame = egui::Frame::NONE
         .fill(Color32::from_rgb(32, 34, 40))
-        .stroke(Stroke::new(1.0_f32, CHROME_ACCENT_BORDER))
         .corner_radius(4.0)
         .inner_margin(egui::Margin::symmetric(10, 8))
         .show(ui, |ui| {
+            // Same full-width stretch as section_header_bar.
+            ui.set_min_width(ui.available_width());
             ui.horizontal(|ui| {
                 ui.label(RichText::new("Combined graph").strong().color(CHROME_TEXT));
                 if !series.is_empty() {
@@ -812,6 +816,13 @@ fn draw_combined_graph(
             }
             sep_r.on_hover_text("Drag to resize Combined graph");
         });
+    // Inset stroke (radius matches fill) — same idea as sticky cards, not Frame::stroke.
+    ui.painter().rect_stroke(
+        frame.response.rect,
+        4.0,
+        border,
+        egui::StrokeKind::Inside,
+    );
 }
 
 /// Shared Y auto-scale + Instant X; HH:MM clock labels; hover readout at cursor.

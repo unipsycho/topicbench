@@ -618,7 +618,10 @@ fn leaf_row(
             let msg_count = node.message_count;
 
             // Count first from the right so middle width is the true remainder.
+            // Own the full leftover width (same idea as section_header_bar stretch) so #N
+            // sits on the content edge — not in a shrink-wrapped cluster mid-row.
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.set_min_width(ui.available_width());
                 if msg_count > 0 {
                     ui.label(
                         RichText::new(format!("#{msg_count}"))
@@ -629,6 +632,7 @@ fn leaf_row(
 
                 // Middle: gray topic · = · copy-payload · highlighted data.
                 ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                    // Clip payload ellipsis only — don't tighten the parent row clip.
                     ui.set_clip_rect(ui.clip_rect().intersect(ui.max_rect()));
                     ui.spacing_mut().item_spacing.x = 2.0;
 
