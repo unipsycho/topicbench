@@ -301,7 +301,7 @@ fn body(
                 }
             }
             if toolbar_btn(ui, icons, "export_download", "Export", true)
-                .on_hover_text("Export simulation definitions as JSON")
+                .on_hover_text("Export simulation definitions as a bare JSON array")
                 .clicked()
             {
                 match client.export_sims() {
@@ -328,7 +328,7 @@ fn body(
             }
             if toolbar_btn(ui, icons, "folder_open", "Import", true)
                 .on_hover_text(
-                    "Import simulation JSON (array or {simulations:[…]}) — Replace / Merge / Cancel",
+                    "Import a bare JSON array of sims — Replace / Merge / Cancel",
                 )
                 .clicked()
             {
@@ -347,7 +347,7 @@ fn body(
                             .set_description(
                                 "Replace the current list, or Merge (update matching \
                                  profile+topic+field rows and append the rest)?\n\
-                                 File may be a bare array or { \"simulations\": […] }.",
+                                 File must be a bare JSON array [ … ].",
                             )
                             .set_buttons(rfd::MessageButtons::YesNoCancelCustom(
                                 "Replace".into(),
