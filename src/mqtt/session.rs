@@ -9,7 +9,7 @@ use crate::mqtt::traffic_stats::TrafficStats;
 use eframe::egui::Context;
 use rumqttc::{Client, QoS};
 use std::collections::{BTreeMap, HashMap, VecDeque};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -17,12 +17,18 @@ use std::time::{Duration, Instant};
 
 pub use crate::mqtt::topic_tree::FLASH_MS;
 
-/// Max coalesced topics applied on the UI thread per focused frame.
-const MAX_TOPICS_APPLY_PER_FRAME: usize = 128;
 /// While focused, wake egui at most this often from the inbox applier.
 const FOCUSED_WAKE_MIN: Duration = Duration::from_millis(16);
 /// Off-focus / off-workspace: keep Stats/counts alive without ANR present storms.
 pub const BACKGROUND_UI_HZ_INTERVAL: Duration = Duration::from_secs(1);
+/// Inbox applier flushes coalesced batches this often — independent of egui paint.
+const INBOX_FLUSH_INTERVAL: Duration = Duration::from_millis(16);
+/// Cap pending UI-apply batches if paint stalls (merge beyond this).
+const PENDING_APPLY_CAP: usize = 90;
+/// Per-topic timed samples retained while UI apply lags (≈10 min at 1 Hz).
+const INBOX_SAMPLE_CAP: usize = 600;
+/// Unfocused: floor sample spacing so Combined spans minutes under flood.
+const INBOX_SAMPLE_GAP_BACKGROUND: Duration = Duration::from_millis(50);
 
 /// Result of applying the background inbox on the UI thread.
 pub struct PollOutcome {
@@ -91,6 +97,8 @@ struct CoalescedMsg {
     retain: bool,
     count: u64,
     bytes: u64,
+    /// Timed payloads retained for sticky/Combined history while UI apply lags.
+    samples: VecDeque<(Instant, String)>,
 }
 
 struct PendingState {
@@ -103,27 +111,84 @@ struct PendingState {
 struct InboxData {
     status: Option<String>,
     states: HashMap<String, PendingState>,
-    /// `(profile_id, topic)` → latest payload + aggregated counts/bytes.
+    /// `(profile_id, topic)` → latest payload + aggregated counts/bytes + samples.
     messages: HashMap<(String, String), CoalescedMsg>,
 }
 
-/// Worker-thread inbox: drains MQTT events off the UI thread so workspace switches
-/// never leave the egui loop stuck in apply/present (Hyprland `xdg_wm_base` ANR).
-struct SharedInbox {
-    data: Mutex<InboxData>,
-    dirty: AtomicBool,
-}
+impl InboxData {
+    fn is_empty(&self) -> bool {
+        self.status.is_none() && self.states.is_empty() && self.messages.is_empty()
+    }
 
-impl Default for SharedInbox {
-    fn default() -> Self {
-        Self {
-            data: Mutex::new(InboxData::default()),
-            dirty: AtomicBool::new(false),
+    /// Merge another batch into self (used when pending-apply queue is capped).
+    fn merge_from(&mut self, other: InboxData) {
+        if other.status.is_some() {
+            self.status = other.status;
+        }
+        for (id, pending) in other.states {
+            let keep = self
+                .states
+                .get(&id)
+                .map(|p| pending.generation >= p.generation)
+                .unwrap_or(true);
+            if keep {
+                self.states.insert(id, pending);
+            }
+        }
+        for (key, msg) in other.messages {
+            match self.messages.get_mut(&key) {
+                Some(entry) => {
+                    if msg.generation < entry.generation {
+                        continue;
+                    }
+                    if msg.generation != entry.generation {
+                        entry.count = 0;
+                        entry.bytes = 0;
+                        entry.samples.clear();
+                        entry.generation = msg.generation;
+                    }
+                    entry.payload = msg.payload;
+                    entry.retain = msg.retain;
+                    entry.count = entry.count.saturating_add(msg.count);
+                    entry.bytes = entry.bytes.saturating_add(msg.bytes);
+                    entry.samples.extend(msg.samples);
+                    while entry.samples.len() > INBOX_SAMPLE_CAP {
+                        entry.samples.pop_front();
+                    }
+                }
+                None => {
+                    self.messages.insert(key, msg);
+                }
+            }
         }
     }
 }
 
+/// Worker-thread inbox: drains MQTT events off the UI thread so workspace switches
+/// never leave the egui loop stuck in apply/present (Hyprland `xdg_wm_base` ANR).
+///
+/// Ingest + sample rings run here at full rate; egui only paints (throttled when unfocused).
+struct SharedInbox {
+    data: Mutex<InboxData>,
+    dirty: AtomicBool,
+    /// Same flag workers / UI use — gates sample spacing, not ingest.
+    ui_focused: Arc<AtomicBool>,
+    /// Counted on every folded Message (never waits for egui apply).
+    inbound_msgs: AtomicU64,
+    inbound_bytes: AtomicU64,
+}
+
 impl SharedInbox {
+    fn new(ui_focused: Arc<AtomicBool>) -> Self {
+        Self {
+            data: Mutex::new(InboxData::default()),
+            dirty: AtomicBool::new(false),
+            ui_focused,
+            inbound_msgs: AtomicU64::new(0),
+            inbound_bytes: AtomicU64::new(0),
+        }
+    }
+
     fn fold_event(&self, ev: BrokerEvent) {
         let mut g = self.data.lock().unwrap_or_else(|e| e.into_inner());
         match ev {
@@ -165,18 +230,41 @@ impl SharedInbox {
                         return;
                     }
                 }
+                // Full ingest accounting — never gated on focus / paint.
+                self.inbound_msgs.fetch_add(1, Ordering::Relaxed);
+                self.inbound_bytes
+                    .fetch_add(payload_bytes as u64, Ordering::Relaxed);
+
+                let focused = self.ui_focused.load(Ordering::Relaxed);
+                let now = Instant::now();
                 let entry = g.messages.entry(key).or_insert(CoalescedMsg {
                     generation,
                     payload: String::new(),
                     retain: false,
                     count: 0,
                     bytes: 0,
+                    samples: VecDeque::new(),
                 });
                 // Reset counts when a newer generation replaces a stale topic slot.
                 if entry.generation != generation {
                     entry.count = 0;
                     entry.bytes = 0;
+                    entry.samples.clear();
                     entry.generation = generation;
+                }
+                // History samples: live while focused; ≥20 Hz floor when unfocused so
+                // Combined survives paint throttle without retaining every flood frame.
+                let take_sample = focused
+                    || entry
+                        .samples
+                        .back()
+                        .map(|(t, _)| now.duration_since(*t) >= INBOX_SAMPLE_GAP_BACKGROUND)
+                        .unwrap_or(true);
+                if take_sample {
+                    entry.samples.push_back((now, payload.clone()));
+                    while entry.samples.len() > INBOX_SAMPLE_CAP {
+                        entry.samples.pop_front();
+                    }
                 }
                 entry.payload = payload;
                 entry.retain = retain;
@@ -194,37 +282,29 @@ impl SharedInbox {
         self.dirty.store(true, Ordering::Relaxed);
     }
 
-    fn take_batch(&self, max_topics: usize) -> (InboxData, bool) {
+    /// Drain every coalesced topic (no per-frame cap — that starved hot series at 1 Hz).
+    fn take_all(&self) -> InboxData {
         let mut g = self.data.lock().unwrap_or_else(|e| e.into_inner());
-        let status = g.status.take();
-        let states = std::mem::take(&mut g.states);
-        let mut messages = HashMap::new();
-        if g.messages.len() <= max_topics {
-            messages = std::mem::take(&mut g.messages);
-        } else {
-            let keys: Vec<_> = g.messages.keys().take(max_topics).cloned().collect();
-            for k in keys {
-                if let Some(v) = g.messages.remove(&k) {
-                    messages.insert(k, v);
-                }
-            }
-        }
-        let more = !g.messages.is_empty();
-        if !more && g.states.is_empty() && g.status.is_none() {
+        let out = InboxData {
+            status: g.status.take(),
+            states: std::mem::take(&mut g.states),
+            messages: std::mem::take(&mut g.messages),
+        };
+        if g.status.is_none() && g.states.is_empty() && g.messages.is_empty() {
             self.dirty.store(false, Ordering::Relaxed);
         }
-        (
-            InboxData {
-                status,
-                states,
-                messages,
-            },
-            more,
-        )
+        out
     }
 
     fn is_dirty(&self) -> bool {
         self.dirty.load(Ordering::Relaxed)
+    }
+
+    fn inbound_totals(&self) -> (u64, u64) {
+        (
+            self.inbound_msgs.load(Ordering::Relaxed),
+            self.inbound_bytes.load(Ordering::Relaxed),
+        )
     }
 }
 
@@ -239,6 +319,8 @@ pub struct SessionManager {
     pub ui_visible: Arc<AtomicBool>,
     event_tx: Sender<BrokerEvent>,
     inbox: Arc<SharedInbox>,
+    /// Coalesced batches flushed by the inbox thread (ingest ≠ paint).
+    pending_apply: Arc<Mutex<VecDeque<InboxData>>>,
     /// Filled from `App::new` so the applier can wake egui only while focused.
     egui_ctx: Arc<Mutex<Option<Context>>>,
 }
@@ -246,13 +328,15 @@ pub struct SessionManager {
 impl Default for SessionManager {
     fn default() -> Self {
         let (event_tx, event_rx) = mpsc::channel();
-        let inbox = Arc::new(SharedInbox::default());
         let ui_focused = Arc::new(AtomicBool::new(true));
         let ui_visible = Arc::new(AtomicBool::new(true));
+        let inbox = Arc::new(SharedInbox::new(ui_focused.clone()));
+        let pending_apply = Arc::new(Mutex::new(VecDeque::new()));
         let egui_ctx = Arc::new(Mutex::new(None));
         spawn_inbox_applier(
             event_rx,
             inbox.clone(),
+            pending_apply.clone(),
             ui_focused.clone(),
             egui_ctx.clone(),
         );
@@ -267,15 +351,17 @@ impl Default for SessionManager {
             ui_visible,
             event_tx,
             inbox,
+            pending_apply,
             egui_ctx,
         }
     }
 }
 
-/// Drain broker events off the UI thread; coalesce; wake egui (fast when focused, 1 Hz otherwise).
+/// Drain broker events off the UI thread; coalesce; flush apply batches; wake egui (throttled).
 fn spawn_inbox_applier(
     event_rx: Receiver<BrokerEvent>,
     inbox: Arc<SharedInbox>,
+    pending_apply: Arc<Mutex<VecDeque<InboxData>>>,
     ui_focused: Arc<AtomicBool>,
     egui_ctx: Arc<Mutex<Option<Context>>>,
 ) {
@@ -285,13 +371,38 @@ fn spawn_inbox_applier(
             let mut last_wake = Instant::now()
                 .checked_sub(BACKGROUND_UI_HZ_INTERVAL)
                 .unwrap_or_else(Instant::now);
+            let mut last_flush = Instant::now()
+                .checked_sub(INBOX_FLUSH_INTERVAL)
+                .unwrap_or_else(Instant::now);
             while let Ok(ev) = event_rx.recv() {
                 inbox.fold_event(ev);
+                // Burst-drain the channel so fold keeps up with the broker.
+                while let Ok(ev) = event_rx.try_recv() {
+                    inbox.fold_event(ev);
+                }
+                // Flush coalesced topics on a fixed cadence — does not wait for egui paint.
+                if last_flush.elapsed() >= INBOX_FLUSH_INTERVAL && inbox.is_dirty() {
+                    let batch = inbox.take_all();
+                    if !batch.is_empty() {
+                        let mut q = pending_apply.lock().unwrap_or_else(|e| e.into_inner());
+                        if q.len() >= PENDING_APPLY_CAP {
+                            // Paint stalled: merge into the newest pending batch.
+                            if let Some(back) = q.back_mut() {
+                                back.merge_from(batch);
+                            } else {
+                                q.push_back(batch);
+                            }
+                        } else {
+                            q.push_back(batch);
+                        }
+                    }
+                    last_flush = Instant::now();
+                }
                 let focused = ui_focused.load(Ordering::Relaxed);
                 let min_gap = if focused {
                     FOCUSED_WAKE_MIN
                 } else {
-                    // Background: one wake/sec so Stats/counts still move; not 60fps.
+                    // Background: one wake/sec so ribbon/Combined paint; not 60fps present.
                     BACKGROUND_UI_HZ_INTERVAL
                 };
                 if last_wake.elapsed() < min_gap {
@@ -483,69 +594,95 @@ impl SessionManager {
         Ok(())
     }
 
-    /// Apply coalesced inbox updates produced by the background applier thread.
+    /// Apply coalesced inbox updates flushed by the background applier thread.
     pub fn poll_events(&mut self, pins: &mut PinBoard) -> PollOutcome {
         let now = Instant::now();
-        let (batch, more) = self.inbox.take_batch(MAX_TOPICS_APPLY_PER_FRAME);
-        let mut status = batch.status;
-        let mut resub: Vec<(String, Vec<String>)> = Vec::new();
+        // Ingest totals are counted at fold time — sync before EMA/ribbon read.
+        let (msgs, bytes) = self.inbox.inbound_totals();
+        self.traffic_stats.sync_inbound(msgs, bytes);
 
-        for (profile_id, pending) in batch.states {
-            let Some(session) = self.open.get_mut(&profile_id) else {
-                continue;
-            };
-            // Stale worker from a prior reconnect — never apply.
-            if pending.generation != session.generation {
-                continue;
-            }
-            // After intentional Disconnect, ignore reconnect chatter.
-            if session.user_stopped {
-                if pending.state == SessionState::Disconnected {
-                    session.state = SessionState::Disconnected;
-                    session.detail = "Disconnected".into();
-                    status = Some(format!("{}: Disconnected", session.profile_name));
-                }
-                continue;
-            }
-            let became_connected =
-                pending.state == SessionState::Connected && session.state != SessionState::Connected;
-            let changed = session.state != pending.state || session.detail != pending.detail;
-            session.state = pending.state;
-            session.detail = pending.detail.clone();
-            if became_connected {
-                resub.push((profile_id.clone(), session.subscriptions.clone()));
-            }
-            if changed {
-                status = Some(format!("{}: {}", session.profile_name, pending.detail));
-            }
+        // Drain every flushed batch (and any leftover live inbox).
+        let mut batches: Vec<InboxData> = {
+            let mut q = self
+                .pending_apply
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            q.drain(..).collect()
+        };
+        let live = self.inbox.take_all();
+        if !live.is_empty() {
+            batches.push(live);
         }
 
-        let flash = now + Duration::from_millis(FLASH_MS);
+        let mut status: Option<String> = None;
+        let mut resub: Vec<(String, Vec<String>)> = Vec::new();
         let mut had_msgs = false;
-        for ((profile_id, topic), msg) in batch.messages {
-            let Some(session) = self.open.get_mut(&profile_id) else {
-                continue;
-            };
-            if msg.generation != session.generation || session.user_stopped {
-                continue;
+
+        for batch in batches {
+            if batch.status.is_some() {
+                status = batch.status;
             }
-            had_msgs = true;
-            self.traffic_stats.record_recv(msg.bytes);
-            self.traffic_stats.record_msgs(msg.count);
-            session.message_count = session.message_count.saturating_add(msg.count);
-            session.flash_until = Some(flash);
-            session
-                .topic_tree
-                .observe_n(&topic, &msg.payload, msg.retain, now, msg.count);
-            session.traffic.push_front(TrafficLine {
-                topic: topic.clone(),
-                payload: msg.payload.clone(),
-            });
-            while session.traffic.len() > TRAFFIC_CAP {
-                session.traffic.pop_back();
+            for (profile_id, pending) in batch.states {
+                let Some(session) = self.open.get_mut(&profile_id) else {
+                    continue;
+                };
+                // Stale worker from a prior reconnect — never apply.
+                if pending.generation != session.generation {
+                    continue;
+                }
+                // After intentional Disconnect, ignore reconnect chatter.
+                if session.user_stopped {
+                    if pending.state == SessionState::Disconnected {
+                        session.state = SessionState::Disconnected;
+                        session.detail = "Disconnected".into();
+                        status = Some(format!("{}: Disconnected", session.profile_name));
+                    }
+                    continue;
+                }
+                let became_connected = pending.state == SessionState::Connected
+                    && session.state != SessionState::Connected;
+                let changed = session.state != pending.state || session.detail != pending.detail;
+                session.state = pending.state;
+                session.detail = pending.detail.clone();
+                if became_connected {
+                    resub.push((profile_id.clone(), session.subscriptions.clone()));
+                }
+                if changed {
+                    status = Some(format!("{}: {}", session.profile_name, pending.detail));
+                }
             }
-            let name = session.profile_name.clone();
-            pins.on_message_n(&profile_id, &name, &topic, &msg.payload, now, msg.count);
+
+            let flash = now + Duration::from_millis(FLASH_MS);
+            for ((profile_id, topic), msg) in batch.messages {
+                let Some(session) = self.open.get_mut(&profile_id) else {
+                    continue;
+                };
+                if msg.generation != session.generation || session.user_stopped {
+                    continue;
+                }
+                had_msgs = true;
+                // Traffic bytes/msgs already counted in fold atomics — do not double-add.
+                session.message_count = session.message_count.saturating_add(msg.count);
+                session.flash_until = Some(flash);
+                session
+                    .topic_tree
+                    .observe_n(&topic, &msg.payload, msg.retain, now, msg.count);
+                session.traffic.push_front(TrafficLine {
+                    topic: topic.clone(),
+                    payload: msg.payload.clone(),
+                });
+                while session.traffic.len() > TRAFFIC_CAP {
+                    session.traffic.pop_back();
+                }
+                let name = session.profile_name.clone();
+                // Replay timed samples into sticky/Combined history (preserves off-focus).
+                let samples: Vec<(Instant, String)> = if msg.samples.is_empty() {
+                    vec![(now, msg.payload)]
+                } else {
+                    msg.samples.into_iter().collect()
+                };
+                pins.on_message_samples(&profile_id, &name, &topic, &samples, msg.count);
+            }
         }
 
         for (id, filters) in resub {
@@ -564,7 +701,13 @@ impl SessionManager {
         PollOutcome {
             status,
             had_messages: had_msgs,
-            hit_cap: more || self.inbox.is_dirty(),
+            // More work only if inbox received traffic since this drain.
+            hit_cap: self.inbox.is_dirty()
+                || !self
+                    .pending_apply
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .is_empty(),
         }
     }
 

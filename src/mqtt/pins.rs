@@ -7,7 +7,8 @@ use std::time::{Duration, Instant};
 
 pub use crate::mqtt::profile::StickyViewMode;
 
-const HISTORY_CAP: usize = 120;
+/// Ring size for sticky Graph / Combined series (≈10 min at 1 Hz).
+const HISTORY_CAP: usize = 600;
 
 /// Detected payload kind for Value mode.
 #[derive(Clone, Debug)]
@@ -192,8 +193,41 @@ impl PinBoard {
         now: Instant,
         n: u64,
     ) {
-        let flash = now + Duration::from_millis(FLASH_MS);
-        let n = n.max(1);
+        self.apply_topic_samples(
+            profile_id,
+            profile_name,
+            topic,
+            std::slice::from_ref(&(now, payload.to_string())),
+            n,
+        );
+    }
+
+    /// Replay inbox timed samples into matching stickies (preserves off-focus gaps).
+    /// `count` is credited once on the last sample; intermediate points are history-only.
+    pub fn on_message_samples(
+        &mut self,
+        profile_id: &str,
+        profile_name: &str,
+        topic: &str,
+        samples: &[(Instant, String)],
+        count: u64,
+    ) {
+        if samples.is_empty() {
+            return;
+        }
+        self.apply_topic_samples(profile_id, profile_name, topic, samples, count);
+    }
+
+    fn apply_topic_samples(
+        &mut self,
+        profile_id: &str,
+        profile_name: &str,
+        topic: &str,
+        samples: &[(Instant, String)],
+        count: u64,
+    ) {
+        let count = count.max(1);
+        let last_i = samples.len() - 1;
         for sticky in self.items.values_mut() {
             if sticky.profile_id != profile_id {
                 continue;
@@ -204,24 +238,28 @@ impl PinBoard {
             if !matches {
                 continue;
             }
-            // Field-path stickies store the extracted scalar so Graph can plot it.
-            let extracted = match path {
-                Some(p) => crate::mqtt::value_path::extract_path_value(payload, p)
-                    .unwrap_or_else(|| payload.to_string()),
-                None => payload.to_string(),
-            };
-            let numeric = crate::mqtt::value_path::sample_numeric(&extracted);
-            sticky.profile_name = profile_name.to_string();
-            sticky.last_payload = extracted.clone();
-            sticky.message_count = sticky.message_count.saturating_add(n);
-            sticky.flash_until = Some(flash);
-            sticky.history.push_back(HistorySample {
-                at: now,
-                payload: extracted,
-                numeric,
-            });
-            while sticky.history.len() > HISTORY_CAP {
-                sticky.history.pop_front();
+            for (i, (at, payload)) in samples.iter().enumerate() {
+                // Field-path stickies store the extracted scalar so Graph can plot it.
+                let extracted = match path {
+                    Some(p) => crate::mqtt::value_path::extract_path_value(payload, p)
+                        .unwrap_or_else(|| payload.to_string()),
+                    None => payload.clone(),
+                };
+                let numeric = crate::mqtt::value_path::sample_numeric(&extracted);
+                sticky.profile_name = profile_name.to_string();
+                sticky.last_payload = extracted.clone();
+                sticky.history.push_back(HistorySample {
+                    at: *at,
+                    payload: extracted,
+                    numeric,
+                });
+                while sticky.history.len() > HISTORY_CAP {
+                    sticky.history.pop_front();
+                }
+                if i == last_i {
+                    sticky.message_count = sticky.message_count.saturating_add(count);
+                    sticky.flash_until = Some(*at + Duration::from_millis(FLASH_MS));
+                }
             }
         }
     }
