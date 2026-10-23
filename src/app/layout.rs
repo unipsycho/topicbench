@@ -529,14 +529,14 @@ impl MqttMonitorApp {
         }
 
         // Match SidePanel vertical margin (2). Extra right inset so Combined/sticky
-        // 1px frame strokes aren't sliced by the Payload splitter (clip_rect_margin = 0).
+        // frame + flash strokes stay inside the clip (clip_rect_margin = 0).
         egui::CentralPanel::default()
             .frame(
                 egui::Frame::NONE
                     .fill(CHROME_BG)
                     .inner_margin(egui::Margin {
                         left: 8,
-                        right: 14,
+                        right: 24,
                         top: 2,
                         bottom: 2,
                     }),

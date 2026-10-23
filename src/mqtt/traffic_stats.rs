@@ -105,6 +105,12 @@ impl TrafficStats {
         self.msgs_recv = self.msgs_recv.saturating_add(n);
     }
 
+    /// Replace inbound totals from the inbox fold atomics (counted at full ingest rate).
+    pub fn sync_inbound(&mut self, msgs: u64, bytes: u64) {
+        self.msgs_recv = msgs;
+        self.bytes_recv = bytes;
+    }
+
     /// Frozen ribbon labels (Recv / Sent / Thru / projections).
     pub fn display(&self) -> &StatsDisplay {
         &self.display
