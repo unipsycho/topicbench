@@ -533,12 +533,12 @@ impl MqttMonitorApp {
             )
             .show(ctx, |ui| {
                 // Clip to the central region only (outer CentralPanel clip is the full screen).
-                // Keep default clip_rect_margin (~3): zeroing it chopped Combined/sticky strokes
-                // and tree #N glyph overhang. panel_rect still blocks ribbon bleed.
+                // clip_rect_margin gives AA room for inset strokes / #N overhang without
+                // changing layout gutter. panel_rect still blocks ribbon bleed.
                 let panel_rect = ui.max_rect();
                 ui.set_clip_rect(panel_rect);
-                // Modest floating-bar gutter (~bar width only) so #N / card edges sit snug
-                // against the scrollbar without the huge 24/48 dead-zone experiments.
+                ui.visuals_mut().clip_rect_margin = 4.0;
+                // Modest floating-bar gutter (~bar width only) — spacing Mike liked; don't widen.
                 {
                     let scroll = &mut ui.spacing_mut().scroll;
                     scroll.floating_allocated_width = scroll.bar_width;

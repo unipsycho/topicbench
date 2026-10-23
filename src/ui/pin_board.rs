@@ -816,9 +816,9 @@ fn draw_combined_graph(
             }
             sep_r.on_hover_text("Drag to resize Combined graph");
         });
-    // Inset stroke (radius matches fill) — same idea as sticky cards, not Frame::stroke.
+    // Inset stroke (radius matches fill) — shrink so right curve clears content clip.
     ui.painter().rect_stroke(
-        frame.response.rect,
+        frame.response.rect.shrink(1.0),
         4.0,
         border,
         egui::StrokeKind::Inside,
