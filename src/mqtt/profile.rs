@@ -64,7 +64,7 @@ pub struct StickyPref {
     pub topic: String,
     #[serde(default)]
     pub view_mode: StickyViewMode,
-    /// Pro: include this sticky’s series on the Combined multi-graph (default off).
+    /// Include this sticky’s series on the Combined multi-graph (default off).
     #[serde(default)]
     pub in_combined: bool,
 }

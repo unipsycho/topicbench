@@ -241,7 +241,7 @@ impl eframe::App for MqttMonitorApp {
                 .iter()
                 .any(|p| p.search.change_flash_active(now));
         let status_fade = status_strip_fade_alpha(self.status_changed_at, now);
-        // Combined live monitor: while open + Pro, keep ~1 Hz paints even when idle /
+        // Combined live monitor: while open + entitled, keep ~1 Hz paints even when idle /
         // unfocused so series advance; rest of UI still follows the throttle below.
         let combined_live = self.settings.combined_graph_open
             && crate::pro::has(crate::pro::Entitlement::MultiGraph);

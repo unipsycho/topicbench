@@ -27,7 +27,7 @@ keyring = { version = "3", features = ["apple-native", "windows-native", "sync-s
 ureq = { version = "2.12", features = ["json"] }
 semver = "1"
 sha2 = "0.10"
-# Pro license file: ed25519 verify only (public key in OSS; minting in topicbench-pro).
+# License file verify (ed25519 public key).
 ed25519-dalek = "2"
 base64 = "0.22"
 

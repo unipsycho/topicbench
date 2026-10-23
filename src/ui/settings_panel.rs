@@ -166,9 +166,6 @@ pub fn draw(
     }
     ui.weak("Also F1 or ? when not typing.");
 
-    // TopicBench Pro status/upsell stays out of Settings until more Pro features ship.
-    // Entitlement bridge (`src/pro/`) and Combined-graph gating remain in code.
-
     ui.add_space(12.0);
     ui.strong("Updates");
     ui.label(

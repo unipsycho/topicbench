@@ -1,40 +1,20 @@
-//! TopicBench Pro license file format (v1) — verify-only (OSS).
-//!
-//! Minting / keygen lives in the private `topicbench-pro` companion.
-//! Honest-user friction only; not unbreakable DRM.
-//!
-//! File (JSON), default path `~/.config/topicbench/license.json`:
-//! ```json
-//! {
-//!   "v": 1,
-//!   "payload": "{\"entitlements\":[\"multi_graph\"],\"expires\":\"2028-01-01\"}",
-//!   "sig": "<base64 ed25519 signature over payload UTF-8 bytes>"
-//! }
-//! ```
-//!
-//! Private signing key never ships in the OSS tree. Settings → Activate (later)
-//! will write this same file and re-probe; until then, install by copying the file.
+//! Signed license file verify (ed25519).
 
 use base64::Engine;
 use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
-/// Embedded ed25519 verify key (32 bytes). Pair lives outside the OSS repo
-/// (`~/.config/topicbench/dev/ed25519.sk.hex`). Rotate via `topicbench-pro` keygen
-/// then paste the printed public hex here.
+/// Embedded ed25519 verify key (32 bytes).
 pub const LICENSE_VERIFY_KEY: [u8; 32] = [
     0xbc, 0xc4, 0x43, 0xd3, 0x6a, 0x75, 0x72, 0xc4, 0xdd, 0xc5, 0xf1, 0xcf, 0x91, 0x4d, 0xb0,
     0xda, 0xad, 0x07, 0x9a, 0xf3, 0xc4, 0x7f, 0x8f, 0x33, 0x84, 0x1c, 0x46, 0x51, 0x64, 0x35,
     0x86, 0xf3,
 ];
 
-/// Default filename under `~/.config/topicbench/`.
 pub const LICENSE_FILE_NAME: &str = "license.json";
-/// Alternate extension (same JSON body).
 pub const LICENSE_FILE_ALT: &str = "license.lic";
 
-/// Outer envelope on disk.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LicenseFileV1 {
     pub v: u32,
@@ -44,11 +24,10 @@ pub struct LicenseFileV1 {
     pub sig: String,
 }
 
-/// Inner payload (parsed after signature checks out).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LicensePayload {
     pub entitlements: Vec<String>,
-    /// Optional `YYYY-MM-DD` (UTC calendar day). Missing = no expiry.
+    /// Optional `YYYY-MM-DD` (UTC). Missing = no expiry.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expires: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
