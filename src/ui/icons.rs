@@ -291,7 +291,14 @@ impl IconSet {
     }
 
     /// Icon-only zoom cell (no caption). Fixed size — independent of font zoom.
-    pub fn command_zoom_icon(&self, ui: &mut egui::Ui, name: &str, tip: &str) -> egui::Response {
+    /// `fallback` is painted when the PNG is missing so the control never goes blank.
+    pub fn command_zoom_icon(
+        &self,
+        ui: &mut egui::Ui,
+        name: &str,
+        fallback: &str,
+        tip: &str,
+    ) -> egui::Response {
         let cell = Vec2::new(ZOOM_STACK_W, CMD_H * 0.5);
         let (rect, response) = ui.allocate_exact_size(cell, Sense::click());
         let response = crate::ui::hover_tip::attach(response, tip.to_owned());
@@ -305,6 +312,14 @@ impl IconSet {
             img.paint_at(
                 ui,
                 egui::Rect::from_center_size(rect.center(), Vec2::splat(ZOOM_ICON)),
+            );
+        } else {
+            ui.painter().text(
+                rect.center(),
+                egui::Align2::CENTER_CENTER,
+                fallback,
+                FontId::proportional(22.0),
+                CHROME_TEXT,
             );
         }
         response
