@@ -205,14 +205,6 @@ fn body(
                 }
             }
         }
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            let hint = if client.sidecar_up {
-                "sidecar up"
-            } else {
-                "sidecar down"
-            };
-            ui.label(RichText::new(hint).small().color(CHROME_CAPTION));
-        });
     });
 
     ui.add_space(4.0);
