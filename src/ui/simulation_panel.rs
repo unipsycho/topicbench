@@ -116,10 +116,10 @@ fn header_bar(
         egui::Frame::NONE
             .fill(bg)
             .stroke(egui::Stroke::new(1.0, border))
-            .corner_radius(11.0)
-            .inner_margin(egui::Margin::symmetric(10, 3))
+            .corner_radius(9.0)
+            .inner_margin(egui::Margin::symmetric(9, 1))
             .show(ui, |ui| {
-                ui.label(RichText::new(label).size(13.0).strong().color(fg));
+                ui.label(RichText::new(label).size(12.0).strong().color(fg));
             });
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             if icons
