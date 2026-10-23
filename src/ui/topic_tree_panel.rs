@@ -436,15 +436,7 @@ fn draw_node(
                     })
                     .inner;
                 if !was_open && subtree > 0 {
-                    ui.add(
-                        egui::Label::new(
-                            RichText::new(format!("#{subtree}"))
-                                .small()
-                                .color(CHROME_MUTED),
-                        )
-                        .sense(egui::Sense::click())
-                        .selectable(false),
-                    );
+                    revision_count_label(ui, subtree);
                 }
                 (toggle_resp, label_resp)
             });
@@ -543,6 +535,32 @@ fn apply_tree_toggle(
     ctx.request_repaint();
 }
 
+/// Reserve an exact-width slot for `#{count}` and paint right-justified inside it
+/// (with a few px right pad so glyph overhang stays inside the row clip).
+fn revision_count_label(ui: &mut egui::Ui, count: u64) {
+    if count == 0 {
+        return;
+    }
+    let text = format!("#{count}");
+    let font = egui::TextStyle::Small.resolve(ui.style());
+    let color = CHROME_MUTED;
+    let text_w = ui.fonts(|f| f.layout_no_wrap(text.clone(), font.clone(), color).size().x);
+    // Right pad keeps the last digit inside clip; left pad separates from payload.
+    let pad_r = 3.0_f32;
+    let pad_l = 4.0_f32;
+    let slot_w = (text_w + pad_l + pad_r).ceil().max(12.0);
+    let row_h = ui
+        .text_style_height(&egui::TextStyle::Small)
+        .max(ui.spacing().interact_size.y * 0.45);
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(slot_w, row_h), egui::Sense::hover());
+    let galley = ui.fonts(|f| f.layout_no_wrap(text, font, color));
+    let pos = egui::pos2(
+        rect.right() - pad_r - galley.size().x,
+        rect.center().y - galley.size().y * 0.5,
+    );
+    ui.painter().galley(pos, galley, color);
+}
+
 /// Dense row: `[copy topic][sticky] gray_topic = [copy payload] highlighted_payload… #n`
 /// Single-click selects for Payload; double-click fills Publish.
 fn leaf_row(
@@ -617,18 +635,10 @@ fn leaf_row(
             let show_copy_payload = !payload.is_empty();
             let msg_count = node.message_count;
 
-            // Count first from the right so middle width is the true remainder.
-            // Own the full leftover width (same idea as section_header_bar stretch) so #N
-            // sits on the content edge — not in a shrink-wrapped cluster mid-row.
+            // Count first from the right (exact slot) so middle width is the true remainder
+            // and digits cannot be stolen/clipped by the payload strip.
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.set_min_width(ui.available_width());
-                if msg_count > 0 {
-                    ui.label(
-                        RichText::new(format!("#{msg_count}"))
-                            .small()
-                            .color(CHROME_MUTED),
-                    );
-                }
+                revision_count_label(ui, msg_count);
 
                 // Middle: gray topic · = · copy-payload · highlighted data.
                 ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
