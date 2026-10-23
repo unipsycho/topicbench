@@ -277,13 +277,20 @@ impl MqttMonitorApp {
         let tip_out = shortcuts::tip("Decrease font size (−4 steps from default)", "Ctrl+-");
         let tip_in =
             shortcuts::tip("Increase font size (+5 steps from default)", "Ctrl+= / Ctrl++");
+        // Quiet chrome pad so the stack reads as a dedicated trailing control.
+        ui.painter()
+            .rect_filled(ui.max_rect(), 3.0, Color32::from_rgb(42, 44, 52));
         ui.allocate_ui_with_layout(
             egui::vec2(icons::ZOOM_STACK_W, icons::CMD_H),
             egui::Layout::top_down(egui::Align::Center),
             |ui| {
                 ui.spacing_mut().item_spacing.y = 0.0;
                 // Zoom in (+) on top, zoom out (−) below.
-                if self.icons.command_zoom_icon(ui, "zoom_in", &tip_in).clicked() {
+                if self
+                    .icons
+                    .command_zoom_icon(ui, "zoom_in", "+", &tip_in)
+                    .clicked()
+                {
                     if self.settings.zoom_font_in() {
                         let _ = self.settings.save();
                         apply_font_zoom(ctx, self.settings.font_zoom_factor());
@@ -292,7 +299,7 @@ impl MqttMonitorApp {
                 }
                 if self
                     .icons
-                    .command_zoom_icon(ui, "zoom_out", &tip_out)
+                    .command_zoom_icon(ui, "zoom_out", "−", &tip_out)
                     .clicked()
                 {
                     if self.settings.zoom_font_out() {
@@ -354,143 +361,150 @@ impl MqttMonitorApp {
         ui.visuals_mut().override_text_color = Some(CHROME_TEXT);
         ui.spacing_mut().item_spacing.y = 0.0;
 
-        // Top-align the ribbon row. Brand logo + two-line title centered in brand_h.
-        ui.with_layout(egui::Layout::left_to_right(egui::Align::Min), |ui| {
-            ui.spacing_mut().item_spacing.x = 4.0;
+        let brand_h = 70.0; // match ribbon group / separator height
+        let gap = 6.0;
+        // Absolute right strip — never culled by LTR overflow / leftover width.
+        let zoom_strip_w = icons::ZOOM_STACK_W;
+        let (row_rect, _) =
+            ui.allocate_exact_size(egui::vec2(ui.available_width(), brand_h), egui::Sense::hover());
+        let zoom_rect = egui::Rect::from_min_size(
+            egui::pos2(
+                row_rect.right() - zoom_strip_w,
+                row_rect.top() + (brand_h - icons::CMD_H) * 0.5,
+            ),
+            egui::vec2(zoom_strip_w, icons::CMD_H),
+        );
+        let left_rect = egui::Rect::from_min_max(
+            row_rect.min,
+            egui::pos2((zoom_rect.left() - gap).max(row_rect.left()), row_rect.bottom()),
+        );
 
-            let logo_size = self
-                .logo
-                .as_ref()
-                .map(|l| l.size_vec2())
-                .unwrap_or(egui::vec2(108.0, 54.0));
-            let brand_h = 70.0; // match ribbon group / separator height
-            let green = Color32::from_rgb(90, 190, 120);
-            let title_size = 24.0;
-            let line_gap = -2.0_f32;
-            let strong_family = ui
-                .style()
-                .text_styles
-                .get(&TextStyle::Name("Strong".into()))
-                .map(|f| f.family.clone())
-                .unwrap_or(FontFamily::Proportional);
-            let font_id = FontId::new(title_size, strong_family);
-            let (line1_g, line2_g) = ui.fonts(|f| {
-                (
-                    f.layout_no_wrap("Topic".into(), font_id.clone(), green),
-                    f.layout_no_wrap("Bench".into(), font_id, green),
-                )
-            });
-            let title_w = line1_g.size().x.max(line2_g.size().x).ceil();
-            let stack_h = line1_g.size().y + line2_g.size().y + line_gap;
-            let logo_w = logo_size.x;
+        let logo_size = self
+            .logo
+            .as_ref()
+            .map(|l| l.size_vec2())
+            .unwrap_or(egui::vec2(108.0, 54.0));
+        let green = Color32::from_rgb(90, 190, 120);
+        let title_size = 24.0;
+        let line_gap = -2.0_f32;
+        let strong_family = ui
+            .style()
+            .text_styles
+            .get(&TextStyle::Name("Strong".into()))
+            .map(|f| f.family.clone())
+            .unwrap_or(FontFamily::Proportional);
+        let font_id = FontId::new(title_size, strong_family);
+        let (line1_g, line2_g) = ui.fonts(|f| {
+            (
+                f.layout_no_wrap("Topic".into(), font_id.clone(), green),
+                f.layout_no_wrap("Bench".into(), font_id, green),
+            )
+        });
+        let title_w = line1_g.size().x.max(line2_g.size().x).ceil();
+        let stack_h = line1_g.size().y + line2_g.size().y + line_gap;
+        let logo_w = logo_size.x;
 
-            // Collapse: App → Profiles → Panels → hide title → hide Stats.
-            let avail_w = ui.available_width();
-            let plan = ribbon_layout::plan_for_width(
-                avail_w,
-                logo_w,
-                title_w,
-                stats_ribbon::estimate_width(),
-                icons::font_zoom_factor(ui),
-            );
-            let brand_w = if plan.show_title {
-                logo_w + 10.0 + title_w + 10.0
-            } else {
-                logo_w + 10.0
-            };
+        // Collapse plan uses left budget only (zoom strip already reserved).
+        let plan = ribbon_layout::plan_for_width(
+            left_rect.width(),
+            logo_w,
+            title_w,
+            stats_ribbon::estimate_width(),
+            icons::font_zoom_factor(ui),
+        );
+        let brand_w = if plan.show_title {
+            logo_w + 10.0 + title_w + 10.0
+        } else {
+            logo_w + 10.0
+        };
 
-            const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
-            let ver_font = FontId::new(10.0, FontFamily::Proportional);
-            let ver_g = ui.fonts(|f| {
-                f.layout_no_wrap(format!("v{APP_VERSION}"), ver_font, CHROME_MUTED)
-            });
-            ui.allocate_ui_with_layout(
-                egui::vec2(brand_w, brand_h),
-                egui::Layout::left_to_right(Align::Center),
-                |ui| {
-                    ui.spacing_mut().item_spacing.x = 0.0;
-                    let (logo_rect, _) =
-                        ui.allocate_exact_size(egui::vec2(logo_w, brand_h), egui::Sense::hover());
-                    if let Some(logo) = &self.logo {
-                        let logo_pos = egui::pos2(
-                            logo_rect.center().x - logo_size.x * 0.5,
-                            logo_rect.center().y - logo_size.y * 0.5,
-                        );
-                        ui.put(
-                            egui::Rect::from_min_size(logo_pos, logo_size),
-                            egui::Image::new(logo)
-                                .fit_to_exact_size(logo_size)
-                                .maintain_aspect_ratio(true)
-                                .sense(egui::Sense::hover()),
-                        );
-                    }
-                    ui.painter().galley(
-                        egui::pos2(
-                            logo_rect.right() - ver_g.size().x,
-                            logo_rect.bottom() - ver_g.size().y,
-                        ),
-                        ver_g,
-                        CHROME_MUTED,
-                    );
-                    if plan.show_title {
-                        ui.add_space(10.0);
-                        let (title_rect, _) = ui.allocate_exact_size(
-                            egui::vec2(title_w, brand_h),
-                            egui::Sense::hover(),
-                        );
-                        let top = title_rect.center().y - stack_h * 0.5;
-                        let line1_x = title_rect.left() + (title_w - line1_g.size().x) * 0.5;
-                        let line2_x = title_rect.left() + (title_w - line2_g.size().x) * 0.5;
-                        ui.painter()
-                            .galley(egui::pos2(line1_x, top), line1_g, green);
+        const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
+        let ver_font = FontId::new(10.0, FontFamily::Proportional);
+        let ver_g = ui.fonts(|f| {
+            f.layout_no_wrap(format!("v{APP_VERSION}"), ver_font, CHROME_MUTED)
+        });
+
+        // Left: brand → groups → Stats (Stats right-aligned inside left rect).
+        ui.allocate_new_ui(egui::UiBuilder::new().max_rect(left_rect), |ui| {
+            ui.set_clip_rect(left_rect);
+            ui.with_layout(egui::Layout::left_to_right(egui::Align::Min), |ui| {
+                ui.spacing_mut().item_spacing.x = 4.0;
+
+                ui.allocate_ui_with_layout(
+                    egui::vec2(brand_w, brand_h),
+                    egui::Layout::left_to_right(Align::Center),
+                    |ui| {
+                        ui.spacing_mut().item_spacing.x = 0.0;
+                        let (logo_rect, _) = ui
+                            .allocate_exact_size(egui::vec2(logo_w, brand_h), egui::Sense::hover());
+                        if let Some(logo) = &self.logo {
+                            let logo_pos = egui::pos2(
+                                logo_rect.center().x - logo_size.x * 0.5,
+                                logo_rect.center().y - logo_size.y * 0.5,
+                            );
+                            ui.put(
+                                egui::Rect::from_min_size(logo_pos, logo_size),
+                                egui::Image::new(logo)
+                                    .fit_to_exact_size(logo_size)
+                                    .maintain_aspect_ratio(true)
+                                    .sense(egui::Sense::hover()),
+                            );
+                        }
                         ui.painter().galley(
-                            egui::pos2(line2_x, top + stack_h - line2_g.size().y),
-                            line2_g,
-                            green,
+                            egui::pos2(
+                                logo_rect.right() - ver_g.size().x,
+                                logo_rect.bottom() - ver_g.size().y,
+                            ),
+                            ver_g,
+                            CHROME_MUTED,
                         );
-                        ui.add_space(10.0);
-                    }
-                },
-            );
+                        if plan.show_title {
+                            ui.add_space(10.0);
+                            let (title_rect, _) = ui.allocate_exact_size(
+                                egui::vec2(title_w, brand_h),
+                                egui::Sense::hover(),
+                            );
+                            let top = title_rect.center().y - stack_h * 0.5;
+                            let line1_x = title_rect.left() + (title_w - line1_g.size().x) * 0.5;
+                            let line2_x = title_rect.left() + (title_w - line2_g.size().x) * 0.5;
+                            ui.painter()
+                                .galley(egui::pos2(line1_x, top), line1_g, green);
+                            ui.painter().galley(
+                                egui::pos2(line2_x, top + stack_h - line2_g.size().y),
+                                line2_g,
+                                green,
+                            );
+                            ui.add_space(10.0);
+                        }
+                    },
+                );
 
-            icons::ribbon_separator(ui);
-            self.draw_ribbon_profiles(ui, plan.profiles);
-            icons::ribbon_separator(ui);
-            self.draw_ribbon_panels(ui, plan.panels);
-            icons::ribbon_separator(ui);
-            self.draw_ribbon_pro(ui, plan.pro);
-            icons::ribbon_separator(ui);
-            self.draw_ribbon_app(ui, ctx, plan.app);
+                icons::ribbon_separator(ui);
+                self.draw_ribbon_profiles(ui, plan.profiles);
+                icons::ribbon_separator(ui);
+                self.draw_ribbon_panels(ui, plan.panels);
+                icons::ribbon_separator(ui);
+                self.draw_ribbon_pro(ui, plan.pro);
+                icons::ribbon_separator(ui);
+                self.draw_ribbon_app(ui, ctx, plan.app);
 
-            // Reserve a fixed trailing strip so zoom (+ Stats) always sit on the
-            // far right — never gated on leftover width (wide Full layout used to
-            // eat the row and hide the stacked +/−).
-            let sep_w = icons::estimate_separator_w();
-            let trailing_w = icons::estimate_zoom_stack_w()
-                + sep_w
-                + if plan.show_stats {
-                    stats_ribbon::estimate_width() + sep_w
-                } else {
-                    0.0
-                };
-            let avail = ui.available_width();
-            // Slack (if any) stays left of the trailing cluster.
-            if avail > trailing_w {
-                ui.add_space(avail - trailing_w);
-            }
-            ui.allocate_ui_with_layout(
-                egui::vec2(trailing_w.min(avail), icons::CMD_H),
-                egui::Layout::right_to_left(egui::Align::Min),
-                |ui| {
-                    // First in RTL = far-right edge: zoom stack always.
-                    self.draw_ribbon_zoom(ui, ctx);
-                    icons::ribbon_separator(ui);
-                    if plan.show_stats {
-                        stats_ribbon::draw_group(ui, &self.sessions.traffic_stats);
-                        icons::ribbon_separator(ui);
+                if plan.show_stats {
+                    let rem = ui.available_width();
+                    if rem > 8.0 {
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
+                            ui.set_max_width(rem);
+                            stats_ribbon::draw_group(ui, &self.sessions.traffic_stats);
+                            icons::ribbon_separator(ui);
+                        });
                     }
-                },
-            );
+                }
+            });
+        });
+
+        // Zoom always: dedicated absolute-right widget (after Stats / left cluster).
+        ui.allocate_new_ui(egui::UiBuilder::new().max_rect(zoom_rect), |ui| {
+            ui.set_clip_rect(zoom_rect);
+            self.draw_ribbon_zoom(ui, ctx);
         });
     }
 
