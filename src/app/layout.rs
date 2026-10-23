@@ -533,11 +533,16 @@ impl MqttMonitorApp {
             )
             .show(ctx, |ui| {
                 // Clip to the central region only (outer CentralPanel clip is the full screen).
-                // Keep default clip_rect_margin (~3): zeroing it made ScrollArea clip flush to
-                // the content edge, chopping Combined/sticky right strokes and tree #N glyphs
-                // while looking like “empty space” to the right. panel_rect still blocks ribbon bleed.
+                // Keep default clip_rect_margin (~3): zeroing it chopped Combined/sticky strokes
+                // and tree #N glyph overhang. panel_rect still blocks ribbon bleed.
                 let panel_rect = ui.max_rect();
                 ui.set_clip_rect(panel_rect);
+                // Modest floating-bar gutter (~bar width only) so #N / card edges sit snug
+                // against the scrollbar without the huge 24/48 dead-zone experiments.
+                {
+                    let scroll = &mut ui.spacing_mut().scroll;
+                    scroll.floating_allocated_width = scroll.bar_width;
+                }
                 // Keep full panel width (default auto_shrink follows content → early ellipsis).
                 egui::ScrollArea::vertical()
                     .id_salt("central_main")
