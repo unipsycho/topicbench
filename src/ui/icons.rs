@@ -60,6 +60,10 @@ pub const CMD_H: f32 = 64.0;
 const COMPACT_ICON: f32 = 20.0;
 pub const COMPACT_W: f32 = 28.0;
 const COMPACT_H: f32 = 30.0;
+/// Far-right zoom stack (+ / −): fixed width so hit targets never shift with font zoom.
+pub const ZOOM_STACK_W: f32 = 40.0;
+/// Icon size for stacked zoom (fits two in [`CMD_H`]; close to full ribbon weight).
+const ZOOM_ICON: f32 = 28.0;
 /// Dense inline action icons (Profiles body, tree copy/sticky, etc.).
 pub const TINY_ICON: f32 = 18.0;
 /// Uploaded texture edge: 2× [`CMD_ICON`] for sharp HiDPI + clean half-scale at 1×.
@@ -285,6 +289,26 @@ impl IconSet {
         }
         response
     }
+
+    /// Icon-only zoom cell (no caption). Fixed size — independent of font zoom.
+    pub fn command_zoom_icon(&self, ui: &mut egui::Ui, name: &str, tip: &str) -> egui::Response {
+        let cell = Vec2::new(ZOOM_STACK_W, CMD_H * 0.5);
+        let (rect, response) = ui.allocate_exact_size(cell, Sense::click());
+        let response = crate::ui::hover_tip::attach(response, tip.to_owned());
+        if response.hovered() {
+            ui.painter().rect_filled(rect, 3.0, CHROME_HOVER);
+        }
+        if let Some(tex) = self.get(name) {
+            let img = egui::Image::new(tex)
+                .fit_to_exact_size(Vec2::splat(ZOOM_ICON))
+                .maintain_aspect_ratio(true);
+            img.paint_at(
+                ui,
+                egui::Rect::from_center_size(rect.center(), Vec2::splat(ZOOM_ICON)),
+            );
+        }
+        response
+    }
 }
 
 /// Full-width chrome bar behind a section icon+title row (and optional trailing widgets).
@@ -362,6 +386,11 @@ pub fn estimate_group_full_w(n_cmds: usize, zoom: f32) -> f32 {
 pub fn estimate_group_compact_w(n_cmds: usize) -> f32 {
     let cols = n_cmds.div_ceil(2).max(1) as f32;
     8.0 + SECTION_RAIL_W + 4.0 + cols * COMPACT_W + (cols - 1.0) * 2.0
+}
+
+/// Width reserved for the far-right zoom +/− stack (no section rail).
+pub fn estimate_zoom_stack_w() -> f32 {
+    ZOOM_STACK_W
 }
 
 /// Ribbon separator footprint (spaces + 1px rule).

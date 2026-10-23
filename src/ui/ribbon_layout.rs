@@ -4,7 +4,9 @@
 //! App compact → Pro compact → Profiles compact → Panels compact → hide TopicBench title → hide Stats.
 //! Expand reverses that order when width returns.
 
-use crate::ui::icons::{estimate_group_compact_w, estimate_group_full_w, estimate_separator_w};
+use crate::ui::icons::{
+    estimate_group_compact_w, estimate_group_full_w, estimate_separator_w, estimate_zoom_stack_w,
+};
 
 /// How a command section is drawn.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -63,10 +65,13 @@ pub fn plan_width(logo_w: f32, title_w: f32, stats_w: f32, plan: RibbonPlan, zoo
     w += section_w(plan.profiles, 4, zoom) + sep;
     w += section_w(plan.panels, 5, zoom) + sep;
     w += section_w(plan.pro, 1, zoom) + sep;
-    w += section_w(plan.app, 3, zoom);
+    // App is Settings only; zoom +/− lives far-right (fixed width, after Stats).
+    w += section_w(plan.app, 1, zoom);
     if plan.show_stats {
         w += sep + stats_w;
     }
+    // Zoom stack always present on the far right.
+    w += sep + estimate_zoom_stack_w();
     // Small slack so we don't thrash on rounding / frame pads.
     w + 4.0
 }
