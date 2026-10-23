@@ -20,7 +20,7 @@ impl MqttMonitorApp {
         }
     }
 
-    /// Persist current panel visibility (Payload included) to settings.json.
+    /// Persist current panel visibility (Payload + Simulation) to settings.json.
     pub(super) fn persist_panels(&mut self) {
         self.settings.set_panels(
             self.panels.profiles,
@@ -30,6 +30,8 @@ impl MqttMonitorApp {
             self.panels.stickies,
             self.panels.topic_tree,
         );
+        self.settings
+            .set_simulation_panel(self.simulation_open, self.simulation_floating);
         let _ = self.settings.save();
     }
 

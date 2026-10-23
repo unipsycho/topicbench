@@ -1,0 +1,296 @@
+//! Thin HTTP client for the Pro sidecar simulation API (`http://127.0.0.1:7853/sim`).
+//!
+//! No formula engine here — CRUD/start/stop only. Bearer token from `mcp-token`.
+
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+use std::fs;
+use std::path::PathBuf;
+use std::time::{Duration, Instant};
+
+const DEFAULT_BASE: &str = "http://127.0.0.1:7853";
+
+/// One sim row as returned by the sidecar (subset mirrored for the panel).
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct SimRow {
+    #[serde(default)]
+    pub id: String,
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub profile: String,
+    #[serde(default)]
+    pub topic: String,
+    #[serde(default = "default_interval")]
+    pub interval_ms: u64,
+    #[serde(default)]
+    pub qos: u8,
+    #[serde(default)]
+    pub retain: bool,
+    #[serde(default = "default_mode")]
+    pub mode: String,
+    #[serde(default)]
+    pub template: String,
+    #[serde(default)]
+    pub field_path: String,
+    #[serde(default)]
+    pub generator: Value,
+    #[serde(default)]
+    pub auto_start: bool,
+}
+
+fn default_interval() -> u64 {
+    1000
+}
+fn default_mode() -> String {
+    "whole_payload".into()
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct SimStatus {
+    #[serde(default)]
+    pub id: String,
+    #[serde(default)]
+    pub running: bool,
+    #[serde(default)]
+    pub tick: u64,
+    pub last_value: Option<Value>,
+    pub last_payload: Option<String>,
+    pub last_error: Option<String>,
+}
+
+/// Cached list + last error for the Simulation panel.
+#[derive(Default)]
+pub struct SimClientState {
+    pub rows: Vec<SimRow>,
+    pub statuses: Vec<SimStatus>,
+    pub last_error: Option<String>,
+    pub sidecar_up: bool,
+    pub selected: Option<String>,
+    last_fetch: Option<Instant>,
+    token: Option<String>,
+    base: String,
+}
+
+impl SimClientState {
+    pub fn new() -> Self {
+        let base = std::env::var("TOPICBENCH_PRO_URL")
+            .unwrap_or_else(|_| DEFAULT_BASE.to_string())
+            .trim_end_matches('/')
+            .to_string();
+        Self {
+            base,
+            ..Default::default()
+        }
+    }
+
+    /// Refresh list when panel is open (throttled).
+    pub fn poll_if_due(&mut self, force: bool) {
+        let due = force
+            || self
+                .last_fetch
+                .map(|t| t.elapsed() >= Duration::from_millis(500))
+                .unwrap_or(true);
+        if !due {
+            return;
+        }
+        self.last_fetch = Some(Instant::now());
+        match self.fetch_list() {
+            Ok((rows, statuses)) => {
+                self.rows = rows;
+                self.statuses = statuses;
+                self.sidecar_up = true;
+                self.last_error = None;
+            }
+            Err(e) => {
+                self.sidecar_up = false;
+                self.last_error = Some(e);
+            }
+        }
+    }
+
+    pub fn status_for(&self, id: &str) -> Option<&SimStatus> {
+        self.statuses.iter().find(|s| s.id == id)
+    }
+
+    pub fn upsert(&mut self, row: &SimRow) -> Result<SimRow, String> {
+        let body = serde_json::to_vec(row).map_err(|e| e.to_string())?;
+        let v = self.http("PUT", "/sim", Some(body))?;
+        let sim = v
+            .get("simulation")
+            .cloned()
+            .ok_or_else(|| "missing simulation in response".to_string())?;
+        let row: SimRow = serde_json::from_value(sim).map_err(|e| e.to_string())?;
+        self.poll_if_due(true);
+        Ok(row)
+    }
+
+    pub fn delete(&mut self, id: &str) -> Result<(), String> {
+        let _ = self.http("DELETE", &format!("/sim/{id}"), None)?;
+        if self.selected.as_deref() == Some(id) {
+            self.selected = None;
+        }
+        self.poll_if_due(true);
+        Ok(())
+    }
+
+    pub fn start(&mut self, id: &str) -> Result<(), String> {
+        let _ = self.http("POST", &format!("/sim/{id}/start"), None)?;
+        self.poll_if_due(true);
+        Ok(())
+    }
+
+    pub fn stop(&mut self, id: &str) -> Result<(), String> {
+        let _ = self.http("POST", &format!("/sim/{id}/stop"), None)?;
+        self.poll_if_due(true);
+        Ok(())
+    }
+
+    pub fn stop_all(&mut self) -> Result<(), String> {
+        let _ = self.http("POST", "/sim/stop_all", None)?;
+        self.poll_if_due(true);
+        Ok(())
+    }
+
+    fn token(&mut self) -> Result<String, String> {
+        if let Some(t) = &self.token {
+            if !t.is_empty() {
+                return Ok(t.clone());
+            }
+        }
+        let path = token_path();
+        let t = fs::read_to_string(&path)
+            .map_err(|e| {
+                format!(
+                    "cannot read {} ({e}) — is topicbench-pro running?",
+                    path.display()
+                )
+            })?
+            .trim()
+            .to_string();
+        if t.is_empty() {
+            return Err("mcp-token file is empty".into());
+        }
+        self.token = Some(t.clone());
+        Ok(t)
+    }
+
+    fn fetch_list(&mut self) -> Result<(Vec<SimRow>, Vec<SimStatus>), String> {
+        let v = self.http("GET", "/sim", None)?;
+        let rows: Vec<SimRow> = serde_json::from_value(
+            v.get("simulations")
+                .cloned()
+                .unwrap_or(Value::Array(vec![])),
+        )
+        .map_err(|e| format!("simulations: {e}"))?;
+        let statuses: Vec<SimStatus> = serde_json::from_value(
+            v.get("statuses").cloned().unwrap_or(Value::Array(vec![])),
+        )
+        .map_err(|e| format!("statuses: {e}"))?;
+        Ok((rows, statuses))
+    }
+
+    fn http(&mut self, method: &str, path: &str, body: Option<Vec<u8>>) -> Result<Value, String> {
+        let token = self.token()?;
+        let url = format!("{}{path}", self.base);
+        let agent = ureq::AgentBuilder::new()
+            .timeout_connect(Duration::from_millis(400))
+            .timeout_read(Duration::from_secs(3))
+            .build();
+        let req = match method {
+            "GET" => agent.get(&url),
+            "PUT" => agent.put(&url),
+            "POST" => agent.post(&url),
+            "DELETE" => agent.request("DELETE", &url),
+            other => return Err(format!("unsupported method {other}")),
+        }
+        .set("Authorization", &format!("Bearer {token}"))
+        .set("Content-Type", "application/json");
+
+        let resp = match body {
+            Some(b) => req.send_bytes(&b),
+            None => {
+                if method == "GET" || method == "DELETE" {
+                    req.call()
+                } else {
+                    req.send_bytes(b"{}")
+                }
+            }
+        };
+        match resp {
+            Ok(r) => {
+                let text = r.into_string().map_err(|e| format!("read body: {e}"))?;
+                if text.trim().is_empty() {
+                    return Ok(Value::Null);
+                }
+                serde_json::from_str(&text).map_err(|e| format!("json: {e}"))
+            }
+            Err(ureq::Error::Status(code, resp)) => {
+                let text = resp.into_string().unwrap_or_default();
+                let msg = serde_json::from_str::<Value>(&text)
+                    .ok()
+                    .and_then(|v| {
+                        v.get("error")
+                            .and_then(|e| e.as_str())
+                            .map(|s| s.to_string())
+                    })
+                    .unwrap_or(text);
+                Err(format!("HTTP {code}: {msg}"))
+            }
+            Err(ureq::Error::Transport(t)) => Err(format!(
+                "sidecar unreachable ({t}) — start topicbench-pro"
+            )),
+        }
+    }
+}
+
+fn token_path() -> PathBuf {
+    crate::mqtt::paths::config_file("mcp-token")
+}
+
+/// Blank row ready for Add (caller fills profile/topic).
+pub fn blank_row(profile: &str, topic: &str) -> SimRow {
+    SimRow {
+        id: String::new(),
+        name: if topic.is_empty() {
+            "New simulation".into()
+        } else {
+            topic.to_string()
+        },
+        profile: profile.to_string(),
+        topic: topic.to_string(),
+        interval_ms: 1000,
+        qos: 0,
+        retain: false,
+        mode: "whole_payload".into(),
+        template: String::new(),
+        field_path: String::new(),
+        generator: serde_json::json!({"type": "sine", "amplitude": 1.0, "period_s": 10.0, "offset": 0.0}),
+        auto_start: false,
+    }
+}
+
+/// Compact generator label for the grid column.
+pub fn generator_label(gen: &Value) -> String {
+    gen.get("type")
+        .and_then(|t| t.as_str())
+        .unwrap_or("?")
+        .to_string()
+}
+
+/// Human-readable current value cell.
+pub fn value_label(st: Option<&SimStatus>) -> String {
+    let Some(st) = st else {
+        return "—".into();
+    };
+    if let Some(err) = &st.last_error {
+        return format!("err: {err}");
+    }
+    if let Some(v) = &st.last_value {
+        return match v {
+            Value::String(s) => s.clone(),
+            other => other.to_string(),
+        };
+    }
+    "—".into()
+}
