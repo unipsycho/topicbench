@@ -535,8 +535,8 @@ fn apply_tree_toggle(
     ctx.request_repaint();
 }
 
-/// Reserve an exact-width slot for `#{count}` and paint right-justified inside it
-/// (with a few px right pad so glyph overhang stays inside the row clip).
+/// Measured `#N` slot (RTL): exact width so payload cannot steal space; right-justify
+/// inside the slot with pad so the last digit clears the row/content clip.
 fn revision_count_label(ui: &mut egui::Ui, count: u64) {
     if count == 0 {
         return;
@@ -545,8 +545,7 @@ fn revision_count_label(ui: &mut egui::Ui, count: u64) {
     let font = egui::TextStyle::Small.resolve(ui.style());
     let color = CHROME_MUTED;
     let text_w = ui.fonts(|f| f.layout_no_wrap(text.clone(), font.clone(), color).size().x);
-    // Right pad keeps the last digit inside clip; left pad separates from payload.
-    let pad_r = 5.0_f32;
+    let pad_r = 5.0_f32; // glyph overhang at content edge
     let pad_l = 4.0_f32;
     let slot_w = (text_w + pad_l + pad_r).ceil().max(12.0);
     let row_h = ui
@@ -585,12 +584,11 @@ fn leaf_row(
         Color32::TRANSPARENT
     };
 
-    // Full avail puts the right stroke on the ScrollArea clip plane (square/missing
-    // edge). Clear a few px inside content — scrollbar gutter unchanged.
+    // See flash::ITEM_CLIP_CLEAR — not full avail, or right flash/select stroke clips.
     let row_w = (ui.available_width() - flash::ITEM_CLIP_CLEAR).max(32.0);
     let row = egui::Frame::NONE
         .fill(row_fill)
-        .corner_radius(3.0) // same visible right curve idea as sticky heading fill
+        .corner_radius(3.0) // fill curve like sticky heading; stroke via paint_inset below
         .show(ui, |ui| {
         ui.set_min_width(row_w);
         ui.horizontal(|ui| {

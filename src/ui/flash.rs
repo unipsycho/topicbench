@@ -7,8 +7,11 @@ use std::time::Instant;
 
 use crate::mqtt::topic_tree::{TopicNode, FLASH_MS};
 
-/// Keep per-item chrome this many px left of the ScrollArea content clip so Inside
-/// strokes / corner curves stay visible. Does **not** change scrollbar gutter width.
+/// Per-item stroked frames must end this many px left of the ScrollArea *content*
+/// clip (inner_rect.max.x). Full `available_width()` puts the right Inside stroke on
+/// that plane → missing/square right edge. Sticky heading is fill+corner only (no
+/// stroke) so it can span full width. Separate from scrollbar gutter
+/// (`floating_allocated_width` in layout) — do not conflate the two.
 pub const ITEM_CLIP_CLEAR: f32 = 3.0;
 
 /// True while a flash pulse is still fading.

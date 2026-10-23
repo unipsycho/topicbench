@@ -271,7 +271,7 @@ fn draw_sticky(
                 bottom: 2,
             })
             .show(ui, |ui| {
-                // Stop short of the content clip so the right card stroke stays visible.
+                // See flash::ITEM_CLIP_CLEAR — full avail clips paint_inset_or right edge.
                 let max_w = (ui.available_width() - flash::ITEM_CLIP_CLEAR).max(80.0);
                 ui.set_max_width(max_w);
                 let mut mode_changed: Option<StickyViewMode> = None;
@@ -734,8 +734,7 @@ fn draw_combined_graph(
     let mut plot_h =
         AppSettings::clamp_combined_graph_height(settings.combined_graph_height);
 
-    // Match sticky heading/cards: fill + corners, no Frame stroke. Stop short of the
-    // content clip so the right inset stroke isn't flush with ScrollArea's max x.
+    // Fill+corners (no Frame::stroke); width uses ITEM_CLIP_CLEAR so inset border clears clip.
     let border = Stroke::new(1.0_f32, CHROME_ACCENT_BORDER);
     let frame = egui::Frame::NONE
         .fill(Color32::from_rgb(32, 34, 40))

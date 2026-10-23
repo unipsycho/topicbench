@@ -532,13 +532,12 @@ impl MqttMonitorApp {
                     .inner_margin(egui::Margin::symmetric(8, 2)),
             )
             .show(ctx, |ui| {
-                // Clip to the central region only (outer CentralPanel clip is the full screen).
-                // clip_rect_margin gives AA room for inset strokes / #N overhang without
-                // changing layout gutter. panel_rect still blocks ribbon bleed.
+                // Clip to central panel only (not full screen → no ribbon bleed).
                 let panel_rect = ui.max_rect();
                 ui.set_clip_rect(panel_rect);
+                // AA room for strokes/#N; not a substitute for flash::ITEM_CLIP_CLEAR on items.
                 ui.visuals_mut().clip_rect_margin = 4.0;
-                // Modest floating-bar gutter (~bar width only) — spacing Mike liked; don't widen.
+                // Scrollbar track reserve only — independent of per-item ITEM_CLIP_CLEAR.
                 {
                     let scroll = &mut ui.spacing_mut().scroll;
                     scroll.floating_allocated_width = scroll.bar_width;
