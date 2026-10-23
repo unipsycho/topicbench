@@ -328,7 +328,7 @@ fn body(
                 }
             }
             if toolbar_btn(ui, icons, "folder_open", "Import", true)
-                .on_hover_text("Import simulation definitions JSON (replaces list)")
+                .on_hover_text("Import simulation JSON — Replace, Merge, or Cancel")
                 .clicked()
             {
                 if let Some(path) = rfd::FileDialog::new()
@@ -336,26 +336,50 @@ fn body(
                     .add_filter("JSON", &["json"])
                     .pick_file()
                 {
-                    let proceed = if client.rows.is_empty() {
-                        true
+                    // Empty list: load without prompting (replace ≡ merge ≡ add all).
+                    // Otherwise: Replace / Merge / Cancel.
+                    let mode = if client.rows.is_empty() {
+                        Some("replace")
                     } else {
-                        matches!(
-                            rfd::MessageDialog::new()
-                                .set_level(rfd::MessageLevel::Warning)
-                                .set_title("Replace simulations?")
-                                .set_description(
-                                    "Import replaces the current simulation list. Continue?",
-                                )
-                                .set_buttons(rfd::MessageButtons::YesNo)
-                                .show(),
-                            rfd::MessageDialogResult::Yes
-                        )
+                        match rfd::MessageDialog::new()
+                            .set_level(rfd::MessageLevel::Info)
+                            .set_title("Import simulations")
+                            .set_description(
+                                "Replace the current list, or Merge (update matching \
+                                 profile+topic+field rows and append the rest)?",
+                            )
+                            .set_buttons(rfd::MessageButtons::YesNoCancelCustom(
+                                "Replace".into(),
+                                "Merge".into(),
+                                "Cancel".into(),
+                            ))
+                            .show()
+                        {
+                            rfd::MessageDialogResult::Yes => Some("replace"),
+                            rfd::MessageDialogResult::No => Some("merge"),
+                            rfd::MessageDialogResult::Custom(s)
+                                if s.eq_ignore_ascii_case("replace") =>
+                            {
+                                Some("replace")
+                            }
+                            rfd::MessageDialogResult::Custom(s)
+                                if s.eq_ignore_ascii_case("merge")
+                                    || s.eq_ignore_ascii_case("add / merge") =>
+                            {
+                                Some("merge")
+                            }
+                            _ => None,
+                        }
                     };
-                    if proceed {
+                    if let Some(mode) = mode {
                         match std::fs::read_to_string(&path) {
                             Ok(raw) => match serde_json::from_str::<serde_json::Value>(&raw) {
-                                Ok(v) => match client.import_sims(&v) {
-                                    Ok(n) => *status = format!("Imported {n} simulations"),
+                                Ok(v) => match client.import_sims(&v, mode) {
+                                    Ok(n) => {
+                                        *status = format!(
+                                            "Imported {n} simulations ({mode})"
+                                        );
+                                    }
                                     Err(e) => *status = e,
                                 },
                                 Err(e) => *status = format!("parse JSON: {e}"),

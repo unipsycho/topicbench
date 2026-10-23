@@ -297,9 +297,27 @@ impl SimClientState {
         Ok(())
     }
 
-    /// Replace all sims with JSON array or `{simulations:[…]}` (Export shape).
-    pub fn import_sims(&mut self, json: &Value) -> Result<usize, String> {
-        let body = serde_json::to_vec(json).map_err(|e| e.to_string())?;
+    /// Import sims. `mode` is `"replace"` (full list) or `"merge"` (by profile+topic+field).
+    /// `json` may be a bare array or `{simulations:[…]}` (Export shape).
+    pub fn import_sims(&mut self, json: &Value, mode: &str) -> Result<usize, String> {
+        let mode = if mode.eq_ignore_ascii_case("merge") {
+            "merge"
+        } else {
+            "replace"
+        };
+        let body_val = if let Some(obj) = json.as_object() {
+            let mut o = obj.clone();
+            o.insert("mode".into(), Value::String(mode.into()));
+            if !o.contains_key("simulations") {
+                return Err("expected {simulations:[…]} or a JSON array".into());
+            }
+            Value::Object(o)
+        } else if json.is_array() {
+            serde_json::json!({ "mode": mode, "simulations": json })
+        } else {
+            return Err("expected array or {simulations:[…]}".into());
+        };
+        let body = serde_json::to_vec(&body_val).map_err(|e| e.to_string())?;
         let v = self.http_mut("POST", "/sim/import", Some(body))?;
         self.poll_if_due(true);
         Ok(v.get("simulations")
