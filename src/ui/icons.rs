@@ -62,8 +62,8 @@ pub const COMPACT_W: f32 = 32.0; // room for 24px glyph (+ was 28)
 const COMPACT_H: f32 = 32.0; // was 30
 /// Far-right zoom stack (+ / −): fixed width so hit targets never shift with font zoom.
 pub const ZOOM_STACK_W: f32 = 40.0;
-/// Icon size for stacked zoom (fits two in [`CMD_H`]; matches compact/tiny trial).
-const ZOOM_ICON: f32 = 24.0;
+/// Icon size for stacked zoom — same weight as ribbon CMD / section icons.
+const ZOOM_ICON: f32 = 36.0;
 /// Dense inline action icons (Profiles body, tree copy/sticky, etc.).
 pub const TINY_ICON: f32 = 24.0; // trial: 72/3 — was 18
 /// Uploaded texture edge: 2× [`CMD_ICON`] for sharp HiDPI + clean half-scale at 1×.
@@ -692,6 +692,8 @@ const ICONS: &[(&str, &[u8])] = &[
     ("node_graph", include_bytes!("../../assets/icons/node_graph.png")),
     ("panel_docked", include_bytes!("../../assets/icons/panel_docked.png")),
     ("panel_undock", include_bytes!("../../assets/icons/panel_undock.png")),
+    ("pause", include_bytes!("../../assets/icons/pause.png")),
+    ("play", include_bytes!("../../assets/icons/play.png")),
     ("playback", include_bytes!("../../assets/icons/playback.png")),
     ("profile", include_bytes!("../../assets/icons/profile.png")),
     ("profile_add", include_bytes!("../../assets/icons/profile_add.png")),
