@@ -44,6 +44,7 @@ const COL_PREC: f32 = 44.0;
 const COL_VALUE: f32 = 92.0;
 const COL_GEN: f32 = 118.0;
 const COL_SETTINGS: f32 = 400.0;
+const COL_DELETE: f32 = 36.0;
 
 /// Floating Simulation as a real OS viewport (`floating == true`).
 /// Docked UI paints in the central column via [`draw_docked`].
@@ -271,7 +272,7 @@ fn body(
                 Err(e) => *status = e,
             }
         }
-        if toolbar_btn(ui, icons, "connect", "Start", true)
+        if toolbar_btn(ui, icons, "play", "Start", true)
             .on_hover_text("Start all simulations")
             .clicked()
         {
@@ -280,25 +281,13 @@ fn body(
                 Err(e) => *status = e,
             }
         }
-        if toolbar_btn(ui, icons, "disconnect", "Stop", true)
+        if toolbar_btn(ui, icons, "pause", "Stop", true)
             .on_hover_text("Stop all simulations")
             .clicked()
         {
             match client.stop_all() {
                 Ok(()) => *status = "Stopped all simulations".into(),
                 Err(e) => *status = e,
-            }
-        }
-        let sel = client.selected.clone();
-        if toolbar_btn(ui, icons, "delete_red", "Delete", sel.is_some())
-            .on_hover_text("Delete selected row")
-            .clicked()
-        {
-            if let Some(id) = &sel {
-                match client.delete(id) {
-                    Ok(()) => *status = format!("Deleted {id}"),
-                    Err(e) => *status = e,
-                }
             }
         }
 
@@ -443,12 +432,12 @@ fn body(
 
     let sheet = |ui: &mut egui::Ui| {
         egui::Grid::new("sim_sheet")
-            .num_columns(8)
+            .num_columns(9)
             .spacing([5.0, 6.0])
             .min_col_width(36.0)
             .striped(true)
             .show(ui, |ui| {
-                // Profile → Topic → Field → Refresh → Prec → Value → Generator → Settings
+                // Profile → Topic → Field → Refresh → Prec → Value → Generator → Settings → Delete
                 header_cell(ui, COL_PROFILE, "Profile");
                 header_cell(ui, COL_TOPIC, "Topic");
                 header_cell(ui, COL_FIELD, "Field");
@@ -457,11 +446,12 @@ fn body(
                 header_cell(ui, COL_VALUE, "Current value");
                 header_cell(ui, COL_GEN, "Generator");
                 header_cell(ui, COL_SETTINGS, "Settings");
+                header_cell(ui, COL_DELETE, "");
                 ui.end_row();
 
                 let rows = client.rows.clone();
                 for row in rows {
-                    draw_row(ui, &row, client, sessions, profiles, status);
+                    draw_row(ui, &row, client, sessions, profiles, icons, status);
                     ui.end_row();
                 }
             });
@@ -495,6 +485,7 @@ fn draw_row(
     client: &mut SimClientState,
     sessions: &SessionManager,
     profiles: &ProfileStore,
+    icons: &IconSet,
     status: &mut String,
 ) {
     let selected = client.selected.as_deref() == Some(row.id.as_str());
@@ -651,7 +642,7 @@ fn draw_row(
         },
     );
 
-    // Current value — click selects row for Delete
+    // Current value — click selects row
     let val = sim_client::value_label(st.as_ref());
     ui.allocate_ui_with_layout(
         Vec2::new(COL_VALUE, 28.0),
@@ -710,6 +701,29 @@ fn draw_row(
             ui.set_max_height(28.0);
             if edit_generator_inline(ui, &row.id, &gen_type, &mut draft.generator, client) {
                 dirty = true;
+            }
+        },
+    );
+
+    // Per-row delete
+    ui.allocate_ui_with_layout(
+        Vec2::new(COL_DELETE, 28.0),
+        egui::Layout::left_to_right(egui::Align::Center),
+        |ui| {
+            ui.set_min_width(COL_DELETE);
+            if icons
+                .tiny(ui, "delete_red", false, "Delete this simulation")
+                .clicked()
+            {
+                match client.delete(&row.id) {
+                    Ok(()) => {
+                        if client.selected.as_deref() == Some(row.id.as_str()) {
+                            client.selected = None;
+                        }
+                        *status = format!("Deleted {}", row.id);
+                    }
+                    Err(e) => *status = e,
+                }
             }
         },
     );
