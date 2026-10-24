@@ -134,6 +134,72 @@ impl BookmarksStore {
         }
     }
 
+    /// Manual add (header + Add). Empty topic rejected.
+    pub fn add(
+        &mut self,
+        profile_id: &str,
+        topic: &str,
+        label: &str,
+        expand_subtree: bool,
+    ) -> Result<(), String> {
+        let topic = topic.trim();
+        if topic.is_empty() {
+            return Err("Topic path is required".into());
+        }
+        if profile_id.trim().is_empty() {
+            return Err("Profile is required".into());
+        }
+        let label = if label.trim().is_empty() {
+            topic
+                .rsplit('/')
+                .next()
+                .unwrap_or(topic)
+                .to_string()
+        } else {
+            label.trim().to_string()
+        };
+        self.items.push(Bookmark {
+            id: new_id(),
+            profile_id: profile_id.to_string(),
+            topic: topic.to_string(),
+            label,
+            expand_subtree,
+            order: self.items.len() as u32,
+        });
+        self.save()
+    }
+
+    /// Edit an existing bookmark by id.
+    pub fn update(
+        &mut self,
+        id: &str,
+        profile_id: &str,
+        topic: &str,
+        label: &str,
+        expand_subtree: bool,
+    ) -> Result<(), String> {
+        let topic = topic.trim();
+        if topic.is_empty() {
+            return Err("Topic path is required".into());
+        }
+        let Some(b) = self.items.iter_mut().find(|b| b.id == id) else {
+            return Err("Bookmark not found".into());
+        };
+        b.profile_id = profile_id.to_string();
+        b.topic = topic.to_string();
+        b.label = if label.trim().is_empty() {
+            topic
+                .rsplit('/')
+                .next()
+                .unwrap_or(topic)
+                .to_string()
+        } else {
+            label.trim().to_string()
+        };
+        b.expand_subtree = expand_subtree;
+        self.save()
+    }
+
     pub fn reorder(&mut self, from: usize, to: usize) {
         if from >= self.items.len() || to >= self.items.len() || from == to {
             return;
@@ -141,6 +207,30 @@ impl BookmarksStore {
         let item = self.items.remove(from);
         self.items.insert(to, item);
         let _ = self.save();
+    }
+
+    /// Profiles-list style reorder by id (insert before/after target).
+    pub fn reorder_ids(&mut self, dragged: &str, target: &str, after: bool) -> bool {
+        if dragged == target {
+            return false;
+        }
+        let Some(from) = self.items.iter().position(|b| b.id == dragged) else {
+            return false;
+        };
+        let Some(mut to) = self.items.iter().position(|b| b.id == target) else {
+            return false;
+        };
+        let item = self.items.remove(from);
+        if from < to {
+            to -= 1;
+        }
+        if after {
+            to += 1;
+        }
+        to = to.min(self.items.len());
+        self.items.insert(to, item);
+        let _ = self.save();
+        true
     }
 }
 

@@ -44,8 +44,16 @@ fn default_glob() -> String {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum MatchPred {
+    /// Full topic path equals (case-insensitive).
+    TopicEquals { value: String },
+    /// Topic path contains substring (case-insensitive).
+    TopicContains { value: String },
+    /// Glob / `*` / `?`, or MQTT `+` / `#` filter.
+    TopicMatches { pattern: String },
     PayloadEquals { value: String },
     PayloadContains { value: String },
+    /// Whole payload parsed as a number, then compared.
+    PayloadNumber { op: String, value: f64 },
     JsonPathEquals { path: String, value: Value },
     JsonPathNumber { path: String, op: String, value: f64 },
     JsonPathTruthy { path: String },
@@ -188,7 +196,7 @@ impl ColorRulesStore {
             if !topic_glob_match(&r.topic_glob, topic) {
                 continue;
             }
-            if pred_matches(&r.match_rule, payload) {
+            if pred_matches(&r.match_rule, topic, payload) {
                 return Some(&r.style);
             }
         }
@@ -209,33 +217,118 @@ fn topic_glob_match(glob: &str, topic: &str) -> bool {
     subscribe::topic_matches_filter(topic, g)
 }
 
-fn pred_matches(pred: &MatchPred, payload: &str) -> bool {
+fn pred_matches(pred: &MatchPred, topic: &str, payload: &str) -> bool {
     let trimmed = payload.trim();
     match pred {
+        MatchPred::TopicEquals { value } => {
+            !value.trim().is_empty() && topic.eq_ignore_ascii_case(value.trim())
+        }
+        MatchPred::TopicContains { value } => {
+            !value.is_empty()
+                && topic
+                    .to_lowercase()
+                    .contains(&value.trim().to_lowercase())
+        }
+        MatchPred::TopicMatches { pattern } => topic_pattern_match(topic, pattern.trim()),
         MatchPred::PayloadEquals { value } => trimmed == value.trim(),
         MatchPred::PayloadContains { value } => {
             !value.is_empty() && trimmed.to_lowercase().contains(&value.to_lowercase())
+        }
+        MatchPred::PayloadNumber { op, value } => {
+            let Some(n) = parse_payload_number(trimmed) else {
+                return false;
+            };
+            cmp_f64(op, n, *value)
         }
         MatchPred::JsonPathEquals { path, value } => {
             json_at(payload, path).is_some_and(|v| json_eq(&v, value))
         }
         MatchPred::JsonPathNumber { path, op, value } => {
-            let Some(n) = json_at(payload, path).and_then(|v| v.as_f64()) else {
+            let Some(n) = json_at(payload, path).and_then(json_as_f64) else {
                 return false;
             };
-            match op.as_str() {
-                "<" => n < *value,
-                "<=" => n <= *value,
-                ">" => n > *value,
-                ">=" => n >= *value,
-                "==" | "=" => (n - *value).abs() < 1e-9,
-                _ => false,
-            }
+            cmp_f64(op, n, *value)
         }
         MatchPred::JsonPathTruthy { path } => {
             json_at(payload, path).is_some_and(|v| json_truthy(&v))
         }
     }
+}
+
+fn cmp_f64(op: &str, n: f64, value: f64) -> bool {
+    match op {
+        "<" => n < value,
+        "<=" => n <= value,
+        ">" => n > value,
+        ">=" => n >= value,
+        "==" | "=" => (n - value).abs() < 1e-9,
+        _ => false,
+    }
+}
+
+fn parse_payload_number(trimmed: &str) -> Option<f64> {
+    if trimmed.is_empty() {
+        return None;
+    }
+    // Bare number, or a JSON number literal.
+    if let Ok(n) = trimmed.parse::<f64>() {
+        return Some(n);
+    }
+    let v: Value = serde_json::from_str(trimmed).ok()?;
+    json_as_f64(v)
+}
+
+fn json_as_f64(v: Value) -> Option<f64> {
+    match v {
+        Value::Number(n) => n.as_f64(),
+        Value::String(s) => s.trim().parse().ok(),
+        Value::Bool(b) => Some(if b { 1.0 } else { 0.0 }),
+        _ => None,
+    }
+}
+
+/// Topic name pattern: MQTT `+`/`#` when present, else `*` / `?` glob (case-insensitive).
+fn topic_pattern_match(topic: &str, pattern: &str) -> bool {
+    if pattern.is_empty() {
+        return false;
+    }
+    if pattern.contains('+') || pattern.contains('#') {
+        return subscribe::topic_matches_filter(topic, pattern);
+    }
+    glob_match_ci(topic, pattern)
+}
+
+/// Simple case-insensitive glob: `*` any run, `?` one char.
+fn glob_match_ci(text: &str, pattern: &str) -> bool {
+    let t: Vec<char> = text.to_lowercase().chars().collect();
+    let p: Vec<char> = pattern.to_lowercase().chars().collect();
+    glob_match_chars(&t, &p)
+}
+
+fn glob_match_chars(text: &[char], pattern: &[char]) -> bool {
+    let (mut ti, mut pi) = (0usize, 0usize);
+    let mut star_pi = None;
+    let mut star_ti = 0usize;
+    while ti < text.len() {
+        if pi < pattern.len() && (pattern[pi] == '?' || pattern[pi] == text[ti]) {
+            ti += 1;
+            pi += 1;
+        } else if pi < pattern.len() && pattern[pi] == '*' {
+            star_pi = Some(pi);
+            star_ti = ti;
+            pi += 1;
+        } else if let Some(sp) = star_pi {
+            pi = sp + 1;
+            star_ti += 1;
+            ti = star_ti;
+        } else {
+            return false;
+        }
+    }
+    while pi < pattern.len() && pattern[pi] == '*' {
+        pi += 1;
+    }
+    pi == pattern.len()
 }
 
 fn json_at(payload: &str, path: &str) -> Option<Value> {

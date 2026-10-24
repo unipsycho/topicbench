@@ -211,7 +211,7 @@ impl MqttMonitorApp {
             const PRO_GAP: f32 = 8.0;
             let clicked = if mode == SectionMode::Full {
                 self.icons
-                    .command(ui, "data_table", "Simulation", selected, &tip)
+                    .command(ui, "data_table", "Simulate", selected, &tip)
                     .clicked()
             } else {
                 self.icons
