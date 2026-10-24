@@ -18,7 +18,7 @@ Latest free release: **[v1.1.0](https://github.com/unipsycho/topicbench/releases
 
 [All releases](https://github.com/unipsycho/topicbench/releases) · [Source on GitHub](https://github.com/unipsycho/topicbench)
 
-TopicBench Pro binaries are distributed separately to licensed customers (not on this public Releases page). See [TopicBench Pro](https://www.agileautomation.ca/products/topic-bench).
+TopicBench Pro is the paid companion — a standalone download for licensed customers. The free TopicBench app can be used unrestricted for the base features. See [TopicBench Pro](https://www.agileautomation.ca/products/topic-bench).
 
 ## Why TopicBench
 
