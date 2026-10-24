@@ -6,6 +6,20 @@ Free, open-source MQTT explorer and monitor for builders and testers.
   <img src="docs/images/topicbench.png" alt="TopicBench main window" width="900">
 </p>
 
+## Download
+
+Latest free release: **[v1.1.0](https://github.com/unipsycho/topicbench/releases/tag/v1.1.0)**
+
+| | |
+|:--|:--|
+| **Windows** (x64) | [topicbench-windows-x64.exe](https://github.com/unipsycho/topicbench/releases/download/v1.1.0/topicbench-windows-x64.exe) |
+| **Linux** (x64) | [topicbench-linux-x64](https://github.com/unipsycho/topicbench/releases/download/v1.1.0/topicbench-linux-x64) |
+| SHA-256 checksums | [SHA256SUMS](https://github.com/unipsycho/topicbench/releases/download/v1.1.0/SHA256SUMS) |
+
+[All releases](https://github.com/unipsycho/topicbench/releases) · [Source on GitHub](https://github.com/unipsycho/topicbench)
+
+TopicBench Pro binaries are distributed separately to licensed customers (not on this public Releases page). See [TopicBench Pro](https://www.agileautomation.ca/products/topic-bench).
+
 ## Why TopicBench
 
 - **100% Rust** — built entirely in Rust to handle massive topic trees and topic lists with very efficient memory and CPU use
@@ -82,10 +96,17 @@ Bookmarks jump you anywhere in a tree and auto-expand that topic for immediate a
 
 ## Download
 
-**[v1.1.0](https://github.com/unipsycho/topicbench/releases/tag/v1.1.0)** — Linux (`topicbench-linux-x64`) and Windows (`topicbench-windows-x64.exe`), plus `SHA256SUMS`.
+Latest free release: **[v1.1.0](https://github.com/unipsycho/topicbench/releases/tag/v1.1.0)**
 
-All releases: [github.com/unipsycho/topicbench/releases](https://github.com/unipsycho/topicbench/releases)  
-Repo: [github.com/unipsycho/topicbench](https://github.com/unipsycho/topicbench)
+| | |
+|:--|:--|
+| **Windows** (x64) | [topicbench-windows-x64.exe](https://github.com/unipsycho/topicbench/releases/download/v1.1.0/topicbench-windows-x64.exe) |
+| **Linux** (x64) | [topicbench-linux-x64](https://github.com/unipsycho/topicbench/releases/download/v1.1.0/topicbench-linux-x64) |
+| SHA-256 checksums | [SHA256SUMS](https://github.com/unipsycho/topicbench/releases/download/v1.1.0/SHA256SUMS) |
+
+[All releases](https://github.com/unipsycho/topicbench/releases) · [Source on GitHub](https://github.com/unipsycho/topicbench)
+
+TopicBench Pro binaries are distributed separately to licensed customers (not on this public Releases page). See [TopicBench Pro](https://www.agileautomation.ca/products/topic-bench).
 
 ## Build from source
 
