@@ -1,9 +1,11 @@
-//! Color rules editor (Pro) — ordered fixed predicates; live tree paint.
+//! Color Rules editor (Pro) — ordered fixed predicates; live tree paint.
 //! Opens as a real OS viewport (Payload undock pattern).
+//! Each rule is a dense inline row with Topic / Value / Background color chips;
+//! click a chip for a swatch popover (hue + alpha).
 
 use crate::pro::color_rules::{ColorRule, ColorRulesStore, MatchPred, RuleStyle};
 use crate::ui::icons::{self, IconSet, CHROME_BG, CHROME_MUTED};
-use eframe::egui::{self, Color32, Pos2, RichText, ViewportBuilder, ViewportClass};
+use eframe::egui::{self, Color32, Id, Pos2, RichText, ViewportBuilder, ViewportClass};
 
 /// Preset hues + greys. Alpha comes from click Y inside each gradient swatch.
 const PRESETS: &[(&str, [u8; 3])] = &[
@@ -26,9 +28,11 @@ const PRESETS: &[(&str, [u8; 3])] = &[
     ("Near black", [40, 42, 48]),
 ];
 
-/// Swatch size: tall enough for a readable opaque→transparent gradient.
-const SWATCH_W: f32 = 14.0;
-const SWATCH_H: f32 = 28.0;
+/// Compact current-color chip on the rule row.
+const CHIP_SIZE: f32 = 18.0;
+/// Popover swatches — one horizontal row; tall for precise alpha clicks.
+const SWATCH_W: f32 = 18.0;
+const SWATCH_H: f32 = 54.0; // ~50% taller than prior 36px popover swatches
 /// Floor alpha at bottom of swatch (near-transparent, still visible).
 const ALPHA_FLOOR: u8 = 16;
 
@@ -47,23 +51,17 @@ pub fn draw_popup(
     ctx.show_viewport_immediate(
         egui::ViewportId::from_hash_of("topicbench_color_rules_vp"),
         ViewportBuilder::default()
-            .with_title("Color rules")
-            .with_inner_size([640.0, 460.0])
-            .with_min_inner_size([480.0, 280.0]),
+            .with_title("Color Rules")
+            .with_inner_size([720.0, 420.0])
+            .with_min_inner_size([520.0, 240.0]),
         |ctx, class| {
             let mut paint = |ui: &mut egui::Ui| {
                 icons::section_header_bar(ui, |ui| {
-                    icons::section_icon(ui, icons, "alerts");
-                    icons::section_title(ui, "Color rules");
-                    ui.add_space(8.0);
-                    ui.label(
-                        RichText::new("First match wins · leaves with payloads")
-                            .small()
-                            .color(CHROME_MUTED),
-                    );
+                    icons::section_icon(ui, icons, "color_rules");
+                    icons::section_title(ui, "Color Rules");
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if icons
-                            .tiny(ui, "remove_x", false, "Close Color rules")
+                            .tiny(ui, "remove_x", false, "Close Color Rules")
                             .clicked()
                         {
                             close = true;
@@ -76,17 +74,32 @@ pub fn draw_popup(
                         }
                     });
                 });
+                // Subtitle under header — body size, not cramped header chrome.
+                ui.add_space(4.0);
+                ui.label(
+                    RichText::new("First match wins · leaves with payloads").color(CHROME_MUTED),
+                );
+                ui.add_space(2.0);
                 ui.separator();
 
                 let mut remove: Option<String> = None;
                 let mut dirty = false;
+                // Agent/screenshot helper: open first Topic chip popover once.
+                let force_pop = std::env::var_os("TOPICBENCH_COLOR_RULES_OPEN_POPOVER").is_some();
                 let n = store.rules.len();
                 egui::ScrollArea::vertical().show(ui, |ui| {
                     for i in 0..n {
                         ui.group(|ui| {
-                            draw_rule_row(ui, &mut store.rules[i], icons, &mut remove, &mut dirty);
+                            draw_rule_row(
+                                ui,
+                                &mut store.rules[i],
+                                icons,
+                                &mut remove,
+                                &mut dirty,
+                                force_pop && i == 0,
+                            );
                         });
-                        ui.add_space(4.0);
+                        ui.add_space(2.0);
                     }
                 });
                 if let Some(id) = remove {
@@ -98,13 +111,13 @@ pub fn draw_popup(
             };
             match class {
                 ViewportClass::Embedded => {
-                    egui::Window::new("Color rules")
+                    egui::Window::new("Color Rules")
                         .id(egui::Id::new("topicbench_color_rules"))
                         .title_bar(false)
                         .collapsible(false)
                         .resizable(true)
-                        .default_width(480.0)
-                        .default_height(360.0)
+                        .default_width(520.0)
+                        .default_height(320.0)
                         .frame(egui::Frame::window(&ctx.style()).fill(CHROME_BG))
                         .show(ctx, |ui| paint(ui));
                 }
@@ -134,126 +147,257 @@ fn draw_rule_row(
     icons: &IconSet,
     remove: &mut Option<String>,
     dirty: &mut bool,
+    force_open_topic_pop: bool,
 ) {
-    ui.horizontal(|ui| {
+    // One dense row: enable · name · Topic scope · Match · Topic/Value/Background chips · trash
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing.x = 4.0;
         if ui.checkbox(&mut rule.enabled, "").changed() {
             *dirty = true;
         }
         if ui
             .add(
                 egui::TextEdit::singleline(&mut rule.name)
-                    .desired_width(120.0)
+                    .desired_width(100.0)
                     .hint_text("Name"),
             )
             .changed()
         {
             *dirty = true;
         }
-        ui.label(RichText::new("topic").small().color(CHROME_MUTED));
+        // Column labels use normal panel body size (not .small()).
+        ui.label(RichText::new("Topic").color(CHROME_MUTED));
         if ui
             .add(
                 egui::TextEdit::singleline(&mut rule.topic_glob)
-                    .desired_width(140.0)
+                    .desired_width(110.0)
                     .hint_text("glob #"),
             )
             .changed()
         {
             *dirty = true;
         }
+
+        ui.label(RichText::new("Match").color(CHROME_MUTED));
+        draw_match_controls(ui, rule, dirty);
+
+        ui.add_space(6.0);
+        color_chip_column(
+            ui,
+            "Topic",
+            &rule.id,
+            "topic",
+            &mut rule.style.topic_color,
+            dirty,
+            force_open_topic_pop,
+        );
+        color_chip_column(
+            ui,
+            "Value",
+            &rule.id,
+            "value",
+            &mut rule.style.value_color,
+            dirty,
+            false,
+        );
+        color_chip_column(
+            ui,
+            "Background",
+            &rule.id,
+            "bg",
+            &mut rule.style.row_bg,
+            dirty,
+            false,
+        );
+
+        ui.add_space(4.0);
         if icons.tiny(ui, "trash", false, "Delete rule").clicked() {
             *remove = Some(rule.id.clone());
         }
     });
-    ui.horizontal(|ui| {
-        ui.label(RichText::new("match").small().color(CHROME_MUTED));
-        let mut kind = match_kind(&rule.match_rule);
-        egui::ComboBox::from_id_salt(("cr_kind", &rule.id))
-            .selected_text(kind_label(kind))
-            .width(168.0)
-            .show_ui(ui, |ui| {
-                // Topic · Payload text · Payload number · JSON path
-                for (k, lab) in MATCH_KINDS {
-                    if ui.selectable_label(kind == *k, *lab).clicked() {
-                        kind = k;
-                        *dirty = true;
-                    }
-                }
-            });
-        if kind != match_kind(&rule.match_rule) {
-            rule.match_rule = default_pred(kind);
-            *dirty = true;
-        }
-        match &mut rule.match_rule {
-            MatchPred::TopicEquals { value } => {
-                text_field(ui, value, "plant/line1/alarm", 160.0, dirty);
-            }
-            MatchPred::TopicContains { value } => {
-                text_field(ui, value, "alarm", 140.0, dirty);
-            }
-            MatchPred::TopicMatches { pattern } => {
-                if ui
-                    .add(
-                        egui::TextEdit::singleline(pattern)
-                            .desired_width(180.0)
-                            .hint_text("*alarm* or plant/+/temp"),
-                    )
-                    .on_hover_text("Glob * / ? or MQTT + / #")
-                    .changed()
-                {
-                    *dirty = true;
-                }
-            }
-            MatchPred::PayloadEquals { value } => {
-                text_field(ui, value, "ALARM", 120.0, dirty);
-            }
-            MatchPred::PayloadContains { value } => {
-                text_field(ui, value, "fault", 120.0, dirty);
-            }
-            MatchPred::PayloadNumber { op, value } => {
-                op_combo(ui, ("cr_payload_op", rule.id.as_str()), op, dirty);
-                if ui.add(egui::DragValue::new(value).speed(0.5)).changed() {
-                    *dirty = true;
-                }
-            }
-            MatchPred::JsonPathEquals { path, value } => {
-                text_field(ui, path, "path", 80.0, dirty);
-                let mut s = value_as_edit(value);
-                if ui
-                    .add(egui::TextEdit::singleline(&mut s).desired_width(80.0))
-                    .changed()
-                {
-                    *value = parse_value_edit(&s);
-                    *dirty = true;
-                }
-            }
-            MatchPred::JsonPathNumber { path, op, value } => {
-                text_field(ui, path, "path", 70.0, dirty);
-                op_combo(ui, ("cr_op", rule.id.as_str()), op, dirty);
-                if ui.add(egui::DragValue::new(value).speed(0.5)).changed() {
-                    *dirty = true;
-                }
-            }
-            MatchPred::JsonPathTruthy { path } => {
-                text_field(ui, path, "path", 100.0, dirty);
-            }
-        }
-    });
-    // One horizontal strip per slot; wrap only when the window is too narrow.
-    ui.label(RichText::new("colors").small().color(CHROME_MUTED));
-    color_swatches(ui, "topic", &mut rule.style.topic_color, dirty);
-    color_swatches(ui, "value", &mut rule.style.value_color, dirty);
-    color_swatches(ui, "bg", &mut rule.style.row_bg, dirty);
 }
 
-fn color_swatches(
+fn draw_match_controls(ui: &mut egui::Ui, rule: &mut ColorRule, dirty: &mut bool) {
+    let mut kind = match_kind(&rule.match_rule);
+    egui::ComboBox::from_id_salt(("cr_kind", &rule.id))
+        .selected_text(kind_label(kind))
+        .width(148.0)
+        .show_ui(ui, |ui| {
+            for (k, lab) in MATCH_KINDS {
+                if ui.selectable_label(kind == *k, *lab).clicked() {
+                    kind = k;
+                    *dirty = true;
+                }
+            }
+        });
+    if kind != match_kind(&rule.match_rule) {
+        rule.match_rule = default_pred(kind);
+        *dirty = true;
+    }
+    match &mut rule.match_rule {
+        MatchPred::TopicEquals { value } => {
+            text_field(ui, value, "plant/line1/alarm", 140.0, dirty);
+        }
+        MatchPred::TopicContains { value } => {
+            text_field(ui, value, "alarm", 120.0, dirty);
+        }
+        MatchPred::TopicMatches { pattern } => {
+            if ui
+                .add(
+                    egui::TextEdit::singleline(pattern)
+                        .desired_width(150.0)
+                        .hint_text("*alarm* or plant/+/temp"),
+                )
+                .on_hover_text("Glob * / ? or MQTT + / #")
+                .changed()
+            {
+                *dirty = true;
+            }
+        }
+        MatchPred::PayloadEquals { value } => {
+            text_field(ui, value, "ALARM", 100.0, dirty);
+        }
+        MatchPred::PayloadContains { value } => {
+            text_field(ui, value, "fault", 100.0, dirty);
+        }
+        MatchPred::PayloadNumber { op, value } => {
+            op_combo(ui, ("cr_payload_op", rule.id.as_str()), op, dirty);
+            if ui.add(egui::DragValue::new(value).speed(0.5)).changed() {
+                *dirty = true;
+            }
+        }
+        MatchPred::JsonPathEquals { path, value } => {
+            text_field(ui, path, "path", 70.0, dirty);
+            let mut s = value_as_edit(value);
+            if ui
+                .add(egui::TextEdit::singleline(&mut s).desired_width(70.0))
+                .changed()
+            {
+                *value = parse_value_edit(&s);
+                *dirty = true;
+            }
+        }
+        MatchPred::JsonPathNumber { path, op, value } => {
+            text_field(ui, path, "path", 60.0, dirty);
+            op_combo(ui, ("cr_op", rule.id.as_str()), op, dirty);
+            if ui.add(egui::DragValue::new(value).speed(0.5)).changed() {
+                *dirty = true;
+            }
+        }
+        MatchPred::JsonPathTruthy { path } => {
+            text_field(ui, path, "path", 90.0, dirty);
+        }
+    }
+}
+
+/// Label + current-color chip; click opens the swatch popover for that slot.
+fn color_chip_column(
     ui: &mut egui::Ui,
     label: &str,
+    rule_id: &str,
+    slot_key: &str,
     slot: &mut Option<[u8; 4]>,
     dirty: &mut bool,
+    force_open: bool,
 ) {
-    ui.horizontal_wrapped(|ui| {
+    ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 3.0;
-        ui.label(RichText::new(label).small());
+        ui.label(RichText::new(label).color(CHROME_MUTED));
+        let popup_id = Id::new(("cr_color_pop", rule_id, slot_key));
+        let tip = match slot {
+            Some([r, g, b, a]) => format!("{label} color · rgba({r},{g},{b},{a}) — click to change"),
+            None => format!("{label} color · unset — click to pick"),
+        };
+        let resp = paint_color_chip(ui, slot.as_ref()).on_hover_text(tip);
+        if resp.clicked() {
+            ui.memory_mut(|mem| mem.toggle_popup(popup_id));
+        } else if force_open {
+            ui.memory_mut(|mem| mem.open_popup(popup_id));
+        }
+        // CloseOnClickOutside: Esc / click-away dismiss; swatch/clear close explicitly.
+        egui::popup::popup_below_widget(
+            ui,
+            popup_id,
+            &resp,
+            egui::popup::PopupCloseBehavior::CloseOnClickOutside,
+            |ui| {
+                // Wide enough for all presets on one row (17 × ~22px).
+                ui.set_min_width((PRESETS.len() as f32) * (SWATCH_W + 4.0) + 16.0);
+                color_swatch_popover(ui, slot, dirty);
+            },
+        );
+    });
+}
+
+fn paint_color_chip(ui: &mut egui::Ui, color: Option<&[u8; 4]>) -> egui::Response {
+    let (rect, resp) =
+        ui.allocate_exact_size(egui::vec2(CHIP_SIZE, CHIP_SIZE), egui::Sense::click());
+    let painter = ui.painter();
+    paint_checker(painter, rect, 4.0);
+    if let Some([r, g, b, a]) = color {
+        painter.rect_filled(
+            rect,
+            2.0,
+            Color32::from_rgba_unmultiplied(*r, *g, *b, *a),
+        );
+    }
+    painter.rect_stroke(
+        rect,
+        2.0,
+        egui::Stroke::new(1.0_f32, Color32::from_rgb(90, 96, 108)),
+        egui::StrokeKind::Outside,
+    );
+    resp
+}
+
+fn paint_checker(painter: &egui::Painter, rect: egui::Rect, cell: f32) {
+    let light = Color32::from_rgb(48, 52, 60);
+    let dark = Color32::from_rgb(28, 30, 36);
+    painter.rect_filled(rect, 2.0, dark);
+    let mut y = rect.top();
+    let mut row = 0i32;
+    while y < rect.bottom() - 0.5 {
+        let y1 = (y + cell).min(rect.bottom());
+        let mut x = rect.left();
+        let mut col = 0i32;
+        while x < rect.right() - 0.5 {
+            let x1 = (x + cell).min(rect.right());
+            if (row + col) % 2 == 0 {
+                painter.rect_filled(
+                    egui::Rect::from_min_max(Pos2::new(x, y), Pos2::new(x1, y1)),
+                    0.0,
+                    light,
+                );
+            }
+            x = x1;
+            col += 1;
+        }
+        y = y1;
+        row += 1;
+    }
+}
+
+/// Popover body: hue/grey gradient swatches + clear for this slot.
+fn color_swatch_popover(ui: &mut egui::Ui, slot: &mut Option<[u8; 4]>, dirty: &mut bool) {
+    ui.horizontal(|ui| {
+        ui.label(RichText::new("Pick color").small().color(CHROME_MUTED));
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if ui
+                .small_button("Clear")
+                .on_hover_text("Remove color for this slot")
+                .clicked()
+            {
+                *slot = None;
+                *dirty = true;
+                ui.memory_mut(|mem| mem.close_popup());
+            }
+        });
+    });
+    ui.add_space(4.0);
+    // Force one horizontal row — never wrap/stack swatches.
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 4.0;
+        ui.set_min_width((PRESETS.len() as f32) * (SWATCH_W + 4.0));
         for (name, rgb) in PRESETS {
             let selected = slot
                 .as_ref()
@@ -268,12 +412,9 @@ fn color_swatches(
                     let alpha = alpha_from_y(rect, pos.y);
                     *slot = Some([rgb[0], rgb[1], rgb[2], alpha]);
                     *dirty = true;
+                    ui.memory_mut(|mem| mem.close_popup());
                 }
             }
-        }
-        if ui.small_button("×").on_hover_text("Clear").clicked() {
-            *slot = None;
-            *dirty = true;
         }
     });
 }
@@ -289,7 +430,7 @@ fn paint_gradient_swatch(
     let painter = ui.painter();
     // Dark base so faded end of the gradient stays readable.
     painter.rect_filled(rect, 2.0, Color32::from_rgb(22, 24, 28));
-    const STEPS: i32 = 20;
+    const STEPS: i32 = 24;
     for i in 0..STEPS {
         let t0 = i as f32 / STEPS as f32;
         let t1 = (i + 1) as f32 / STEPS as f32;
@@ -321,7 +462,8 @@ fn paint_gradient_swatch(
     );
     // Tick at current alpha Y when this hue is selected.
     if let Some([_, _, _, a]) = current {
-        let t = 1.0 - ((*a as f32 - ALPHA_FLOOR as f32) / (255.0 - ALPHA_FLOOR as f32)).clamp(0.0, 1.0);
+        let t = 1.0
+            - ((*a as f32 - ALPHA_FLOOR as f32) / (255.0 - ALPHA_FLOOR as f32)).clamp(0.0, 1.0);
         let y = egui::lerp(rect.top()..=rect.bottom(), t);
         painter.hline(
             rect.left()..=rect.right(),
