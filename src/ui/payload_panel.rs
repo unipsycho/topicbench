@@ -6,6 +6,8 @@ use crate::mqtt::profile::{ProfileStore, StickyViewMode};
 use crate::mqtt::session::SessionManager;
 use crate::mqtt::value_path;
 use crate::mqtt::topic_tree::FLASH_MS;
+use crate::pro::history_client::{self, HistoryForwarder, PayloadScrub};
+use crate::pro::{self, Entitlement};
 use crate::ui::flash;
 use crate::ui::hover_tip;
 use crate::ui::icons::{self, IconSet};
@@ -125,6 +127,8 @@ pub fn draw(
     open_stickies: &mut bool,
     status: &mut String,
     popped: &mut Vec<PoppedPayload>,
+    history_fwd: Option<&HistoryForwarder>,
+    payload_scrub: &mut PayloadScrub,
 ) {
     // Stay within the side-panel width — long topic paths wrap; they must not widen the column.
     let panel_w = ui.available_width();
@@ -159,6 +163,8 @@ pub fn draw(
         &topic,
         ("payload-panel", profile_id.as_str(), topic.as_str()),
         Some((&mut pop_out, &mut delete_hierarchy)),
+        history_fwd,
+        Some(payload_scrub),
     );
 
     if pop_out {
@@ -228,6 +234,8 @@ pub fn draw_undocked_viewports(
                         &topic,
                         ("payload-pop", profile_id.as_str(), topic.as_str()),
                         None, // already floated — no pop-out / trash chrome
+                        None,
+                        None, // scrub stays on the docked Payload panel
                     );
                 };
                 match class {
@@ -279,6 +287,7 @@ fn push_popped(
 
 /// Shared payload body for the side panel and floating windows.
 /// `actions`: optional `(pop_out, delete)` flags — icons sit beside the broker name.
+#[allow(clippy::too_many_arguments)]
 fn draw_topic_body(
     ui: &mut egui::Ui,
     sessions: &mut SessionManager,
@@ -293,6 +302,8 @@ fn draw_topic_body(
     topic: &str,
     id_salt: impl std::hash::Hash,
     mut actions: Option<(&mut bool, &mut bool)>,
+    history_fwd: Option<&HistoryForwarder>,
+    mut payload_scrub: Option<&mut PayloadScrub>,
 ) {
     let accent = profiles
         .profiles
@@ -340,12 +351,42 @@ fn draw_topic_body(
 
     match node {
         Some(n) if n.last_payload.as_deref().is_some_and(|p| !p.is_empty()) => {
-            let payload = n.last_payload.as_deref().unwrap_or("").to_string();
+            let live_payload = n.last_payload.as_deref().unwrap_or("").to_string();
+            let message_count = n.message_count;
+            // Merge short ring + Pro deep samples for scrub (oldest → newest).
+            let history = merge_payload_history(
+                profile_id,
+                topic,
+                &n.payload_history,
+                history_fwd,
+            );
+            let (payload, scrubbing) = if let Some(scrub) = payload_scrub.as_deref_mut() {
+                if pro::has(Entitlement::HistoryScrubber) {
+                    scrub.sync_topic(profile_id, topic);
+                    let idx = scrub.index_in(history.len());
+                    let live = scrub.is_live();
+                    let p = idx
+                        .and_then(|i| history.get(i).map(|(_, s)| s.clone()))
+                        .unwrap_or_else(|| live_payload.clone());
+                    (p, !live)
+                } else {
+                    (live_payload.clone(), false)
+                }
+            } else {
+                (live_payload.clone(), false)
+            };
             let display = display_text(&payload);
             let is_json = json_view::try_pretty_json(&payload).is_some();
             let now = Instant::now();
-            search.note_display(profile_id, topic, &display, now);
-            let change_bg = change_flash_bg(search.change_flash_until, now);
+            // Change flash only tracks live tip (avoid flashing while scrubbing).
+            if !scrubbing {
+                search.note_display(profile_id, topic, &display, now);
+            }
+            let change_bg = if scrubbing {
+                Color32::TRANSPARENT
+            } else {
+                change_flash_bg(search.change_flash_until, now)
+            };
             draw_search_bar(ui, icons, search, &display);
             ui.add_space(4.0);
             draw_searchable_body(
@@ -354,7 +395,7 @@ fn draw_topic_body(
                 is_json,
                 id_salt,
                 search,
-                n.message_count,
+                message_count,
                 icons,
                 profile_id,
                 profile_name,
@@ -365,11 +406,89 @@ fn draw_topic_body(
                 open_stickies,
                 status,
                 change_bg,
+                payload_scrub,
+                history.len(),
             );
         }
         _ => {
             ui.weak("No payload yet for this topic.");
         }
+    }
+}
+
+/// Short OSS ring ∪ Pro deep query payloads for one topic (oldest → newest).
+fn merge_payload_history(
+    profile_id: &str,
+    topic: &str,
+    short: &std::collections::VecDeque<(Instant, String)>,
+    history_fwd: Option<&HistoryForwarder>,
+) -> Vec<(Instant, String)> {
+    let mut out: Vec<(Instant, String)> = short.iter().cloned().collect();
+    if let Some(fwd) = history_fwd {
+        if pro::has(Entitlement::HistoryScrubber) {
+            let series_id = PinBoard::key(profile_id, topic);
+            let (from_ms, to_ms) = if let (Some((t0, _)), Some((t1, _))) =
+                (short.front(), short.back())
+            {
+                (
+                    history_client::instant_to_t_ms(*t0).saturating_sub(86_400_000),
+                    history_client::instant_to_t_ms(*t1).saturating_add(1_000),
+                )
+            } else {
+                let now = history_client::instant_to_t_ms(Instant::now());
+                (now.saturating_sub(86_400_000), now)
+            };
+            for s in fwd.query_cached(&series_id, from_ms, to_ms, 8000) {
+                let payload = if s.payload.is_empty() {
+                    s.v.map(|v| v.to_string()).unwrap_or_default()
+                } else {
+                    s.payload
+                };
+                if payload.is_empty() {
+                    continue;
+                }
+                out.push((history_client::t_ms_to_instant(s.t_ms), payload));
+            }
+        }
+    }
+    out.sort_by(|a, b| a.0.cmp(&b.0));
+    out.dedup_by(|a, b| a.0 == b.0 && a.1 == b.1);
+    out
+}
+
+/// Compact scrub beside `#count`: slide left for older payloads; tip = live.
+fn draw_payload_scrub(ui: &mut egui::Ui, scrub: &mut PayloadScrub, history_len: usize) {
+    let max_back = history_len.saturating_sub(1);
+    // Slider: 0 = oldest, max = live tip (invert steps_back for natural left=old).
+    let mut pos = (max_back - scrub.steps_back().min(max_back)) as f32;
+    let max_f = max_back as f32;
+    ui.scope(|ui| {
+        ui.set_max_width(120.0);
+        let resp = ui.add(
+            egui::Slider::new(&mut pos, 0.0..=max_f)
+                .show_value(false)
+                .trailing_fill(true),
+        );
+        if resp.changed() || resp.dragged() {
+            let idx = pos.round().clamp(0.0, max_f) as usize;
+            scrub.set_steps_back(max_back - idx);
+        }
+        resp.on_hover_text("Scrub previous payloads · tip = live");
+    });
+    if scrub.is_live() {
+        ui.label(
+            RichText::new("Live")
+                .small()
+                .color(Color32::from_rgb(90, 180, 110)),
+        );
+    } else if ui
+        .add(egui::Button::new(
+            RichText::new(format!("−{}", scrub.steps_back())).small(),
+        ))
+        .on_hover_text("Scrubbing history — click to resume live")
+        .clicked()
+    {
+        scrub.resume_live();
     }
 }
 
@@ -457,6 +576,7 @@ fn draw_search_bar(
     });
 }
 
+#[allow(clippy::too_many_arguments)]
 fn draw_searchable_body(
     ui: &mut egui::Ui,
     display: &str,
@@ -474,6 +594,8 @@ fn draw_searchable_body(
     open_stickies: &mut bool,
     status: &mut String,
     change_bg: Color32,
+    payload_scrub: Option<&mut PayloadScrub>,
+    history_len: usize,
 ) {
     let matches = find_matches(display, &search.query);
     let n = matches.len();
@@ -483,7 +605,7 @@ fn draw_searchable_body(
     let current_line = matches.get(search.current).map(|m| m.line);
     let do_scroll = search.scroll_to_current && current_line.is_some();
 
-    // Kind label + message count on one row.
+    // Kind label + message count + optional Pro history scrub on one row.
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 8.0;
         if is_json {
@@ -497,6 +619,12 @@ fn draw_searchable_body(
                     .small()
                     .weak(),
             );
+        }
+        // Compact scrub beside #count — only when Pro HistoryScrubber is licensed.
+        if let Some(scrub) = payload_scrub {
+            if pro::has(Entitlement::HistoryScrubber) && history_len > 1 {
+                draw_payload_scrub(ui, scrub, history_len);
+            }
         }
     });
 

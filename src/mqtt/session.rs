@@ -696,12 +696,18 @@ impl SessionManager {
                     payload: msg.payload.clone(),
                     retain: msg.retain,
                 });
-                // Replay timed samples into sticky/Combined history (preserves off-focus).
+                // Replay timed samples into sticky/Combined + Payload history rings.
                 let samples: Vec<(Instant, String)> = if msg.samples.is_empty() {
                     vec![(now, msg.payload)]
                 } else {
                     msg.samples.into_iter().collect()
                 };
+                session
+                    .topic_tree
+                    .root
+                    .push_payload_samples(&topic, &samples);
+                // Pro deep-store forward (full payloads); drained on the UI thread.
+                pins.enqueue_topic_hist(&profile_id, &topic, &samples);
                 pins.on_message_samples(&profile_id, &name, &topic, &samples, msg.count);
             }
         }

@@ -1,10 +1,13 @@
 //! Browsable topic hierarchy built from live subscribed traffic.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
 use std::time::{Duration, Instant};
 
 /// Update-flash duration: full-on border, then fade out (resets on each new value).
 pub const FLASH_MS: u64 = 500;
+
+/// Short payload ring for Payload-panel history scrub (≈10 min at 1 Hz).
+const PAYLOAD_HISTORY_CAP: usize = 600;
 
 #[derive(Clone, Debug, Default)]
 pub struct TopicNode {
@@ -16,6 +19,8 @@ pub struct TopicNode {
     pub last_retain: bool,
     pub message_count: u64,
     pub flash_until: Option<Instant>,
+    /// Timed full payloads for Payload scrub (oldest → newest).
+    pub payload_history: VecDeque<(Instant, String)>,
 }
 
 impl TopicNode {
@@ -50,6 +55,27 @@ impl TopicNode {
         }
     }
 
+    /// Replay timed samples into the leaf payload history (Payload scrub / Pro forward).
+    pub fn push_payload_samples(&mut self, topic: &str, samples: &[(Instant, String)]) {
+        if samples.is_empty() {
+            return;
+        }
+        let parts: Vec<&str> = topic.split('/').collect();
+        let mut node = self;
+        for (i, part) in parts.iter().enumerate() {
+            node = node.children.entry((*part).to_string()).or_default();
+            if i + 1 == parts.len() {
+                for (at, payload) in samples {
+                    node.payload_history
+                        .push_back((*at, payload.clone()));
+                }
+                while node.payload_history.len() > PAYLOAD_HISTORY_CAP {
+                    node.payload_history.pop_front();
+                }
+            }
+        }
+    }
+
     /// Total messages in this node and all descendants (keeps growing while collapsed).
     pub fn subtree_message_count(&self) -> u64 {
         let mut total = self.message_count;
@@ -70,6 +96,7 @@ impl TopicNode {
             self.last_retain = false;
             self.message_count = 0;
             self.flash_until = None;
+            self.payload_history.clear();
             return had;
         }
         let mut node = self;

@@ -1,6 +1,6 @@
 //! Thin HTTP client + background forwarder for Pro `/history/*`.
 //!
-//! Deep store lives only in topicbench-pro. OSS enqueues sticky numeric samples
+//! Deep store lives only in topicbench-pro. OSS enqueues topic payloads
 //! without blocking MQTT ingest (bounded channel; drop + backoff if Pro is down).
 
 use serde::{Deserialize, Serialize};
@@ -30,13 +30,19 @@ pub struct FwdSample {
     #[serde(default)]
     pub field: String,
     pub t_ms: i64,
-    pub v: f64,
+    #[serde(default)]
+    pub payload: String,
+    #[serde(default)]
+    pub v: Option<f64>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct DeepSample {
     pub t_ms: i64,
-    pub v: f64,
+    #[serde(default)]
+    pub payload: String,
+    #[serde(default)]
+    pub v: Option<f64>,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -94,7 +100,7 @@ impl HistoryForwarder {
 
     /// Non-blocking; drops when the queue is full or Pro is lagging.
     pub fn try_enqueue(&self, sample: FwdSample) {
-        if !sample.v.is_finite() || sample.series_id.is_empty() {
+        if sample.series_id.is_empty() || sample.payload.is_empty() {
             return;
         }
         match self.tx.try_send(sample) {
@@ -376,53 +382,48 @@ pub fn t_ms_to_instant(t_ms: i64) -> Instant {
         .unwrap_or_else(Instant::now)
 }
 
-/// Session scrub UI state (per Combined / sticky Graph).
-#[derive(Clone, Debug)]
-pub struct ScrubState {
-    /// When true, playhead follows the live tail.
-    pub live: bool,
-    /// Absolute playhead time while scrubbing.
-    pub playhead: Option<Instant>,
+/// Payload-panel history scrub (session-only; one topic at a time).
+#[derive(Clone, Debug, Default)]
+pub struct PayloadScrub {
+    /// `(profile_id, topic)` currently scrubbing; cleared on topic switch → live.
+    focus: Option<(String, String)>,
+    /// Steps back from the live tip (`0` / None = live).
+    steps_back: usize,
 }
 
-impl Default for ScrubState {
-    fn default() -> Self {
-        Self {
-            live: true,
-            playhead: None,
+impl PayloadScrub {
+    /// Ensure scrub state matches the selected topic (reset to live on switch).
+    pub fn sync_topic(&mut self, profile_id: &str, topic: &str) {
+        let key = (profile_id.to_string(), topic.to_string());
+        if self.focus.as_ref() != Some(&key) {
+            self.focus = Some(key);
+            self.steps_back = 0;
         }
     }
-}
 
-impl ScrubState {
-    pub fn pause_at(&mut self, at: Instant) {
-        self.live = false;
-        self.playhead = Some(at);
+    pub fn is_live(&self) -> bool {
+        self.steps_back == 0
+    }
+
+    pub fn steps_back(&self) -> usize {
+        self.steps_back
+    }
+
+    pub fn set_steps_back(&mut self, n: usize) {
+        self.steps_back = n;
     }
 
     pub fn resume_live(&mut self) {
-        self.live = true;
-        self.playhead = None;
+        self.steps_back = 0;
     }
 
-    pub fn playhead_or_tail(&self, t1: Instant) -> Instant {
-        if self.live {
-            t1
-        } else {
-            self.playhead.unwrap_or(t1)
+    /// Index into `history` (oldest→newest) for the current scrub position.
+    pub fn index_in(&self, len: usize) -> Option<usize> {
+        if len == 0 {
+            return None;
         }
-    }
-}
-
-/// Combined + per-sticky Graph scrub controllers (session-only).
-#[derive(Default)]
-pub struct ScrubUi {
-    pub combined: ScrubState,
-    pub sticky: HashMap<String, ScrubState>,
-}
-
-impl ScrubUi {
-    pub fn for_sticky(&mut self, key: &str) -> &mut ScrubState {
-        self.sticky.entry(key.to_string()).or_default()
+        let tip = len - 1;
+        let back = self.steps_back.min(tip);
+        Some(tip - back)
     }
 }

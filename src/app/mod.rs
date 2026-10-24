@@ -116,8 +116,8 @@ pub struct MqttMonitorApp {
     sim_client: crate::pro::sim_client::SimClientState,
     /// Pro deep-history forwarder (None when HistoryScrubber not entitled).
     history_fwd: Option<crate::pro::history_client::HistoryForwarder>,
-    /// Graph / Combined scrub playhead state (session-only).
-    scrub_ui: crate::pro::history_client::ScrubUi,
+    /// Payload-panel history scrub (session-only).
+    payload_scrub: crate::pro::history_client::PayloadScrub,
 }
 
 impl MqttMonitorApp {
@@ -215,7 +215,7 @@ impl MqttMonitorApp {
             } else {
                 None
             },
-            scrub_ui: crate::pro::history_client::ScrubUi::default(),
+            payload_scrub: crate::pro::history_client::PayloadScrub::default(),
         }
     }
 }
@@ -248,7 +248,7 @@ impl eframe::App for MqttMonitorApp {
         if let Some(msg) = poll.status {
             self.status = msg;
         }
-        // Forward sticky numeric samples to Pro deep store (non-blocking; drop if down).
+        // Forward topic payloads to Pro deep store (non-blocking; drop if down).
         if let Some(fwd) = self.history_fwd.as_ref() {
             for s in self.pins.drain_history_fwd() {
                 fwd.try_enqueue(crate::pro::history_client::FwdSample {
@@ -257,6 +257,7 @@ impl eframe::App for MqttMonitorApp {
                     topic: s.topic,
                     field: s.field,
                     t_ms: crate::pro::history_client::instant_to_t_ms(s.at),
+                    payload: s.payload,
                     v: s.v,
                 });
             }

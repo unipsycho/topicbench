@@ -10,7 +10,7 @@ pub use crate::mqtt::profile::StickyViewMode;
 /// Ring size for sticky Graph / Combined series (≈10 min at 1 Hz).
 const HISTORY_CAP: usize = 600;
 
-/// Numeric sample drained by the Pro history forwarder (no Pro types here).
+/// Payload sample drained by the Pro history forwarder (no Pro types here).
 #[derive(Clone, Debug)]
 pub struct HistoryFwdSample {
     pub series_id: String,
@@ -18,7 +18,8 @@ pub struct HistoryFwdSample {
     pub topic: String,
     pub field: String,
     pub at: Instant,
-    pub v: f64,
+    pub payload: String,
+    pub v: Option<f64>,
 }
 
 /// Detected payload kind for Value mode.
@@ -172,9 +173,30 @@ impl PinBoard {
         self.items.contains_key(&Self::key(profile_id, topic))
     }
 
-    /// Take pending numeric samples for Pro deep-history forward (non-blocking enqueue).
+    /// Take pending payload samples for Pro deep-history forward (non-blocking enqueue).
     pub fn drain_history_fwd(&mut self) -> Vec<HistoryFwdSample> {
         std::mem::take(&mut self.pending_history_fwd)
+    }
+
+    /// Queue full topic payloads for Pro deep store (called from session apply).
+    pub fn enqueue_topic_hist(
+        &mut self,
+        profile_id: &str,
+        topic: &str,
+        samples: &[(Instant, String)],
+    ) {
+        for (at, payload) in samples {
+            let v = crate::mqtt::value_path::sample_numeric(payload);
+            self.pending_history_fwd.push(HistoryFwdSample {
+                series_id: Self::key(profile_id, topic),
+                profile: profile_id.to_string(),
+                topic: topic.to_string(),
+                field: String::new(),
+                at: *at,
+                payload: payload.clone(),
+                v,
+            });
+        }
     }
 
     /// Restore stickies saved on a profile (idempotent; reapplies view + Combined).
@@ -246,7 +268,6 @@ impl PinBoard {
     ) {
         let count = count.max(1);
         let last_i = samples.len() - 1;
-        let mut fwd: Vec<HistoryFwdSample> = Vec::new();
         for sticky in self.items.values_mut() {
             if sticky.profile_id != profile_id {
                 continue;
@@ -275,27 +296,12 @@ impl PinBoard {
                 while sticky.history.len() > HISTORY_CAP {
                     sticky.history.pop_front();
                 }
-                // Queue numeric points for Pro deep store (drained on UI thread).
-                if let Some(v) = numeric.filter(|n| n.is_finite()) {
-                    let series_id = Self::key(&sticky.profile_id, &sticky.topic);
-                    let (base_topic, field) =
-                        crate::mqtt::value_path::split_sticky_id(&sticky.topic);
-                    fwd.push(HistoryFwdSample {
-                        series_id,
-                        profile: sticky.profile_id.clone(),
-                        topic: base_topic.to_string(),
-                        field: field.unwrap_or("").to_string(),
-                        at: *at,
-                        v,
-                    });
-                }
                 if i == last_i {
                     sticky.message_count = sticky.message_count.saturating_add(count);
                     sticky.flash_until = Some(*at + Duration::from_millis(FLASH_MS));
                 }
             }
         }
-        self.pending_history_fwd.extend(fwd);
     }
 
     /// Pin (or switch) a topic/field sticky into Graph view and seed current sample.
