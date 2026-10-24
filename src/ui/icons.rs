@@ -171,7 +171,7 @@ impl IconSet {
         }
 
         // Caption with a few px clearance above the cell bottom (avoids section chrome collision).
-        // `\n` → two-line captions (e.g. Book- / marks, Color / rules) under the same icon.
+        // `\n` → two-line captions (e.g. Book- / marks, Color / Rules) under the same icon.
         let caption = if !enabled {
             Color32::from_rgb(100, 104, 112)
         } else if selected {
@@ -640,6 +640,7 @@ const ICONS: &[(&str, &[u8])] = &[
     ("broker_server", include_bytes!("../../assets/icons/broker_server.png")),
     ("clipboard_checklist", include_bytes!("../../assets/icons/clipboard_checklist.png")),
     ("cloud_broker", include_bytes!("../../assets/icons/cloud_broker.png")),
+    ("color_rules", include_bytes!("../../assets/icons/color_rules.png")),
     ("configuration_sliders", include_bytes!("../../assets/icons/configuration_sliders.png")),
     ("connect", include_bytes!("../../assets/icons/connect.png")),
     ("connection_status", include_bytes!("../../assets/icons/connection_status.png")),

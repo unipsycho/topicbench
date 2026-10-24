@@ -318,12 +318,18 @@ fn draw_broker_block(
             if crate::pro::has(crate::pro::Entitlement::RecordSimulate) {
                 let recording = recordings.is_recording(profile_id);
                 let tip = if recording {
+                    let rem = recordings.remaining_secs(profile_id).unwrap_or(0);
+                    let mm = rem / 60;
+                    let ss = rem % 60;
                     format!(
-                        "Stop recording ({} events) and save CSV",
+                        "Stop recording ({} events, {mm}:{ss:02} left) and save CSV",
                         recordings.event_count(profile_id)
                     )
                 } else {
-                    "Start recording this broker to CSV".into()
+                    format!(
+                        "Start recording this broker to CSV (max {} min)",
+                        recordings.max_secs / 60
+                    )
                 };
                 if icons
                     .tiny(ui, "event_log", recording, &tip)
@@ -339,7 +345,7 @@ fn draw_broker_block(
                             .save_file()
                         {
                             match recordings.stop_to_file(profile_id, &path) {
-                                Ok((_, n)) => {
+                                Ok((_, n, _csv)) => {
                                     *status = format!(
                                         "Recording saved ({n} events) → {}",
                                         path.display()
@@ -351,7 +357,7 @@ fn draw_broker_block(
                             // Dialog cancelled — keep recording running.
                         }
                     } else {
-                        recordings.start(profile_id);
+                        recordings.start(profile_id, profile_name.as_str());
                         *status = format!("Recording {profile_name}…");
                     }
                 }

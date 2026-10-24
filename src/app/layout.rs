@@ -197,7 +197,7 @@ impl MqttMonitorApp {
         });
     }
 
-    /// Pro ribbon group: Simulation + Bookmarks + Color rules (locked when unlicensed).
+    /// Pro ribbon group: Simulation + Bookmarks + Color Rules (locked when unlicensed).
     fn draw_ribbon_pro(&mut self, ui: &mut egui::Ui, mode: SectionMode) {
         icons::ribbon_group(ui, "Pro", TINT_PRO, |ui| {
             let sim_ok = crate::pro::has(crate::pro::Entitlement::Simulation);
@@ -256,26 +256,26 @@ impl MqttMonitorApp {
 
             ui.add_space(PRO_GAP);
 
-            // Color rules editor — two-line caption under icon.
+            // Color Rules editor — two-line caption under icon.
             let cr_ok = crate::pro::has(crate::pro::Entitlement::ColorRules);
             let cr_tip = if cr_ok {
-                "Color rules".to_string()
+                "Color Rules".to_string()
             } else {
-                "Color rules — requires TopicBench Pro".to_string()
+                "Color Rules — requires TopicBench Pro".to_string()
             };
             let cr_click = if mode == SectionMode::Full {
                 self.icons
                     .command(
                         ui,
-                        "alerts",
-                        "Color\nrules",
+                        "color_rules",
+                        "Color\nRules",
                         self.color_rules_open,
                         &cr_tip,
                     )
                     .clicked()
             } else {
                 self.icons
-                    .command_compact(ui, "alerts", self.color_rules_open, &cr_tip)
+                    .command_compact(ui, "color_rules", self.color_rules_open, &cr_tip)
                     .clicked()
             };
             if cr_click && cr_ok {
@@ -892,7 +892,7 @@ impl MqttMonitorApp {
         self.apply_publish_from_tree(publish_from_tree);
     }
 
-    /// Pro Bookmarks + Color rules popups (ribbon-opened; jump dismisses bookmarks).
+    /// Pro Bookmarks + Color Rules popups (ribbon-opened; jump dismisses bookmarks).
     pub(super) fn draw_pro_chrome_popups(&mut self, ctx: &egui::Context) {
         // Topic-tree Export scope modal (Pro).
         if self.tree_export_open {
