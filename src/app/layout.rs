@@ -437,30 +437,15 @@ impl MqttMonitorApp {
             egui::pos2((zoom_rect.left() - gap).max(row_rect.left()), row_rect.bottom()),
         );
 
+        // Horizontal Topic Bench wordmark — size comes from baked texture (~56px tall).
         let logo_size = self
             .logo
             .as_ref()
             .map(|l| l.size_vec2())
-            .unwrap_or(egui::vec2(108.0, 54.0));
-        let green = Color32::from_rgb(90, 190, 120);
-        let title_size = 24.0;
-        let line_gap = -2.0_f32;
-        let strong_family = ui
-            .style()
-            .text_styles
-            .get(&TextStyle::Name("Strong".into()))
-            .map(|f| f.family.clone())
-            .unwrap_or(FontFamily::Proportional);
-        let font_id = FontId::new(title_size, strong_family);
-        let (line1_g, line2_g) = ui.fonts(|f| {
-            (
-                f.layout_no_wrap("Topic".into(), font_id.clone(), green),
-                f.layout_no_wrap("Bench".into(), font_id, green),
-            )
-        });
-        let title_w = line1_g.size().x.max(line2_g.size().x).ceil();
-        let stack_h = line1_g.size().y + line2_g.size().y + line_gap;
+            .unwrap_or(egui::vec2(120.0, 56.0));
         let logo_w = logo_size.x;
+        // Wordmark already says “Topic Bench”; skip stacked title (title_w = 0).
+        let title_w = 0.0_f32;
 
         // Collapse plan uses left budget only (zoom strip already reserved).
         let plan = ribbon_layout::plan_for_width(
@@ -470,17 +455,15 @@ impl MqttMonitorApp {
             stats_ribbon::estimate_width(),
             icons::font_zoom_factor(ui),
         );
-        let brand_w = if plan.show_title {
-            logo_w + 10.0 + title_w + 10.0
-        } else {
-            logo_w + 10.0
-        };
 
         const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
         let ver_font = FontId::new(10.0, FontFamily::Proportional);
         let ver_g = ui.fonts(|f| {
             f.layout_no_wrap(format!("v{APP_VERSION}"), ver_font, CHROME_MUTED)
         });
+        let ver_gap = 6.0;
+        // Brand cluster: horizontal SVG + version to its right (not over the mark).
+        let brand_w = logo_w + ver_gap + ver_g.size().x + 8.0;
 
         // Left: brand → groups → Stats (Stats right-aligned inside left rect).
         ui.allocate_new_ui(egui::UiBuilder::new().max_rect(left_rect), |ui| {
@@ -496,8 +479,9 @@ impl MqttMonitorApp {
                         let (logo_rect, _) = ui
                             .allocate_exact_size(egui::vec2(logo_w, brand_h), egui::Sense::hover());
                         if let Some(logo) = &self.logo {
+                            // Vertically center in brand band; leave a hair of air top/bottom.
                             let logo_pos = egui::pos2(
-                                logo_rect.center().x - logo_size.x * 0.5,
+                                logo_rect.left(),
                                 logo_rect.center().y - logo_size.y * 0.5,
                             );
                             ui.put(
@@ -508,32 +492,20 @@ impl MqttMonitorApp {
                                     .sense(egui::Sense::hover()),
                             );
                         }
+                        ui.add_space(ver_gap);
+                        let (ver_rect, _) = ui.allocate_exact_size(
+                            egui::vec2(ver_g.size().x, brand_h),
+                            egui::Sense::hover(),
+                        );
+                        // Bottom-align version with the wordmark baseline area.
                         ui.painter().galley(
                             egui::pos2(
-                                logo_rect.right() - ver_g.size().x,
-                                logo_rect.bottom() - ver_g.size().y,
+                                ver_rect.left(),
+                                logo_rect.center().y + logo_size.y * 0.5 - ver_g.size().y,
                             ),
                             ver_g,
                             CHROME_MUTED,
                         );
-                        if plan.show_title {
-                            ui.add_space(10.0);
-                            let (title_rect, _) = ui.allocate_exact_size(
-                                egui::vec2(title_w, brand_h),
-                                egui::Sense::hover(),
-                            );
-                            let top = title_rect.center().y - stack_h * 0.5;
-                            let line1_x = title_rect.left() + (title_w - line1_g.size().x) * 0.5;
-                            let line2_x = title_rect.left() + (title_w - line2_g.size().x) * 0.5;
-                            ui.painter()
-                                .galley(egui::pos2(line1_x, top), line1_g, green);
-                            ui.painter().galley(
-                                egui::pos2(line2_x, top + stack_h - line2_g.size().y),
-                                line2_g,
-                                green,
-                            );
-                            ui.add_space(10.0);
-                        }
                     },
                 );
 
@@ -1053,23 +1025,37 @@ pub(super) fn apply_font_zoom(ctx: &egui::Context, factor: f32) {
     ctx.style_mut(|s| s.text_styles = styles);
 }
 
-/// Load AA logo at an **integer** 1/N of native pixels (box-average), painted 1:1 — no blurry fractional scale.
+/// Ribbon mark: horizontal Topic Bench wordmark (`assets/topicbench-horizontal.png`,
+/// from `assets/topicbench-horizontal.svg`). Integer 1/N downsample, painted 1:1.
+/// Target ~56 logical px tall so it fills the 70px brand band without clipping.
 pub(super) fn load_logo(ctx: &egui::Context) -> Option<TextureHandle> {
-    load_aa_logo(ctx, "aa-logo", 40, egui::TextureFilter::Nearest)
+    load_raster_logo(
+        ctx,
+        "tb-horizontal-logo",
+        include_bytes!("../../assets/topicbench-horizontal.png"),
+        56,
+        egui::TextureFilter::Nearest,
+    )
 }
 
 /// Larger AA mark for the startup splash (~half-window paint).
 pub(super) fn load_splash_logo(ctx: &egui::Context) -> Option<TextureHandle> {
-    load_aa_logo(ctx, "splash-aa-logo", 512, egui::TextureFilter::Linear)
+    load_raster_logo(
+        ctx,
+        "splash-aa-logo",
+        include_bytes!("../../assets/agile-automation-logo.png"),
+        512,
+        egui::TextureFilter::Linear,
+    )
 }
 
-fn load_aa_logo(
+fn load_raster_logo(
     ctx: &egui::Context,
     id: &str,
+    bytes: &'static [u8],
     max_h: u32,
     filter: egui::TextureFilter,
 ) -> Option<TextureHandle> {
-    let bytes = include_bytes!("../../assets/agile-automation-logo.png");
     let raw = image::load_from_memory(bytes).ok()?.into_rgba8();
     let (w, h) = raw.dimensions();
     let factor = (h / max_h).max(1);
