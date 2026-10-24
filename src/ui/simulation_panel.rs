@@ -330,7 +330,7 @@ fn body(
                     }
                 }
             }
-            if toolbar_btn(ui, icons, "export_download", "Export", true)
+            if toolbar_btn(ui, icons, "export", "Export", true)
                 .on_hover_text("Export simulation definitions as a bare JSON array")
                 .clicked()
             {
@@ -356,7 +356,7 @@ fn body(
                     Err(e) => *status = e,
                 }
             }
-            if toolbar_btn(ui, icons, "folder_open", "Import", true)
+            if toolbar_btn(ui, icons, "import", "Import", true)
                 .on_hover_text(
                     "Import a bare JSON array of sims — Replace / Merge / Cancel",
                 )

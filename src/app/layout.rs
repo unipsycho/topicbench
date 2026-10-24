@@ -144,7 +144,7 @@ impl MqttMonitorApp {
                 shortcuts::tip("Topic tree", "Ctrl+Shift+R"),
             ];
             let icons_names = [
-                "incoming_messages",
+                "traffic",
                 "publish_message",
                 "panel_undock",
                 "sticky_topic",
@@ -239,7 +239,7 @@ impl MqttMonitorApp {
                 self.icons
                     .command(
                         ui,
-                        "message_history",
+                        "bookmarks",
                         "Book-\nmarks",
                         self.bookmarks_open,
                         &bm_tip,
@@ -247,7 +247,7 @@ impl MqttMonitorApp {
                     .clicked()
             } else {
                 self.icons
-                    .command_compact(ui, "message_history", self.bookmarks_open, &bm_tip)
+                    .command_compact(ui, "bookmarks", self.bookmarks_open, &bm_tip)
                     .clicked()
             };
             if bm_click && bm_ok {

@@ -194,7 +194,10 @@ impl MqttMonitorApp {
                             ui.add(
                                 egui::Button::image_and_text(
                                     egui::Image::new(tex)
-                                        .fit_to_exact_size(egui::vec2(18.0, 18.0)),
+                                        .fit_to_exact_size(egui::vec2(
+                                            crate::ui::icons::TINY_ICON,
+                                            crate::ui::icons::TINY_ICON,
+                                        )),
                                     RichText::new("Save").strong(),
                                 )
                                 .fill(CHROME_ACCENT_SOFT)

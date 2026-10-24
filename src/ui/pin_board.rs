@@ -777,7 +777,7 @@ fn draw_combined_graph(
                     }
                     if !series.is_empty()
                         && icons
-                            .tiny(ui, "export_download", false, "Save Combined graph as PNG")
+                            .tiny(ui, "export", false, "Save Combined graph as PNG")
                             .clicked()
                     {
                         match export_combined_png(&series, plot_h) {

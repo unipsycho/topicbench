@@ -57,15 +57,15 @@ pub const SECTION_ICON: f32 = 36.0;
 const CMD_W: f32 = 52.0;
 pub const CMD_H: f32 = 64.0;
 /// Compact (collapsed ribbon) icon-only cell — two stack in [`CMD_H`].
-const COMPACT_ICON: f32 = 20.0;
-pub const COMPACT_W: f32 = 28.0;
-const COMPACT_H: f32 = 30.0;
+const COMPACT_ICON: f32 = 24.0; // trial: 72/3 — was 20
+pub const COMPACT_W: f32 = 32.0; // room for 24px glyph (+ was 28)
+const COMPACT_H: f32 = 32.0; // was 30
 /// Far-right zoom stack (+ / −): fixed width so hit targets never shift with font zoom.
 pub const ZOOM_STACK_W: f32 = 40.0;
 /// Icon size for stacked zoom (fits two in [`CMD_H`]; close to full ribbon weight).
 const ZOOM_ICON: f32 = 28.0;
 /// Dense inline action icons (Profiles body, tree copy/sticky, etc.).
-pub const TINY_ICON: f32 = 18.0;
+pub const TINY_ICON: f32 = 24.0; // trial: 72/3 — was 18
 /// Uploaded texture edge: 2× [`CMD_ICON`] for sharp HiDPI + clean half-scale at 1×.
 const ICON_TEX_PX: u32 = 72;
 /// Left rail width for rotated section labels.
@@ -409,7 +409,7 @@ pub fn section_icon(ui: &mut egui::Ui, icons: &IconSet, name: &str) {
     }
 }
 
-/// Tiny inline image at [`TINY_ICON`] (18px) — decorative, not a button.
+/// Tiny inline image at [`TINY_ICON`] (24px) — decorative, not a button.
 pub fn tiny_image(ui: &mut egui::Ui, icons: &IconSet, name: &str) {
     if let Some(tex) = icons.get(name) {
         ui.add(
@@ -637,6 +637,7 @@ fn pad_to_size(src: &RgbaImage, target: u32) -> RgbaImage {
 const ICONS: &[(&str, &[u8])] = &[
     ("access_key", include_bytes!("../../assets/icons/access_key.png")),
     ("alerts", include_bytes!("../../assets/icons/alerts.png")),
+    ("bookmarks", include_bytes!("../../assets/icons/bookmarks.png")),
     ("broker_server", include_bytes!("../../assets/icons/broker_server.png")),
     ("clipboard_checklist", include_bytes!("../../assets/icons/clipboard_checklist.png")),
     ("cloud_broker", include_bytes!("../../assets/icons/cloud_broker.png")),
@@ -649,10 +650,12 @@ const ICONS: &[(&str, &[u8])] = &[
     ("disconnect", include_bytes!("../../assets/icons/disconnect.png")),
     ("event_log", include_bytes!("../../assets/icons/event_log.png")),
     ("event_logs", include_bytes!("../../assets/icons/event_logs.png")),
+    ("export", include_bytes!("../../assets/icons/export.png")),
     ("export_download", include_bytes!("../../assets/icons/export_download.png")),
     ("eye", include_bytes!("../../assets/icons/eye.png")),
     ("eye_off", include_bytes!("../../assets/icons/eye_off.png")),
     ("folder_open", include_bytes!("../../assets/icons/folder_open.png")),
+    ("import", include_bytes!("../../assets/icons/import.png")),
     ("incoming_messages", include_bytes!("../../assets/icons/incoming_messages.png")),
     ("json_payload", include_bytes!("../../assets/icons/json_payload.png")),
     ("last_will_security", include_bytes!("../../assets/icons/last_will_security.png")),
@@ -684,6 +687,7 @@ const ICONS: &[(&str, &[u8])] = &[
     ("topic_tags", include_bytes!("../../assets/icons/topic_tags.png")),
     ("topic_tree", include_bytes!("../../assets/icons/topic_tree.png")),
     ("topic_wildcards", include_bytes!("../../assets/icons/topic_wildcards.png")),
+    ("traffic", include_bytes!("../../assets/icons/traffic.png")),
     ("trash", include_bytes!("../../assets/icons/trash.png")),
     ("unsubscribe_topic", include_bytes!("../../assets/icons/unsubscribe_topic.png")),
     ("user_credentials", include_bytes!("../../assets/icons/user_credentials.png")),
