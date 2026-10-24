@@ -62,8 +62,8 @@ pub const COMPACT_W: f32 = 32.0; // room for 24px glyph (+ was 28)
 const COMPACT_H: f32 = 32.0; // was 30
 /// Far-right zoom stack (+ / −): fixed width so hit targets never shift with font zoom.
 pub const ZOOM_STACK_W: f32 = 40.0;
-/// Icon size for stacked zoom (fits two in [`CMD_H`]; close to full ribbon weight).
-const ZOOM_ICON: f32 = 28.0;
+/// Icon size for stacked zoom — same weight as ribbon CMD / section icons.
+const ZOOM_ICON: f32 = 36.0;
 /// Dense inline action icons (Profiles body, tree copy/sticky, etc.).
 pub const TINY_ICON: f32 = 24.0; // trial: 72/3 — was 18
 /// Uploaded texture edge: 2× [`CMD_ICON`] for sharp HiDPI + clean half-scale at 1×.
@@ -77,6 +77,9 @@ const SECTION_LABEL_NUDGE_X: f32 = 14.0;
 pub const CHROME_BG: Color32 = Color32::from_rgb(34, 36, 42);
 pub const CHROME_SEP: Color32 = Color32::from_rgb(70, 74, 84);
 pub const CHROME_HOVER: Color32 = Color32::from_rgb(58, 62, 72);
+/// Stronger hover fill for icon buttons sitting on [`CHROME_SECTION`] header bars.
+pub const CHROME_HEADER_HOVER: Color32 = Color32::from_rgb(78, 96, 128);
+pub const CHROME_HEADER_SELECTED: Color32 = Color32::from_rgb(56, 92, 140);
 pub const CHROME_ACCENT_SOFT: Color32 = Color32::from_rgb(48, 78, 112);
 pub const CHROME_ACCENT_BORDER: Color32 = Color32::from_rgb(100, 160, 220);
 /// Selectable list-row idle fill — clearly lifted from [`CHROME_BG`] (was nearly invisible).
@@ -235,7 +238,18 @@ impl IconSet {
         selected: bool,
         tip: &str,
     ) -> egui::Response {
-        self.tiny_with_pad(ui, name, selected, tip, 2.0)
+        self.tiny_with_pad(ui, name, selected, tip, 2.0, false)
+    }
+
+    /// Icon button on a blue [`CHROME_SECTION`] header — higher-contrast hover chrome.
+    pub fn tiny_header(
+        &self,
+        ui: &mut egui::Ui,
+        name: &str,
+        selected: bool,
+        tip: &str,
+    ) -> egui::Response {
+        self.tiny_with_pad(ui, name, selected, tip, 2.0, true)
     }
 
     /// Left-cluster tree icons: same glyph, half pad so neighbors sit closer.
@@ -246,7 +260,7 @@ impl IconSet {
         selected: bool,
         tip: &str,
     ) -> egui::Response {
-        self.tiny_with_pad(ui, name, selected, tip, 0.5)
+        self.tiny_with_pad(ui, name, selected, tip, 0.5, false)
     }
 
     fn tiny_with_pad(
@@ -256,14 +270,25 @@ impl IconSet {
         selected: bool,
         tip: &str,
         pad: f32,
+        on_header: bool,
     ) -> egui::Response {
         let size = Vec2::splat(TINY_ICON + pad * 2.0);
         let (rect, response) = ui.allocate_exact_size(size, Sense::click());
         let response = crate::ui::hover_tip::attach(response, tip);
         if selected {
-            ui.painter().rect_filled(rect, 2.0, CHROME_ACCENT_SOFT);
+            let fill = if on_header {
+                CHROME_HEADER_SELECTED
+            } else {
+                CHROME_ACCENT_SOFT
+            };
+            ui.painter().rect_filled(rect, 2.0, fill);
         } else if response.hovered() {
-            ui.painter().rect_filled(rect, 2.0, CHROME_HOVER);
+            let fill = if on_header {
+                CHROME_HEADER_HOVER
+            } else {
+                CHROME_HOVER
+            };
+            ui.painter().rect_filled(rect, 2.0, fill);
         }
         if let Some(tex) = self.get(name) {
             let img = egui::Image::new(tex)
@@ -636,10 +661,13 @@ fn pad_to_size(src: &RgbaImage, target: u32) -> RgbaImage {
 
 const ICONS: &[(&str, &[u8])] = &[
     ("access_key", include_bytes!("../../assets/icons/access_key.png")),
+    ("add_blue", include_bytes!("../../assets/icons/add_blue.png")),
     ("alerts", include_bytes!("../../assets/icons/alerts.png")),
     ("bookmarks", include_bytes!("../../assets/icons/bookmarks.png")),
     ("broker_server", include_bytes!("../../assets/icons/broker_server.png")),
+    ("certificates", include_bytes!("../../assets/icons/certificates.png")),
     ("clipboard_checklist", include_bytes!("../../assets/icons/clipboard_checklist.png")),
+    ("close_red", include_bytes!("../../assets/icons/close_red.png")),
     ("cloud_broker", include_bytes!("../../assets/icons/cloud_broker.png")),
     ("color_rules", include_bytes!("../../assets/icons/color_rules.png")),
     ("configuration_sliders", include_bytes!("../../assets/icons/configuration_sliders.png")),
@@ -647,14 +675,13 @@ const ICONS: &[(&str, &[u8])] = &[
     ("connection_status", include_bytes!("../../assets/icons/connection_status.png")),
     ("dashboard", include_bytes!("../../assets/icons/dashboard.png")),
     ("data_table", include_bytes!("../../assets/icons/data_table.png")),
+    ("delete", include_bytes!("../../assets/icons/delete.png")),
+    ("delete_red", include_bytes!("../../assets/icons/delete_red.png")),
     ("disconnect", include_bytes!("../../assets/icons/disconnect.png")),
     ("event_log", include_bytes!("../../assets/icons/event_log.png")),
     ("event_logs", include_bytes!("../../assets/icons/event_logs.png")),
     ("export", include_bytes!("../../assets/icons/export.png")),
     ("export_download", include_bytes!("../../assets/icons/export_download.png")),
-    ("eye", include_bytes!("../../assets/icons/eye.png")),
-    ("eye_off", include_bytes!("../../assets/icons/eye_off.png")),
-    ("folder_open", include_bytes!("../../assets/icons/folder_open.png")),
     ("import", include_bytes!("../../assets/icons/import.png")),
     ("incoming_messages", include_bytes!("../../assets/icons/incoming_messages.png")),
     ("json_payload", include_bytes!("../../assets/icons/json_payload.png")),
@@ -665,6 +692,9 @@ const ICONS: &[(&str, &[u8])] = &[
     ("node_graph", include_bytes!("../../assets/icons/node_graph.png")),
     ("panel_docked", include_bytes!("../../assets/icons/panel_docked.png")),
     ("panel_undock", include_bytes!("../../assets/icons/panel_undock.png")),
+    ("pause", include_bytes!("../../assets/icons/pause.png")),
+    ("play", include_bytes!("../../assets/icons/play.png")),
+    ("playback", include_bytes!("../../assets/icons/playback.png")),
     ("profile", include_bytes!("../../assets/icons/profile.png")),
     ("profile_add", include_bytes!("../../assets/icons/profile_add.png")),
     ("profile_duplicate", include_bytes!("../../assets/icons/profile_duplicate.png")),
@@ -672,8 +702,9 @@ const ICONS: &[(&str, &[u8])] = &[
     ("publish_message", include_bytes!("../../assets/icons/publish_message.png")),
     ("qos_levels", include_bytes!("../../assets/icons/qos_levels.png")),
     ("reconnect", include_bytes!("../../assets/icons/reconnect.png")),
+    ("record", include_bytes!("../../assets/icons/record.png")),
+    ("record_red", include_bytes!("../../assets/icons/record_red.png")),
     ("refresh", include_bytes!("../../assets/icons/refresh.png")),
-    ("remove_x", include_bytes!("../../assets/icons/remove_x.png")),
     ("retained_message", include_bytes!("../../assets/icons/retained_message.png")),
     ("save", include_bytes!("../../assets/icons/save.png")),
     ("search", include_bytes!("../../assets/icons/search.png")),
@@ -688,7 +719,6 @@ const ICONS: &[(&str, &[u8])] = &[
     ("topic_tree", include_bytes!("../../assets/icons/topic_tree.png")),
     ("topic_wildcards", include_bytes!("../../assets/icons/topic_wildcards.png")),
     ("traffic", include_bytes!("../../assets/icons/traffic.png")),
-    ("trash", include_bytes!("../../assets/icons/trash.png")),
     ("unsubscribe_topic", include_bytes!("../../assets/icons/unsubscribe_topic.png")),
     ("user_credentials", include_bytes!("../../assets/icons/user_credentials.png")),
     ("zoom_in", include_bytes!("../../assets/icons/zoom_in.png")),

@@ -32,6 +32,9 @@ pub fn tree_flash_active(node: &TopicNode, now: Instant) -> bool {
         .any(|child| tree_flash_active(child, now))
 }
 
+/// Peak alpha for the update flash (was 255 — too bright on charcoal chrome).
+const FLASH_PEAK_ALPHA: f32 = 110.0;
+
 /// Fading 1px green border for an update pulse (no fill wash).
 /// `until` is set to `now + FLASH_MS` on each new value — that resets the fade.
 pub fn flash_stroke(until: Option<Instant>, now: Instant) -> Option<Stroke> {
@@ -41,8 +44,8 @@ pub fn flash_stroke(until: Option<Instant>, now: Instant) -> Option<Stroke> {
     }
     let left = until.saturating_duration_since(now).as_secs_f32();
     let t = (left / (FLASH_MS as f32 / 1000.0)).clamp(0.0, 1.0);
-    // t=1 at pulse start (full on), t→0 over 0.5s
-    let a = (255.0 * t) as u8;
+    // t=1 at pulse start (subtle peak), t→0 over 0.5s — same timing, lower opacity.
+    let a = (FLASH_PEAK_ALPHA * t) as u8;
     Some(Stroke::new(
         1.0_f32,
         Color32::from_rgba_unmultiplied(80, 200, 120, a),

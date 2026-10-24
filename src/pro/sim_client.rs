@@ -65,11 +65,60 @@ pub struct SimStatus {
     pub last_error: Option<String>,
 }
 
+/// CSV tape playback snapshot from the sidecar (`/sim` → `playback`).
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct PlaybackStatus {
+    /// Tape session open (playing or paused).
+    #[serde(default)]
+    pub active: bool,
+    /// Actively publishing (active && !paused).
+    #[serde(default)]
+    pub running: bool,
+    #[serde(default)]
+    pub paused: bool,
+    #[serde(default, rename = "loop")]
+    pub loop_on: bool,
+    /// Full tape passes finished (0 on the first play-through).
+    #[serde(default)]
+    pub loops_completed: u64,
+    #[serde(default)]
+    pub profile: String,
+    #[serde(default)]
+    pub events: u64,
+}
+
+/// Open-playback modal draft (file chosen; awaiting confirm).
+#[derive(Clone, Debug)]
+pub struct PendingPlayback {
+    pub csv: String,
+    pub file_label: String,
+    pub profile: String,
+    pub play: bool,
+    pub suggest: bool,
+    pub loop_on: bool,
+}
+
+impl Default for PendingPlayback {
+    fn default() -> Self {
+        Self {
+            csv: String::new(),
+            file_label: String::new(),
+            profile: String::new(),
+            play: true,
+            suggest: true,
+            loop_on: false,
+        }
+    }
+}
+
 /// Cached list + last error for the Simulation panel.
 #[derive(Default)]
 pub struct SimClientState {
     pub rows: Vec<SimRow>,
     pub statuses: Vec<SimStatus>,
+    pub playback: PlaybackStatus,
+    /// Set after picking a CSV; cleared on cancel/confirm.
+    pub pending_playback: Option<PendingPlayback>,
     pub last_error: Option<String>,
     pub sidecar_up: bool,
     pub selected: Option<String>,
@@ -90,6 +139,27 @@ impl SimClientState {
         }
     }
 
+    /// Count of running generator rows (status strip).
+    pub fn running_count(&self) -> usize {
+        self.statuses.iter().filter(|s| s.running).count()
+    }
+
+    /// Compact status-strip label, or `None` when idle (no generators / tape).
+    pub fn status_strip_label(&self) -> Option<String> {
+        let n = self.running_count();
+        let pb = self.playback.active;
+        if n == 0 && !pb {
+            return None;
+        }
+        Some(if n > 0 && pb {
+            format!("Simulation: running — {n} publishing + playback")
+        } else if n > 0 {
+            format!("Simulation: running — {n} publishing")
+        } else {
+            "Simulation: playback".into()
+        })
+    }
+
     /// Refresh list when panel is open (throttled).
     pub fn poll_if_due(&mut self, force: bool) {
         let due = force
@@ -102,9 +172,10 @@ impl SimClientState {
         }
         self.last_fetch = Some(Instant::now());
         match self.fetch_list() {
-            Ok((rows, statuses)) => {
+            Ok((rows, statuses, playback)) => {
                 self.rows = rows;
                 self.statuses = statuses;
+                self.playback = playback;
                 self.sidecar_up = true;
                 self.last_error = None;
             }
@@ -214,16 +285,24 @@ impl SimClientState {
     }
 
     /// Start CSV tape playback (all topics). Empty profile → CSV hint / server default.
-    pub fn start_playback(&mut self, csv: &str, profile: &str) -> Result<(), String> {
+    pub fn start_playback(
+        &mut self,
+        csv: &str,
+        profile: &str,
+        loop_on: bool,
+    ) -> Result<(), String> {
         let body = serde_json::to_vec(&serde_json::json!({
             "csv": csv,
             "profile": profile,
+            "loop": loop_on,
         }))
         .map_err(|e| e.to_string())?;
         let v = self.http("POST", "/sim/playback", Some(body))?;
         if v.get("ok").and_then(|o| o.as_bool()).unwrap_or(false)
+            || v.get("active").and_then(|o| o.as_bool()).unwrap_or(false)
             || v.get("running").and_then(|o| o.as_bool()).unwrap_or(false)
         {
+            self.poll_if_due(true);
             Ok(())
         } else {
             Err(v
@@ -236,7 +315,51 @@ impl SimClientState {
 
     pub fn stop_playback(&mut self) -> Result<(), String> {
         let _ = self.http("POST", "/sim/playback/stop", None)?;
+        self.playback = PlaybackStatus::default();
+        self.poll_if_due(true);
         Ok(())
+    }
+
+    pub fn pause_playback(&mut self) -> Result<(), String> {
+        let _ = self.http("POST", "/sim/playback/pause", None)?;
+        self.poll_if_due(true);
+        Ok(())
+    }
+
+    pub fn resume_playback(&mut self) -> Result<(), String> {
+        let _ = self.http("POST", "/sim/playback/resume", None)?;
+        self.poll_if_due(true);
+        Ok(())
+    }
+
+    pub fn set_playback_loop(&mut self, loop_on: bool) -> Result<(), String> {
+        let body = serde_json::to_vec(&serde_json::json!({ "loop": loop_on }))
+            .map_err(|e| e.to_string())?;
+        let _ = self.http("POST", "/sim/playback/loop", Some(body))?;
+        self.poll_if_due(true);
+        Ok(())
+    }
+
+    /// Analyze CSV → draft stopped sim rows (does not import; caller merges).
+    pub fn suggest_from_recording(
+        &mut self,
+        csv: &str,
+        profile: &str,
+    ) -> Result<Vec<SimRow>, String> {
+        let body = serde_json::to_vec(&serde_json::json!({
+            "csv": csv,
+            "profile": profile,
+        }))
+        .map_err(|e| e.to_string())?;
+        let v = self.http("POST", "/sim/suggest_from_recording", Some(body))?;
+        if let Some(err) = v.get("error").and_then(|e| e.as_str()) {
+            return Err(err.to_string());
+        }
+        let sims = v
+            .get("simulations")
+            .cloned()
+            .unwrap_or(Value::Array(vec![]));
+        serde_json::from_value(sims).map_err(|e| format!("suggest simulations: {e}"))
     }
 
     /// Syntax-check a formula via the sidecar (topic/sim stubs resolve to 0).
@@ -278,7 +401,7 @@ impl SimClientState {
         Ok(t)
     }
 
-    fn fetch_list(&mut self) -> Result<(Vec<SimRow>, Vec<SimStatus>), String> {
+    fn fetch_list(&mut self) -> Result<(Vec<SimRow>, Vec<SimStatus>, PlaybackStatus), String> {
         let v = self.http("GET", "/sim", None)?;
         let rows: Vec<SimRow> = serde_json::from_value(
             v.get("simulations")
@@ -290,7 +413,18 @@ impl SimClientState {
             v.get("statuses").cloned().unwrap_or(Value::Array(vec![])),
         )
         .map_err(|e| format!("statuses: {e}"))?;
-        Ok((rows, statuses))
+        let playback: PlaybackStatus = serde_json::from_value(
+            v.get("playback")
+                .cloned()
+                .unwrap_or(Value::Object(Default::default())),
+        )
+        .unwrap_or_default();
+        // Older sidecars only had `running` — treat as active when set.
+        let mut playback = playback;
+        if !playback.active && playback.running {
+            playback.active = true;
+        }
+        Ok((rows, statuses, playback))
     }
 
     fn http(&mut self, method: &str, path: &str, body: Option<Vec<u8>>) -> Result<Value, String> {
