@@ -158,7 +158,7 @@ impl RecordingStore {
                 .unwrap_or_else(|| id.clone());
             let dir = default_recordings_dir();
             let _ = fs::create_dir_all(&dir);
-            let path = dir.join(Self::default_filename(&id));
+            let path = dir.join(Self::default_filename(&name));
             match self.stop_to_file(&id, &path) {
                 Ok((path, n, csv)) => out.push(AutoStopped {
                     profile_id: id,
@@ -185,16 +185,36 @@ impl RecordingStore {
         !self.active.is_empty()
     }
 
-    pub fn default_filename(profile_id: &str) -> String {
+    /// Default save name from **profile display name** (not id), FS-safe.
+    pub fn default_filename(profile_name: &str) -> String {
         let secs = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map(|d| d.as_secs())
             .unwrap_or(0);
-        let safe: String = profile_id
-            .chars()
-            .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
-            .collect();
+        let safe = sanitize_filename_part(profile_name);
         format!("topicbench-recording-{safe}-{secs}.csv")
+    }
+}
+
+/// Spaces → `_`; drop other unsafe path chars; collapse runs of `_`.
+fn sanitize_filename_part(name: &str) -> String {
+    let mut out = String::with_capacity(name.len());
+    let mut prev_us = false;
+    for c in name.chars() {
+        let ok = c.is_ascii_alphanumeric() || c == '-' || c == '.';
+        if ok {
+            out.push(c);
+            prev_us = false;
+        } else if !prev_us {
+            out.push('_');
+            prev_us = true;
+        }
+    }
+    let trimmed = out.trim_matches('_');
+    if trimmed.is_empty() {
+        "profile".into()
+    } else {
+        trimmed.to_string()
     }
 }
 
