@@ -82,7 +82,7 @@ Bookmarks jump you anywhere in a tree and auto-expand that topic for immediate a
 
 ## Download
 
-**[v1.0.0](https://github.com/unipsycho/topicbench/releases/tag/v1.0.0)** — Linux (`topicbench-linux-x64`) and Windows (`topicbench-windows-x64.exe`), plus `SHA256SUMS`.
+**[v1.1.0](https://github.com/unipsycho/topicbench/releases/tag/v1.1.0)** — Linux (`topicbench-linux-x64`) and Windows (`topicbench-windows-x64.exe`), plus `SHA256SUMS`.
 
 All releases: [github.com/unipsycho/topicbench/releases](https://github.com/unipsycho/topicbench/releases)  
 Repo: [github.com/unipsycho/topicbench](https://github.com/unipsycho/topicbench)
