@@ -632,7 +632,7 @@ impl MqttMonitorApp {
                             let mut traffic_h = self.settings.live_traffic_height;
                             traffic_panel::draw(
                                 ui,
-                                &self.sessions,
+                                &mut self.sessions,
                                 &self.profiles.selected_id,
                                 &self.search,
                                 &self.icons,
