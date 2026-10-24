@@ -1,6 +1,8 @@
 //! egui panels for the MQTT Explorer–style shell.
 
+pub mod bookmarks_panel;
 pub mod clipboard;
+pub mod color_rules_panel;
 pub mod flash;
 pub mod hover_tip;
 pub mod icons;
