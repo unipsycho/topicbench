@@ -595,7 +595,7 @@ fn connect_profile(
         .cloned()
         .ok_or_else(|| format!("profile not found: {id}"))?;
     sessions.connect(&profile, max_packet_bytes, ctx)?;
-    *status_out = format!("MCP: connecting {}", profile.name);
+    *status_out = format!("Pro: connecting {}", profile.name);
     Ok(json!({
         "profile_id": id,
         "profile_name": profile.name,
@@ -633,7 +633,7 @@ fn disconnect_profile(
         .map(|s| s.profile_name.clone())
         .unwrap_or_else(|| id.clone());
     sessions.disconnect(&id);
-    *status_out = format!("MCP: disconnected {name}");
+    *status_out = format!("Pro: disconnected {name}");
     Ok(json!({"profile_id": id, "state": "disconnected"}))
 }
 
@@ -662,7 +662,7 @@ fn subscribe_runtime(
     subscribe::add_subscription(&mut filters, filter)?;
     // Session-only for tests — do not persist into the profile file.
     sessions.apply_profile_subscriptions(&id, &filters)?;
-    *status_out = format!("MCP: subscribed {filter}");
+    *status_out = format!("Pro: subscribed {filter}");
     Ok(json!({"profile_id": id, "subscriptions": filters}))
 }
 
@@ -692,7 +692,7 @@ fn unsubscribe_runtime(
         return Err(format!("filter not in session: {filter}"));
     }
     sessions.apply_profile_subscriptions(&id, &filters)?;
-    *status_out = format!("MCP: unsubscribed {filter}");
+    *status_out = format!("Pro: unsubscribed {filter}");
     Ok(json!({"profile_id": id, "subscriptions": filters}))
 }
 
@@ -731,7 +731,9 @@ fn publish_msg(
         .unwrap_or(false);
     let id = resolve_open_session(sessions, key)?;
     sessions.publish_live(&id, topic, &payload, qos, retain)?;
-    *status_out = format!("MCP: published {topic}");
+    // Do not dump per-topic lines into the status strip — sim/bridge publishes
+    // are high-rate; the strip shows compact "Simulation: running — N …" instead.
+    let _ = status_out;
     Ok(json!({
         "profile_id": id,
         "topic": topic,
