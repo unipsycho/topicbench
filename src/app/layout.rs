@@ -134,29 +134,30 @@ impl MqttMonitorApp {
     }
 
     /// Panels ribbon group (full or compact).
+    /// Order mirrors layout: center panels left, then Payload / Publish on the right.
     fn draw_ribbon_panels(&mut self, ui: &mut egui::Ui, mode: SectionMode) {
         icons::ribbon_group(ui, "Panels", TINT_PANELS, |ui| {
             let tips = [
                 shortcuts::tip("Live traffic", "Ctrl+Shift+T"),
-                shortcuts::tip("Publish panel", "Ctrl+Shift+U"),
-                shortcuts::tip("Payload panel", "Ctrl+Shift+L"),
                 shortcuts::tip("Sticky topics", "Ctrl+Shift+K"),
                 shortcuts::tip("Topic tree", "Ctrl+Shift+R"),
+                shortcuts::tip("Payload panel", "Ctrl+Shift+L"),
+                shortcuts::tip("Publish panel", "Ctrl+Shift+U"),
             ];
             let icons_names = [
                 "traffic",
-                "publish_message",
-                "panel_undock",
                 "sticky_topic",
                 "topic_tree",
+                "panel_undock",
+                "publish_message",
             ];
-            let labels = ["Traffic", "Publish", "Payload", "Stickies", "Tree"];
+            let labels = ["Traffic", "Stickies", "Tree", "Payload", "Publish"];
             let selected = [
                 self.panels.live_traffic,
-                self.panels.publish,
-                self.panels.payload,
                 self.panels.stickies,
                 self.panels.topic_tree,
+                self.panels.payload,
+                self.panels.publish,
             ];
             let mut clicks = [false; 5];
             if mode == SectionMode::Full {
@@ -179,19 +180,19 @@ impl MqttMonitorApp {
                 self.persist_panels();
             }
             if clicks[1] {
-                self.panels.publish = !self.panels.publish;
-                self.persist_panels();
-            }
-            if clicks[2] {
-                self.panels.payload = !self.panels.payload;
-                self.persist_panels();
-            }
-            if clicks[3] {
                 self.panels.stickies = !self.panels.stickies;
                 self.persist_panels();
             }
-            if clicks[4] {
+            if clicks[2] {
                 self.panels.topic_tree = !self.panels.topic_tree;
+                self.persist_panels();
+            }
+            if clicks[3] {
+                self.panels.payload = !self.panels.payload;
+                self.persist_panels();
+            }
+            if clicks[4] {
+                self.panels.publish = !self.panels.publish;
                 self.persist_panels();
             }
         });
