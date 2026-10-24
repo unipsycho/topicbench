@@ -29,26 +29,41 @@ pub fn draw(
         icons::section_icon(ui, icons, "traffic");
         icons::section_title(ui, "Live traffic");
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            // Restart — clear buffer view and resume live.
+            // Right-to-left → visual order: Pause/Play | Reset
             if icons
-                .tiny_header(ui, "refresh", false, "Restart — clear and resume live")
+                .tiny_header(
+                    ui,
+                    "refresh",
+                    false,
+                    "Reset — clear the list and resume live traffic",
+                )
                 .clicked()
             {
                 view.paused = false;
                 view.frozen.clear();
-                *status = "Live traffic restarted".into();
+                *status = "Live traffic reset".into();
             }
             if view.paused {
                 if icons
-                    .tiny_header(ui, "playback", false, "Continue — resume live append")
+                    .tiny_header(
+                        ui,
+                        "play",
+                        false,
+                        "Play — resume live traffic (scroll & copy stay enabled while paused)",
+                    )
                     .clicked()
                 {
                     view.paused = false;
                     view.frozen.clear();
-                    *status = "Live traffic continued".into();
+                    *status = "Live traffic playing".into();
                 }
             } else if icons
-                .tiny_header(ui, "panel_docked", false, "Pause — freeze stream for scroll/copy")
+                .tiny_header(
+                    ui,
+                    "pause",
+                    false,
+                    "Pause — freeze the stream so you can scroll and copy",
+                )
                 .clicked()
             {
                 // Snapshot current lines for the selected session.
