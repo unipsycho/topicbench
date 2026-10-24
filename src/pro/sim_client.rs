@@ -196,7 +196,7 @@ impl SimClientState {
             .and_then(|a| a.as_array())
             .map(|a| a.len())
             .ok_or_else(|| {
-                "import response missing simulations array — is topicbench-pro up to date?"
+                "import response missing simulations array — is TopicBench Pro up to date?"
                     .to_string()
             })?;
         Ok(n)
@@ -267,7 +267,7 @@ impl SimClientState {
         let t = fs::read_to_string(&path)
             .map_err(|e| {
                 format!(
-                    "cannot read {} ({e}) — is topicbench-pro running?",
+                    "cannot read {} ({e}) — is TopicBench Pro running?",
                     path.display()
                 )
             })?
@@ -343,7 +343,7 @@ impl SimClientState {
                 Err(format!("HTTP {code}: {msg}"))
             }
             Err(ureq::Error::Transport(t)) => Err(format!(
-                "sidecar unreachable ({t}) — start topicbench-pro"
+                "TopicBench Pro unreachable ({t}) — is it running?"
             )),
         }
     }

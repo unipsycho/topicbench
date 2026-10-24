@@ -252,7 +252,7 @@ impl HistoryForwarder {
                 let text = resp.into_string().unwrap_or_default();
                 Err(format!("HTTP {code}: {text}"))
             }
-            Err(ureq::Error::Transport(t)) => Err(format!("sidecar unreachable ({t})")),
+            Err(ureq::Error::Transport(t)) => Err(format!("TopicBench Pro unreachable ({t})")),
         }
     }
 }
