@@ -1,7 +1,7 @@
 //! Color rules editor (Pro) — ordered fixed predicates; live tree paint.
 
 use crate::pro::color_rules::{ColorRule, ColorRulesStore, MatchPred, RuleStyle};
-use crate::ui::icons::{IconSet, CHROME_MUTED, CHROME_TEXT};
+use crate::ui::icons::{self, IconSet, CHROME_BG, CHROME_MUTED};
 use eframe::egui::{self, Color32, RichText};
 
 const PRESETS: &[(&str, [u8; 3])] = &[
@@ -22,22 +22,33 @@ pub fn draw_popup(
     if !*open {
         return;
     }
+    let mut close = false;
+    // Same chrome as Simulation: no outer title bar; section icon + heading inside.
     egui::Window::new("Color rules")
         .id(egui::Id::new("topicbench_color_rules"))
+        .title_bar(false)
         .collapsible(false)
         .resizable(true)
         .default_width(480.0)
         .default_height(360.0)
-        .open(open)
+        .frame(egui::Frame::window(&ctx.style()).fill(CHROME_BG))
         .show(ctx, |ui| {
-            ui.horizontal(|ui| {
-                ui.label(RichText::new("Color rules").strong().color(CHROME_TEXT));
+            icons::section_header_bar(ui, |ui| {
+                icons::section_icon(ui, icons, "alerts");
+                icons::section_title(ui, "Color rules");
+                ui.add_space(8.0);
                 ui.label(
                     RichText::new("First match wins · leaves with payloads")
                         .small()
                         .color(CHROME_MUTED),
                 );
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if icons
+                        .tiny(ui, "remove_x", false, "Close Color rules")
+                        .clicked()
+                    {
+                        close = true;
+                    }
                     if ui.button("+ Add rule").clicked() {
                         match store.add_blank() {
                             Ok(()) => *status = "Added color rule".into(),
@@ -66,6 +77,9 @@ pub fn draw_popup(
                 let _ = store.save();
             }
         });
+    if close {
+        *open = false;
+    }
 }
 
 fn draw_rule_row(

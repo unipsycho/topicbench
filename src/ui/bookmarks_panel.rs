@@ -4,7 +4,7 @@ use crate::mqtt::pins::PinBoard;
 use crate::mqtt::session::SessionManager;
 use crate::mqtt::topic_tree::TopicNode;
 use crate::pro::bookmarks::{Bookmark, BookmarksStore};
-use crate::ui::icons::{self, IconSet, CHROME_MUTED, CHROME_TEXT};
+use crate::ui::icons::{self, IconSet, CHROME_BG, CHROME_MUTED, CHROME_TEXT};
 use eframe::egui::{self, RichText, Sense};
 
 /// Pending jump after popup click (applied once tree paints).
@@ -28,18 +28,29 @@ pub fn draw_popup(
         return;
     }
     let mut close = false;
+    // Same chrome as Simulation: no outer title bar; section icon + heading inside.
     egui::Window::new("Bookmarks")
         .id(egui::Id::new("topicbench_bookmarks"))
+        .title_bar(false)
         .collapsible(false)
         .resizable(true)
         .default_width(360.0)
         .default_height(280.0)
-        .open(open)
+        .frame(egui::Frame::window(&ctx.style()).fill(CHROME_BG))
         .show(ctx, |ui| {
-            ui.horizontal(|ui| {
-                ui.label(RichText::new("Bookmarks").strong().color(CHROME_TEXT));
+            icons::section_header_bar(ui, |ui| {
+                icons::section_icon(ui, icons, "message_history");
+                icons::section_title(ui, "Bookmarks");
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if icons.tiny(ui, "export_download", false, "Export bookmarks.json").clicked()
+                    if icons
+                        .tiny(ui, "remove_x", false, "Close Bookmarks")
+                        .clicked()
+                    {
+                        close = true;
+                    }
+                    if icons
+                        .tiny(ui, "export_download", false, "Export bookmarks.json")
+                        .clicked()
                     {
                         if let Some(path) = rfd::FileDialog::new()
                             .set_title("Export bookmarks")
@@ -48,7 +59,9 @@ pub fn draw_popup(
                             .save_file()
                         {
                             match store.export_to(&path) {
-                                Ok(()) => *status = format!("Exported bookmarks → {}", path.display()),
+                                Ok(()) => {
+                                    *status = format!("Exported bookmarks → {}", path.display())
+                                }
                                 Err(e) => *status = format!("Export failed: {e}"),
                             }
                         }

@@ -207,6 +207,8 @@ impl MqttMonitorApp {
                 "Simulation — requires TopicBench Pro".to_string()
             };
             let selected = self.simulation_open;
+            // Extra air between Pro commands (ribbon_group defaults to 1px).
+            const PRO_GAP: f32 = 8.0;
             let clicked = if mode == SectionMode::Full {
                 self.icons
                     .command(ui, "data_table", "Simulation", selected, &tip)
@@ -224,16 +226,18 @@ impl MqttMonitorApp {
                 }
             }
 
-            // Bookmarks list popup (separate from per-row Bookmark toggle).
+            ui.add_space(PRO_GAP);
+
+            // Marks = Bookmarks jump list (short ribbon label; tooltip keeps full name).
             let bm_ok = crate::pro::has(crate::pro::Entitlement::TopicBookmarks);
             let bm_tip = if bm_ok {
-                shortcuts::tip("Open Bookmarks jump list", "Ctrl+Shift+J")
+                shortcuts::tip("Bookmarks", "Ctrl+Shift+J")
             } else {
                 "Bookmarks — requires TopicBench Pro".into()
             };
             let bm_click = if mode == SectionMode::Full {
                 self.icons
-                    .command(ui, "message_history", "Bookmarks", self.bookmarks_open, &bm_tip)
+                    .command(ui, "message_history", "Marks", self.bookmarks_open, &bm_tip)
                     .clicked()
             } else {
                 self.icons
@@ -244,15 +248,18 @@ impl MqttMonitorApp {
                 self.bookmarks_open = !self.bookmarks_open;
             }
 
+            ui.add_space(PRO_GAP);
+
+            // Colors = Color rules editor (short ribbon label; tooltip keeps full name).
             let cr_ok = crate::pro::has(crate::pro::Entitlement::ColorRules);
             let cr_tip = if cr_ok {
-                "Open Color rules editor".to_string()
+                "Color rules".to_string()
             } else {
                 "Color rules — requires TopicBench Pro".to_string()
             };
             let cr_click = if mode == SectionMode::Full {
                 self.icons
-                    .command(ui, "alerts", "Color rules", self.color_rules_open, &cr_tip)
+                    .command(ui, "alerts", "Colors", self.color_rules_open, &cr_tip)
                     .clicked()
             } else {
                 self.icons
