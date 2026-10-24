@@ -87,6 +87,39 @@ impl BookmarksStore {
         Ok(())
     }
 
+    /// Load bookmarks.json shape from `src`. `mode`: `"replace"` or `"merge"`.
+    pub fn import_from(&mut self, src: &std::path::Path, mode: &str) -> Result<usize, String> {
+        let text = fs::read_to_string(src).map_err(|e| e.to_string())?;
+        let file: FileShape =
+            serde_json::from_str(&text).map_err(|e| format!("parse bookmarks JSON: {e}"))?;
+        let incoming = file.bookmarks;
+        let n = incoming.len();
+        match mode {
+            "replace" => {
+                self.items = incoming;
+            }
+            "merge" => {
+                for b in incoming {
+                    if let Some(existing) = self.items.iter_mut().find(|x| x.id == b.id) {
+                        *existing = b;
+                    } else if let Some(existing) = self.items.iter_mut().find(|x| {
+                        x.profile_id == b.profile_id && x.topic == b.topic
+                    }) {
+                        // Same path — update fields, keep id.
+                        existing.label = b.label;
+                        existing.expand_subtree = b.expand_subtree;
+                    } else {
+                        self.items.push(b);
+                    }
+                }
+            }
+            _ => return Err(format!("unknown import mode: {mode}")),
+        }
+        self.items.sort_by_key(|b| b.order);
+        self.save()?;
+        Ok(n)
+    }
+
     pub fn is_bookmarked(&self, profile_id: &str, topic: &str) -> bool {
         self.items
             .iter()

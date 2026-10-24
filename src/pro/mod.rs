@@ -11,7 +11,9 @@ pub mod bookmarks;
 pub mod bridge;
 pub mod color_rules;
 pub mod history_client;
+pub mod recording;
 pub mod sim_client;
+pub mod topic_tree_io;
 
 use std::sync::OnceLock;
 

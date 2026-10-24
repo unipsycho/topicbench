@@ -64,29 +64,46 @@ mod match_rule_serde {
     // handled via rename on field — use #[serde(rename = "match")] on ColorRule.match_rule
 }
 
+/// RGBA style slot — JSON accepts legacy `[r,g,b]` (alpha 255) or `[r,g,b,a]`.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct RuleStyle {
-    #[serde(default)]
-    pub topic_color: Option<[u8; 3]>,
-    #[serde(default)]
-    pub value_color: Option<[u8; 3]>,
-    #[serde(default)]
-    pub row_bg: Option<[u8; 3]>,
+    #[serde(default, deserialize_with = "de_opt_rgba")]
+    pub topic_color: Option<[u8; 4]>,
+    #[serde(default, deserialize_with = "de_opt_rgba")]
+    pub value_color: Option<[u8; 4]>,
+    #[serde(default, deserialize_with = "de_opt_rgba")]
+    pub row_bg: Option<[u8; 4]>,
+}
+
+fn de_opt_rgba<'de, D>(deserializer: D) -> Result<Option<[u8; 4]>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let opt: Option<Vec<u8>> = Option::deserialize(deserializer)?;
+    match opt {
+        None => Ok(None),
+        Some(v) if v.len() == 3 => Ok(Some([v[0], v[1], v[2], 255])),
+        Some(v) if v.len() == 4 => Ok(Some([v[0], v[1], v[2], v[3]])),
+        Some(_) => Err(serde::de::Error::custom(
+            "color must be [r,g,b] or [r,g,b,a]",
+        )),
+    }
 }
 
 impl RuleStyle {
     pub fn topic_c32(&self) -> Option<eframe::egui::Color32> {
-        self.topic_color
-            .map(|[r, g, b]| eframe::egui::Color32::from_rgb(r, g, b))
+        self.topic_color.map(rgba_c32)
     }
     pub fn value_c32(&self) -> Option<eframe::egui::Color32> {
-        self.value_color
-            .map(|[r, g, b]| eframe::egui::Color32::from_rgb(r, g, b))
+        self.value_color.map(rgba_c32)
     }
     pub fn row_bg_c32(&self) -> Option<eframe::egui::Color32> {
-        self.row_bg
-            .map(|[r, g, b]| eframe::egui::Color32::from_rgb(r, g, b))
+        self.row_bg.map(rgba_c32)
     }
+}
+
+fn rgba_c32([r, g, b, a]: [u8; 4]) -> eframe::egui::Color32 {
+    eframe::egui::Color32::from_rgba_unmultiplied(r, g, b, a)
 }
 
 #[derive(Default)]
@@ -155,9 +172,10 @@ impl ColorRulesStore {
                 value: String::new(),
             },
             style: RuleStyle {
-                topic_color: Some([220, 70, 70]),
-                value_color: Some([220, 70, 70]),
-                row_bg: Some([60, 28, 28]),
+                topic_color: Some([220, 70, 70, 255]),
+                value_color: Some([220, 70, 70, 255]),
+                // Default bg slightly faded so rows stay readable on charcoal.
+                row_bg: Some([60, 28, 28, 140]),
             },
         });
         self.save()

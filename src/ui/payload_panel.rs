@@ -129,6 +129,7 @@ pub fn draw(
     popped: &mut Vec<PoppedPayload>,
     history_fwd: Option<&HistoryForwarder>,
     payload_scrub: &mut PayloadScrub,
+    bookmarks: &mut crate::pro::bookmarks::BookmarksStore,
 ) {
     // Stay within the side-panel width — long topic paths wrap; they must not widen the column.
     let panel_w = ui.available_width();
@@ -165,6 +166,7 @@ pub fn draw(
         Some((&mut pop_out, &mut delete_hierarchy)),
         history_fwd,
         Some(payload_scrub),
+        Some(bookmarks),
     );
 
     if pop_out {
@@ -236,6 +238,7 @@ pub fn draw_undocked_viewports(
                         None, // already floated — no pop-out / trash chrome
                         None,
                         None, // scrub stays on the docked Payload panel
+                        None, // bookmark chrome is on the docked Payload bar
                     );
                 };
                 match class {
@@ -304,6 +307,7 @@ fn draw_topic_body(
     mut actions: Option<(&mut bool, &mut bool)>,
     history_fwd: Option<&HistoryForwarder>,
     mut payload_scrub: Option<&mut PayloadScrub>,
+    bookmarks: Option<&mut crate::pro::bookmarks::BookmarksStore>,
 ) {
     let accent = profiles
         .profiles
@@ -311,7 +315,7 @@ fn draw_topic_body(
         .map(|p| p.color())
         .unwrap_or(Color32::from_rgb(90, 190, 120));
 
-    // Broker name left; pop-out + trash on the right (more room than the caption line).
+    // Broker name left; bookmark + pop-out + trash on the right.
     ui.horizontal(|ui| {
         ui.label(RichText::new(profile_name).color(accent));
         if let Some((pop_out, delete_hierarchy)) = actions.as_mut() {
@@ -333,6 +337,14 @@ fn draw_topic_body(
                     .clicked()
                 {
                     **pop_out = true;
+                }
+                // Pro Bookmark for the selected tree node (parents allowed).
+                if let Some(store) = bookmarks {
+                    if pro::has(Entitlement::TopicBookmarks) {
+                        crate::ui::bookmarks_panel::bookmark_toggle_icon(
+                            ui, icons, store, profile_id, topic, status,
+                        );
+                    }
                 }
             });
         }

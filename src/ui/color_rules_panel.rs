@@ -3,15 +3,34 @@
 
 use crate::pro::color_rules::{ColorRule, ColorRulesStore, MatchPred, RuleStyle};
 use crate::ui::icons::{self, IconSet, CHROME_BG, CHROME_MUTED};
-use eframe::egui::{self, Color32, RichText, ViewportBuilder, ViewportClass};
+use eframe::egui::{self, Color32, Pos2, RichText, ViewportBuilder, ViewportClass};
 
+/// Preset hues + greys. Alpha comes from click Y inside each gradient swatch.
 const PRESETS: &[(&str, [u8; 3])] = &[
     ("Red", [220, 70, 70]),
+    ("Orange", [230, 120, 50]),
     ("Amber", [220, 160, 50]),
+    ("Yellow", [220, 200, 70]),
+    ("Lime", [140, 200, 70]),
     ("Green", [70, 180, 100]),
+    ("Teal", [50, 180, 160]),
+    ("Cyan", [60, 180, 210]),
     ("Blue", [70, 140, 220]),
+    ("Indigo", [110, 100, 220]),
     ("Magenta", [200, 80, 180]),
+    ("Pink", [220, 100, 140]),
+    ("White", [230, 232, 238]),
+    ("Light grey", [170, 176, 186]),
+    ("Mid grey", [120, 126, 138]),
+    ("Dark grey", [70, 74, 84]),
+    ("Near black", [40, 42, 48]),
 ];
+
+/// Swatch size: tall enough for a readable opaque→transparent gradient.
+const SWATCH_W: f32 = 14.0;
+const SWATCH_H: f32 = 28.0;
+/// Floor alpha at bottom of swatch (near-transparent, still visible).
+const ALPHA_FLOOR: u8 = 16;
 
 pub fn draw_popup(
     ctx: &egui::Context,
@@ -29,8 +48,8 @@ pub fn draw_popup(
         egui::ViewportId::from_hash_of("topicbench_color_rules_vp"),
         ViewportBuilder::default()
             .with_title("Color rules")
-            .with_inner_size([580.0, 420.0])
-            .with_min_inner_size([400.0, 260.0]),
+            .with_inner_size([640.0, 460.0])
+            .with_min_inner_size([480.0, 280.0]),
         |ctx, class| {
             let mut paint = |ui: &mut egui::Ui| {
                 icons::section_header_bar(ui, |ui| {
@@ -219,43 +238,108 @@ fn draw_rule_row(
             }
         }
     });
-    ui.horizontal(|ui| {
-        ui.label(RichText::new("colors").small().color(CHROME_MUTED));
-        color_swatches(ui, "topic", &mut rule.style.topic_color, dirty);
-        color_swatches(ui, "value", &mut rule.style.value_color, dirty);
-        color_swatches(ui, "bg", &mut rule.style.row_bg, dirty);
-    });
+    // One horizontal strip per slot; wrap only when the window is too narrow.
+    ui.label(RichText::new("colors").small().color(CHROME_MUTED));
+    color_swatches(ui, "topic", &mut rule.style.topic_color, dirty);
+    color_swatches(ui, "value", &mut rule.style.value_color, dirty);
+    color_swatches(ui, "bg", &mut rule.style.row_bg, dirty);
 }
 
 fn color_swatches(
     ui: &mut egui::Ui,
     label: &str,
-    slot: &mut Option<[u8; 3]>,
+    slot: &mut Option<[u8; 4]>,
     dirty: &mut bool,
 ) {
-    ui.label(RichText::new(label).small());
-    for (name, rgb) in PRESETS {
-        let selected = slot.as_ref() == Some(rgb);
-        let (rect, resp) = ui.allocate_exact_size(egui::vec2(14.0, 14.0), egui::Sense::click());
-        ui.painter()
-            .rect_filled(rect, 2.0, Color32::from_rgb(rgb[0], rgb[1], rgb[2]));
-        if selected {
-            ui.painter().rect_stroke(
-                rect,
-                2.0,
-                egui::Stroke::new(1.5_f32, Color32::WHITE),
-                egui::StrokeKind::Outside,
-            );
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing.x = 3.0;
+        ui.label(RichText::new(label).small());
+        for (name, rgb) in PRESETS {
+            let selected = slot
+                .as_ref()
+                .is_some_and(|c| c[0] == rgb[0] && c[1] == rgb[1] && c[2] == rgb[2]);
+            let (rect, resp) =
+                ui.allocate_exact_size(egui::vec2(SWATCH_W, SWATCH_H), egui::Sense::click());
+            paint_gradient_swatch(ui, rect, *rgb, selected, slot.as_ref().filter(|_| selected));
+            let tip = format!("{name} — click top=opaque, bottom=faded");
+            let click_pos = resp.interact_pointer_pos();
+            if resp.on_hover_text(tip).clicked() {
+                if let Some(pos) = click_pos {
+                    let alpha = alpha_from_y(rect, pos.y);
+                    *slot = Some([rgb[0], rgb[1], rgb[2], alpha]);
+                    *dirty = true;
+                }
+            }
         }
-        if resp.on_hover_text(*name).clicked() {
-            *slot = Some(*rgb);
+        if ui.small_button("×").on_hover_text("Clear").clicked() {
+            *slot = None;
             *dirty = true;
         }
+    });
+}
+
+/// Vertical gradient: top fully opaque → bottom near-transparent over dark base.
+fn paint_gradient_swatch(
+    ui: &mut egui::Ui,
+    rect: egui::Rect,
+    rgb: [u8; 3],
+    selected: bool,
+    current: Option<&[u8; 4]>,
+) {
+    let painter = ui.painter();
+    // Dark base so faded end of the gradient stays readable.
+    painter.rect_filled(rect, 2.0, Color32::from_rgb(22, 24, 28));
+    const STEPS: i32 = 20;
+    for i in 0..STEPS {
+        let t0 = i as f32 / STEPS as f32;
+        let t1 = (i + 1) as f32 / STEPS as f32;
+        let a0 = alpha_at_t(t0);
+        let y0 = egui::lerp(rect.top()..=rect.bottom(), t0);
+        let y1 = egui::lerp(rect.top()..=rect.bottom(), t1);
+        let slice = egui::Rect::from_min_max(
+            Pos2::new(rect.left(), y0),
+            Pos2::new(rect.right(), y1),
+        );
+        painter.rect_filled(
+            slice,
+            0.0,
+            Color32::from_rgba_unmultiplied(rgb[0], rgb[1], rgb[2], a0),
+        );
     }
-    if ui.small_button("×").on_hover_text("Clear").clicked() {
-        *slot = None;
-        *dirty = true;
+    painter.rect_stroke(
+        rect,
+        2.0,
+        egui::Stroke::new(
+            if selected { 1.5_f32 } else { 0.5_f32 },
+            if selected {
+                Color32::WHITE
+            } else {
+                Color32::from_rgb(70, 74, 84)
+            },
+        ),
+        egui::StrokeKind::Outside,
+    );
+    // Tick at current alpha Y when this hue is selected.
+    if let Some([_, _, _, a]) = current {
+        let t = 1.0 - ((*a as f32 - ALPHA_FLOOR as f32) / (255.0 - ALPHA_FLOOR as f32)).clamp(0.0, 1.0);
+        let y = egui::lerp(rect.top()..=rect.bottom(), t);
+        painter.hline(
+            rect.left()..=rect.right(),
+            y,
+            egui::Stroke::new(1.0_f32, Color32::WHITE),
+        );
     }
+}
+
+fn alpha_from_y(rect: egui::Rect, y: f32) -> u8 {
+    let t = ((y - rect.top()) / rect.height()).clamp(0.0, 1.0);
+    alpha_at_t(t)
+}
+
+fn alpha_at_t(t: f32) -> u8 {
+    // t=0 top → opaque; t=1 bottom → ALPHA_FLOOR
+    let a = 255.0 - t * (255.0 - ALPHA_FLOOR as f32);
+    a.round().clamp(ALPHA_FLOOR as f32, 255.0) as u8
 }
 
 /// Editor combo entries (id, label) — topic · payload · JSON.

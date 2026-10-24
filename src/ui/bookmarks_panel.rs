@@ -15,6 +15,7 @@ use eframe::egui::{
 const ROW_H: f32 = 28.0;
 const GRIP_W: f32 = 14.0;
 const TRASH_W: f32 = 22.0;
+const JUMP_W: f32 = 22.0;
 const EDIT_W: f32 = 22.0;
 
 /// Pending jump after popup click (applied once tree paints).
@@ -118,14 +119,11 @@ fn paint_bookmarks_body(
         icons::section_icon(ui, icons, "message_history");
         icons::section_title(ui, "Bookmarks");
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if icons
-                .tiny(ui, "remove_x", false, "Close Bookmarks")
-                .clicked()
-            {
+            if icons.tiny(ui, "remove_x", false, "Close").clicked() {
                 *close = true;
             }
             if icons
-                .tiny(ui, "export_download", false, "Export bookmarks.json")
+                .tiny(ui, "export_download", false, "Export bookmarks")
                 .clicked()
             {
                 if let Some(path) = rfd::FileDialog::new()
@@ -140,9 +138,59 @@ fn paint_bookmarks_body(
                     }
                 }
             }
+            // Import beside Export (right-to-left → appears left of Export).
+            if icons
+                .tiny(ui, "folder_open", false, "Import bookmarks")
+                .clicked()
+            {
+                if let Some(path) = rfd::FileDialog::new()
+                    .set_title("Import bookmarks")
+                    .add_filter("JSON", &["json"])
+                    .pick_file()
+                {
+                    let mode = if store.items.is_empty() {
+                        Some("replace")
+                    } else {
+                        match rfd::MessageDialog::new()
+                            .set_level(rfd::MessageLevel::Info)
+                            .set_title("Import bookmarks")
+                            .set_description(
+                                "Replace the current list, or Merge matching ids/paths \
+                                 and append the rest?",
+                            )
+                            .set_buttons(rfd::MessageButtons::YesNoCancelCustom(
+                                "Replace".into(),
+                                "Merge".into(),
+                                "Cancel".into(),
+                            ))
+                            .show()
+                        {
+                            rfd::MessageDialogResult::Yes => Some("replace"),
+                            rfd::MessageDialogResult::No => Some("merge"),
+                            rfd::MessageDialogResult::Custom(s)
+                                if s.eq_ignore_ascii_case("replace") =>
+                            {
+                                Some("replace")
+                            }
+                            rfd::MessageDialogResult::Custom(s)
+                                if s.eq_ignore_ascii_case("merge") =>
+                            {
+                                Some("merge")
+                            }
+                            _ => None,
+                        }
+                    };
+                    if let Some(mode) = mode {
+                        match store.import_from(&path, mode) {
+                            Ok(n) => *status = format!("Imported {n} bookmarks ({mode})"),
+                            Err(e) => *status = format!("Import failed: {e}"),
+                        }
+                    }
+                }
+            }
             if ui
                 .button(RichText::new("+ Add").color(CHROME_TEXT))
-                .on_hover_text("Add bookmark manually")
+                .on_hover_text("Add bookmark")
                 .clicked()
             {
                 open_add = true;
@@ -281,194 +329,226 @@ fn paint_bookmarks_body(
     let mut pending_reorder: Option<(String, String, bool)> = None;
     let mut start_edit: Option<Bookmark> = None;
 
+    // Group by profile (profiles list order); rows omit redundant profile name.
+    let groups = grouped_bookmark_ids(store, profiles_names);
+
     egui::ScrollArea::vertical().show(ui, |ui| {
-        let ids: Vec<String> = store.items.iter().map(|b| b.id.clone()).collect();
-        for id in &ids {
-            let Some(b) = store.items.iter().find(|x| x.id == *id).cloned() else {
-                continue;
-            };
-            let profile_name = profiles_names
-                .iter()
-                .find(|(pid, _)| pid == &b.profile_id)
-                .map(|(_, n)| n.as_str())
-                .unwrap_or(b.profile_id.as_str());
+        for (group_pid, group_name, ids) in &groups {
+            ui.add_space(4.0);
+            ui.label(
+                RichText::new(group_name.as_str())
+                    .strong()
+                    .color(CHROME_ACCENT_BORDER),
+            );
+            ui.add_space(2.0);
+            for id in ids {
+                let Some(b) = store.items.iter().find(|x| x.id == *id).cloned() else {
+                    continue;
+                };
 
-            let (row_rect, drop_response) =
-                ui.allocate_exact_size(egui::vec2(ui.available_width(), ROW_H), Sense::hover());
-            ui.painter().rect_filled(row_rect, 2.0, CHROME_ROW);
+                let (row_rect, drop_response) =
+                    ui.allocate_exact_size(egui::vec2(ui.available_width(), ROW_H), Sense::hover());
+                ui.painter().rect_filled(row_rect, 2.0, CHROME_ROW);
 
-            let grip_rect = egui::Rect::from_min_size(
-                egui::pos2(row_rect.left() + 2.0, row_rect.top()),
-                egui::vec2(GRIP_W, ROW_H),
-            );
-            // Trash + edit sit right-justified.
-            let trash_rect = egui::Rect::from_min_size(
-                egui::pos2(row_rect.right() - TRASH_W - 2.0, row_rect.top()),
-                egui::vec2(TRASH_W, ROW_H),
-            );
-            let edit_rect = egui::Rect::from_min_size(
-                egui::pos2(trash_rect.left() - EDIT_W - 2.0, row_rect.top()),
-                egui::vec2(EDIT_W, ROW_H),
-            );
-            let body_rect = egui::Rect::from_min_max(
-                egui::pos2(grip_rect.right() + 4.0, row_rect.top()),
-                egui::pos2(edit_rect.left() - 4.0, row_rect.bottom()),
-            );
+                let grip_rect = egui::Rect::from_min_size(
+                    egui::pos2(row_rect.left() + 2.0, row_rect.top()),
+                    egui::vec2(GRIP_W, ROW_H),
+                );
+                // Right-justified: edit · jump · trash.
+                let trash_rect = egui::Rect::from_min_size(
+                    egui::pos2(row_rect.right() - TRASH_W - 2.0, row_rect.top()),
+                    egui::vec2(TRASH_W, ROW_H),
+                );
+                let jump_rect = egui::Rect::from_min_size(
+                    egui::pos2(trash_rect.left() - JUMP_W - 2.0, row_rect.top()),
+                    egui::vec2(JUMP_W, ROW_H),
+                );
+                let edit_rect = egui::Rect::from_min_size(
+                    egui::pos2(jump_rect.left() - EDIT_W - 2.0, row_rect.top()),
+                    egui::vec2(EDIT_W, ROW_H),
+                );
+                let body_rect = egui::Rect::from_min_max(
+                    egui::pos2(grip_rect.right() + 4.0, row_rect.top()),
+                    egui::pos2(edit_rect.left() - 4.0, row_rect.bottom()),
+                );
 
-            // Grip — Profiles-list DnD (payload while dragged; drop on whole row).
-            icons::paint_drag_grip(ui, grip_rect);
-            let grip_id = egui::Id::new(("bm_grip", id.as_str()));
-            let grip_response = ui
-                .interact(grip_rect, grip_id, Sense::drag())
-                .on_hover_cursor(CursorIcon::Grab)
-                .on_hover_text("Drag to reorder");
-            if grip_response.dragged() {
-                grip_response.dnd_set_drag_payload(BookmarkDnd(id.clone()));
-            }
-            if ui.ctx().is_being_dragged(grip_id) {
-                if let Some(pos) = ui.ctx().pointer_interact_pos() {
-                    let layer = egui::LayerId::new(egui::Order::Tooltip, grip_id);
-                    let preview = egui::Rect::from_center_size(pos, egui::vec2(GRIP_W, ROW_H));
-                    let painter = ui.ctx().layer_painter(layer);
-                    painter.rect_filled(preview, 2.0, CHROME_HOVER);
-                    // Grip dots on the floating preview (same as Profiles).
-                    let color = CHROME_MUTED;
-                    let r = 1.2_f32;
-                    let cx = preview.center().x;
-                    let cy = preview.center().y;
-                    for col in [-1.0_f32, 1.0] {
-                        for row in [-1.0_f32, 0.0, 1.0] {
-                            painter.circle_filled(
-                                egui::pos2(cx + col * 3.0, cy + row * 3.5),
-                                r,
-                                color,
-                            );
+                icons::paint_drag_grip(ui, grip_rect);
+                let grip_id = egui::Id::new(("bm_grip", id.as_str()));
+                let grip_response = ui
+                    .interact(grip_rect, grip_id, Sense::drag())
+                    .on_hover_cursor(CursorIcon::Grab)
+                    .on_hover_text("Drag to reorder within profile");
+                if grip_response.dragged() {
+                    grip_response.dnd_set_drag_payload(BookmarkDnd(id.clone()));
+                }
+                if ui.ctx().is_being_dragged(grip_id) {
+                    if let Some(pos) = ui.ctx().pointer_interact_pos() {
+                        let layer = egui::LayerId::new(egui::Order::Tooltip, grip_id);
+                        let preview = egui::Rect::from_center_size(pos, egui::vec2(GRIP_W, ROW_H));
+                        let painter = ui.ctx().layer_painter(layer);
+                        painter.rect_filled(preview, 2.0, CHROME_HOVER);
+                        let color = CHROME_MUTED;
+                        let r = 1.2_f32;
+                        let cx = preview.center().x;
+                        let cy = preview.center().y;
+                        for col in [-1.0_f32, 1.0] {
+                            for row in [-1.0_f32, 0.0, 1.0] {
+                                painter.circle_filled(
+                                    egui::pos2(cx + col * 3.0, cy + row * 3.5),
+                                    r,
+                                    color,
+                                );
+                            }
                         }
                     }
                 }
-            }
 
-            // Drop target indicators (before/after by pointer Y).
-            if let Some(payload) = drop_response.dnd_hover_payload::<BookmarkDnd>() {
-                if payload.0.as_str() != id.as_str() {
-                    let after = drop_response
-                        .hover_pos()
-                        .map(|p| p.y > drop_response.rect.center().y)
-                        .unwrap_or(false);
-                    let y = if after {
-                        drop_response.rect.bottom()
-                    } else {
-                        drop_response.rect.top()
-                    };
-                    ui.painter().hline(
-                        drop_response.rect.x_range(),
-                        y,
-                        egui::Stroke::new(2.0_f32, CHROME_ACCENT_BORDER),
-                    );
-                    ui.painter().rect_filled(
-                        drop_response.rect,
-                        2.0,
-                        egui::Color32::from_rgba_unmultiplied(
-                            CHROME_HOVER.r(),
-                            CHROME_HOVER.g(),
-                            CHROME_HOVER.b(),
-                            80,
-                        ),
-                    );
-                }
-            }
-            if let Some(payload) = drop_response.dnd_release_payload::<BookmarkDnd>() {
-                if payload.0.as_str() != id.as_str() {
-                    let after = drop_response
-                        .interact_pointer_pos()
-                        .or_else(|| drop_response.hover_pos())
-                        .map(|p| p.y > drop_response.rect.center().y)
-                        .unwrap_or(false);
-                    pending_reorder = Some((payload.0.clone(), id.clone(), after));
-                }
-            }
-
-            // Jumpable name + profile + expand (child Ui clipped to body_rect).
-            let label = if b.label.is_empty() {
-                b.topic.clone()
-            } else {
-                b.label.clone()
-            };
-            let tip = format!("{} · {} — click to jump", b.topic, profile_name);
-            ui.allocate_new_ui(egui::UiBuilder::new().max_rect(body_rect), |ui| {
-                ui.set_min_height(ROW_H);
-                ui.horizontal_centered(|ui| {
-                    ui.spacing_mut().item_spacing.x = 8.0;
-                    // Soft row hover so jump-clickability is obvious.
-                    let hover_pad = ui.available_rect_before_wrap();
-                    let hovering_body = ui.rect_contains_pointer(hover_pad);
-                    if hovering_body {
-                        ui.painter().rect_filled(body_rect, 2.0, CHROME_HOVER);
-                    }
-                    let name_color = if hovering_body {
-                        CHROME_ACCENT_BORDER
-                    } else {
-                        CHROME_TEXT
-                    };
-                    let name_resp = ui
-                        .add(
-                            egui::Label::new(RichText::new(&label).color(name_color))
-                                .sense(Sense::click())
-                                .selectable(false),
-                        )
-                        .on_hover_cursor(CursorIcon::PointingHand)
-                        .on_hover_text(&tip);
-                    if name_resp.hovered() {
+                // Drop only within the same profile group.
+                if let Some(payload) = drop_response.dnd_hover_payload::<BookmarkDnd>() {
+                    let same_group = store
+                        .items
+                        .iter()
+                        .find(|x| x.id == payload.0)
+                        .is_some_and(|x| x.profile_id == *group_pid);
+                    if same_group && payload.0.as_str() != id.as_str() {
+                        let after = drop_response
+                            .hover_pos()
+                            .map(|p| p.y > drop_response.rect.center().y)
+                            .unwrap_or(false);
+                        let y = if after {
+                            drop_response.rect.bottom()
+                        } else {
+                            drop_response.rect.top()
+                        };
                         ui.painter().hline(
-                            name_resp.rect.x_range(),
-                            name_resp.rect.bottom() - 1.0,
-                            egui::Stroke::new(1.0_f32, CHROME_ACCENT_BORDER),
+                            drop_response.rect.x_range(),
+                            y,
+                            egui::Stroke::new(2.0_f32, CHROME_ACCENT_BORDER),
+                        );
+                        ui.painter().rect_filled(
+                            drop_response.rect,
+                            2.0,
+                            egui::Color32::from_rgba_unmultiplied(
+                                CHROME_HOVER.r(),
+                                CHROME_HOVER.g(),
+                                CHROME_HOVER.b(),
+                                80,
+                            ),
                         );
                     }
-                    if name_resp.clicked() {
-                        jump = Some(PendingBookmarkJump {
-                            profile_id: b.profile_id.clone(),
-                            topic: b.topic.clone(),
-                            expand_subtree: b.expand_subtree,
-                        });
-                        *close = true;
+                }
+                if let Some(payload) = drop_response.dnd_release_payload::<BookmarkDnd>() {
+                    let same_group = store
+                        .items
+                        .iter()
+                        .find(|x| x.id == payload.0)
+                        .is_some_and(|x| x.profile_id == *group_pid);
+                    if same_group && payload.0.as_str() != id.as_str() {
+                        let after = drop_response
+                            .interact_pointer_pos()
+                            .or_else(|| drop_response.hover_pos())
+                            .map(|p| p.y > drop_response.rect.center().y)
+                            .unwrap_or(false);
+                        pending_reorder = Some((payload.0.clone(), id.clone(), after));
                     }
-                    ui.label(RichText::new(profile_name).small().color(CHROME_MUTED));
-                    let mut exp = b.expand_subtree;
-                    if ui
-                        .checkbox(&mut exp, "expand")
-                        .on_hover_text("Expand subtree when jumping")
-                        .changed()
-                    {
-                        expand_change = Some((b.id.clone(), exp));
-                    }
-                });
-            });
+                }
 
-            // Edit then trash — right-justified slots.
-            ui.allocate_new_ui(egui::UiBuilder::new().max_rect(edit_rect), |ui| {
-                ui.with_layout(
-                    egui::Layout::centered_and_justified(egui::Direction::LeftToRight),
-                    |ui| {
-                        if icons
-                            .tiny(ui, "profile_edit", false, "Edit bookmark")
-                            .clicked()
+                let label = if b.label.is_empty() {
+                    b.topic.clone()
+                } else {
+                    b.label.clone()
+                };
+                let tip = format!("{} — click to jump", b.topic);
+                ui.allocate_new_ui(egui::UiBuilder::new().max_rect(body_rect), |ui| {
+                    ui.set_min_height(ROW_H);
+                    ui.horizontal_centered(|ui| {
+                        ui.spacing_mut().item_spacing.x = 8.0;
+                        let hover_pad = ui.available_rect_before_wrap();
+                        let hovering_body = ui.rect_contains_pointer(hover_pad);
+                        if hovering_body {
+                            ui.painter().rect_filled(body_rect, 2.0, CHROME_HOVER);
+                        }
+                        let name_color = if hovering_body {
+                            CHROME_ACCENT_BORDER
+                        } else {
+                            CHROME_TEXT
+                        };
+                        let name_resp = ui
+                            .add(
+                                egui::Label::new(RichText::new(&label).color(name_color))
+                                    .sense(Sense::click())
+                                    .selectable(false),
+                            )
+                            .on_hover_cursor(CursorIcon::PointingHand)
+                            .on_hover_text(&tip);
+                        if name_resp.hovered() {
+                            ui.painter().hline(
+                                name_resp.rect.x_range(),
+                                name_resp.rect.bottom() - 1.0,
+                                egui::Stroke::new(1.0_f32, CHROME_ACCENT_BORDER),
+                            );
+                        }
+                        if name_resp.clicked() {
+                            jump = Some(PendingBookmarkJump {
+                                profile_id: b.profile_id.clone(),
+                                topic: b.topic.clone(),
+                                expand_subtree: b.expand_subtree,
+                            });
+                            *close = true;
+                        }
+                        let mut exp = b.expand_subtree;
+                        if ui
+                            .checkbox(&mut exp, "expand")
+                            .on_hover_text("Expand subtree when jumping")
+                            .changed()
                         {
-                            start_edit = Some(b.clone());
+                            expand_change = Some((b.id.clone(), exp));
                         }
-                    },
-                );
-            });
-            ui.allocate_new_ui(egui::UiBuilder::new().max_rect(trash_rect), |ui| {
-                ui.with_layout(
-                    egui::Layout::centered_and_justified(egui::Direction::LeftToRight),
-                    |ui| {
-                        if icons.tiny(ui, "trash", false, "Remove bookmark").clicked() {
-                            remove_id = Some(b.id.clone());
-                        }
-                    },
-                );
-            });
+                    });
+                });
+
+                ui.allocate_new_ui(egui::UiBuilder::new().max_rect(edit_rect), |ui| {
+                    ui.with_layout(
+                        egui::Layout::centered_and_justified(egui::Direction::LeftToRight),
+                        |ui| {
+                            if icons
+                                .tiny(ui, "profile_edit", false, "Edit bookmark")
+                                .clicked()
+                            {
+                                start_edit = Some(b.clone());
+                            }
+                        },
+                    );
+                });
+                ui.allocate_new_ui(egui::UiBuilder::new().max_rect(jump_rect), |ui| {
+                    ui.with_layout(
+                        egui::Layout::centered_and_justified(egui::Direction::LeftToRight),
+                        |ui| {
+                            if icons
+                                .tiny(ui, "topic_tags", false, "Jump to bookmark")
+                                .clicked()
+                            {
+                                jump = Some(PendingBookmarkJump {
+                                    profile_id: b.profile_id.clone(),
+                                    topic: b.topic.clone(),
+                                    expand_subtree: b.expand_subtree,
+                                });
+                                *close = true;
+                            }
+                        },
+                    );
+                });
+                ui.allocate_new_ui(egui::UiBuilder::new().max_rect(trash_rect), |ui| {
+                    ui.with_layout(
+                        egui::Layout::centered_and_justified(egui::Direction::LeftToRight),
+                        |ui| {
+                            if icons.tiny(ui, "trash", false, "Remove bookmark").clicked() {
+                                remove_id = Some(b.id.clone());
+                            }
+                        },
+                    );
+                });
+            }
         }
     });
 
@@ -579,7 +659,43 @@ fn set_subtree_open_pub(
     }
 }
 
-/// Tiny bookmark toggle for a tree row (Pro).
+/// Profile groups in profiles-list order, then any leftover profile ids.
+fn grouped_bookmark_ids(
+    store: &BookmarksStore,
+    profiles_names: &[(String, String)],
+) -> Vec<(String, String, Vec<String>)> {
+    let mut seen = std::collections::HashSet::new();
+    let mut groups: Vec<(String, String, Vec<String>)> = Vec::new();
+    for (pid, name) in profiles_names {
+        let ids: Vec<String> = store
+            .items
+            .iter()
+            .filter(|b| b.profile_id == *pid)
+            .map(|b| b.id.clone())
+            .collect();
+        if !ids.is_empty() {
+            seen.insert(pid.clone());
+            groups.push((pid.clone(), name.clone(), ids));
+        }
+    }
+    // Orphan profile ids (deleted profile, etc.).
+    for b in &store.items {
+        if seen.contains(&b.profile_id) {
+            continue;
+        }
+        seen.insert(b.profile_id.clone());
+        let ids: Vec<String> = store
+            .items
+            .iter()
+            .filter(|x| x.profile_id == b.profile_id)
+            .map(|x| x.id.clone())
+            .collect();
+        groups.push((b.profile_id.clone(), b.profile_id.clone(), ids));
+    }
+    groups
+}
+
+/// Tiny bookmark toggle for a tree/payload row (Pro) — works for parents and leaves.
 pub fn bookmark_toggle_icon(
     ui: &mut egui::Ui,
     icons: &IconSet,
@@ -592,7 +708,7 @@ pub fn bookmark_toggle_icon(
     let tip = if on {
         "Remove bookmark"
     } else {
-        "Add bookmark"
+        "Bookmark"
     };
     // message_history (not topic_tags — that is copy-topic on the same row).
     if icons
