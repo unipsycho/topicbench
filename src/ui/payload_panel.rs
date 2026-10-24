@@ -342,7 +342,7 @@ fn draw_topic_body(
                 if let Some(store) = bookmarks {
                     if pro::has(Entitlement::TopicBookmarks) {
                         crate::ui::bookmarks_panel::bookmark_toggle_icon(
-                            ui, icons, store, profile_id, topic, status,
+                            ui, icons, store, profile_id, topic, status, false,
                         );
                     }
                 }

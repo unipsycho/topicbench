@@ -696,6 +696,7 @@ fn grouped_bookmark_ids(
 }
 
 /// Tiny bookmark toggle for a tree/payload row (Pro) — works for parents and leaves.
+/// `cluster`: half-pad icon for the topic-tree left icon group; false for payload header.
 pub fn bookmark_toggle_icon(
     ui: &mut egui::Ui,
     icons: &IconSet,
@@ -703,6 +704,7 @@ pub fn bookmark_toggle_icon(
     profile_id: &str,
     topic: &str,
     status: &mut String,
+    cluster: bool,
 ) {
     let on = store.is_bookmarked(profile_id, topic);
     let tip = if on {
@@ -711,10 +713,13 @@ pub fn bookmark_toggle_icon(
         "Bookmark"
     };
     // message_history (not topic_tags — that is copy-topic on the same row).
-    if icons
-        .tiny(ui, "message_history", on, &shortcuts_tip(tip))
-        .clicked()
-    {
+    let tip = shortcuts_tip(tip);
+    let resp = if cluster {
+        icons.tiny_cluster(ui, "message_history", on, &tip)
+    } else {
+        icons.tiny(ui, "message_history", on, &tip)
+    };
+    if resp.clicked() {
         let now_on = store.toggle(profile_id, topic);
         *status = if now_on {
             format!("Bookmarked {topic}")

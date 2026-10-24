@@ -235,7 +235,28 @@ impl IconSet {
         selected: bool,
         tip: &str,
     ) -> egui::Response {
-        let pad = 2.0;
+        self.tiny_with_pad(ui, name, selected, tip, 2.0)
+    }
+
+    /// Left-cluster tree icons: same glyph, half pad so neighbors sit closer.
+    pub fn tiny_cluster(
+        &self,
+        ui: &mut egui::Ui,
+        name: &str,
+        selected: bool,
+        tip: &str,
+    ) -> egui::Response {
+        self.tiny_with_pad(ui, name, selected, tip, 0.5)
+    }
+
+    fn tiny_with_pad(
+        &self,
+        ui: &mut egui::Ui,
+        name: &str,
+        selected: bool,
+        tip: &str,
+        pad: f32,
+    ) -> egui::Response {
         let size = Vec2::splat(TINY_ICON + pad * 2.0);
         let (rect, response) = ui.allocate_exact_size(size, Sense::click());
         let response = crate::ui::hover_tip::attach(response, tip);
