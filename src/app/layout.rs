@@ -197,11 +197,11 @@ impl MqttMonitorApp {
         });
     }
 
-    /// Pro ribbon group: Simulation (locked chrome when unlicensed).
+    /// Pro ribbon group: Simulation + Bookmarks + Color rules (locked when unlicensed).
     fn draw_ribbon_pro(&mut self, ui: &mut egui::Ui, mode: SectionMode) {
         icons::ribbon_group(ui, "Pro", TINT_PRO, |ui| {
-            let licensed = crate::pro::has(crate::pro::Entitlement::Simulation);
-            let tip = if licensed {
+            let sim_ok = crate::pro::has(crate::pro::Entitlement::Simulation);
+            let tip = if sim_ok {
                 "Open Simulation panel (topic / payload generators)".to_string()
             } else {
                 "Simulation — requires TopicBench Pro".to_string()
@@ -219,9 +219,48 @@ impl MqttMonitorApp {
             if clicked {
                 self.simulation_open = !self.simulation_open;
                 self.persist_panels();
-                if self.simulation_open && licensed {
+                if self.simulation_open && sim_ok {
                     self.sim_client.poll_if_due(true);
                 }
+            }
+
+            // Bookmarks list popup (separate from per-row Bookmark toggle).
+            let bm_ok = crate::pro::has(crate::pro::Entitlement::TopicBookmarks);
+            let bm_tip = if bm_ok {
+                shortcuts::tip("Open Bookmarks jump list", "Ctrl+Shift+J")
+            } else {
+                "Bookmarks — requires TopicBench Pro".into()
+            };
+            let bm_click = if mode == SectionMode::Full {
+                self.icons
+                    .command(ui, "message_history", "Bookmarks", self.bookmarks_open, &bm_tip)
+                    .clicked()
+            } else {
+                self.icons
+                    .command_compact(ui, "message_history", self.bookmarks_open, &bm_tip)
+                    .clicked()
+            };
+            if bm_click && bm_ok {
+                self.bookmarks_open = !self.bookmarks_open;
+            }
+
+            let cr_ok = crate::pro::has(crate::pro::Entitlement::ColorRules);
+            let cr_tip = if cr_ok {
+                "Open Color rules editor".to_string()
+            } else {
+                "Color rules — requires TopicBench Pro".to_string()
+            };
+            let cr_click = if mode == SectionMode::Full {
+                self.icons
+                    .command(ui, "alerts", "Color rules", self.color_rules_open, &cr_tip)
+                    .clicked()
+            } else {
+                self.icons
+                    .command_compact(ui, "alerts", self.color_rules_open, &cr_tip)
+                    .clicked()
+            };
+            if cr_click && cr_ok {
+                self.color_rules_open = !self.color_rules_open;
             }
         });
     }
@@ -671,6 +710,7 @@ impl MqttMonitorApp {
                                 &self.icons,
                                 &self.search,
                                 &mut self.status,
+                                &self.color_rules,
                             );
                             ui.add_space(8.0);
                             ui.separator();
@@ -696,6 +736,9 @@ impl MqttMonitorApp {
                                 &mut self.status,
                                 &mut publish_from_tree,
                                 &mut self.topic_tree_undocked,
+                                &mut self.bookmarks,
+                                &self.color_rules,
+                                &mut self.scroll_tree_to,
                             );
                             if self.search.query != search_before.0
                                 || self.search.scope != search_before.1
@@ -819,8 +862,63 @@ impl MqttMonitorApp {
             &mut self.status,
             &mut publish_from_tree,
             &mut self.topic_tree_undocked,
+            &mut self.bookmarks,
+            &self.color_rules,
+            &mut self.scroll_tree_to,
         );
         self.apply_publish_from_tree(publish_from_tree);
+    }
+
+    /// Pro Bookmarks + Color rules popups (ribbon-opened; jump dismisses bookmarks).
+    pub(super) fn draw_pro_chrome_popups(&mut self, ctx: &egui::Context) {
+        // Apply pending jump before drawing so expand state is ready for this frame's tree.
+        if let Some(jump) = self.pending_bookmark_jump.take() {
+            crate::ui::bookmarks_panel::apply_jump(
+                ctx,
+                &self.sessions,
+                &mut self.pins,
+                &jump,
+                &mut self.scroll_tree_to,
+                &mut self.status,
+            );
+        }
+
+        if crate::pro::has(crate::pro::Entitlement::TopicBookmarks) {
+            let profile_names: Vec<(String, String)> = self
+                .profiles
+                .ids_in_order()
+                .into_iter()
+                .filter_map(|id| {
+                    self.profiles
+                        .profiles
+                        .get(&id)
+                        .map(|p| (id, p.name.clone()))
+                })
+                .collect();
+            crate::ui::bookmarks_panel::draw_popup(
+                ctx,
+                &mut self.bookmarks_open,
+                &mut self.bookmarks,
+                &profile_names,
+                &self.icons,
+                &mut self.status,
+                &mut self.pending_bookmark_jump,
+            );
+        } else {
+            self.bookmarks_open = false;
+        }
+
+        if crate::pro::has(crate::pro::Entitlement::ColorRules) {
+            crate::ui::color_rules_panel::draw_popup(
+                ctx,
+                &mut self.color_rules_open,
+                &mut self.color_rules,
+                &self.icons,
+                &mut self.status,
+            );
+        } else {
+            self.color_rules_open = false;
+        }
     }
 
     fn apply_publish_from_tree(&mut self, fill: Option<PublishFromTree>) {

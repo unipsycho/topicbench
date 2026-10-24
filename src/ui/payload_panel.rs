@@ -15,7 +15,7 @@ use crate::ui::json_view;
 use eframe::egui::{
     self, Align, Color32, Key, RichText, Sense, Vec2, ViewportBuilder, ViewportClass,
 };
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 /// Graph pin sized to Payload line height (not full [`icons::TINY_ICON`] cell).
 const PAYLOAD_GRAPH_ICON: f32 = 14.0;
@@ -360,20 +360,29 @@ fn draw_topic_body(
                 &n.payload_history,
                 history_fwd,
             );
-            let (payload, scrubbing) = if let Some(scrub) = payload_scrub.as_deref_mut() {
+            let (payload, scrubbing, sample_at) = if let Some(scrub) = payload_scrub.as_deref_mut()
+            {
                 if pro::has(Entitlement::HistoryScrubber) {
                     scrub.sync_topic(profile_id, topic);
                     let idx = scrub.index_in(history.len());
                     let live = scrub.is_live();
-                    let p = idx
-                        .and_then(|i| history.get(i).map(|(_, s)| s.clone()))
-                        .unwrap_or_else(|| live_payload.clone());
-                    (p, !live)
+                    let (p, at) = idx
+                        .and_then(|i| history.get(i).map(|(t, s)| (s.clone(), Some(*t))))
+                        .unwrap_or_else(|| (live_payload.clone(), history.last().map(|(t, _)| *t)));
+                    (p, !live, at)
                 } else {
-                    (live_payload.clone(), false)
+                    (
+                        live_payload.clone(),
+                        false,
+                        history.last().map(|(t, _)| *t),
+                    )
                 }
             } else {
-                (live_payload.clone(), false)
+                (
+                    live_payload.clone(),
+                    false,
+                    history.last().map(|(t, _)| *t),
+                )
             };
             let display = display_text(&payload);
             let is_json = json_view::try_pretty_json(&payload).is_some();
@@ -408,6 +417,7 @@ fn draw_topic_body(
                 change_bg,
                 payload_scrub,
                 history.len(),
+                sample_at,
             );
         }
         _ => {
@@ -454,6 +464,16 @@ fn merge_payload_history(
     out.sort_by(|a, b| a.0.cmp(&b.0));
     out.dedup_by(|a, b| a.0 == b.0 && a.1 == b.1);
     out
+}
+
+/// Map sample Instant → local wall clock (age from Instant::now → SystemTime).
+fn instant_hhmmss(at: Instant) -> String {
+    let age = Instant::now().saturating_duration_since(at);
+    let wall = SystemTime::now()
+        .checked_sub(age)
+        .unwrap_or_else(SystemTime::now);
+    let dt: chrono::DateTime<chrono::Local> = wall.into();
+    dt.format("%H:%M:%S").to_string()
 }
 
 /// Compact scrub beside `#count`: slide left for older payloads; tip = live.
@@ -596,6 +616,8 @@ fn draw_searchable_body(
     change_bg: Color32,
     payload_scrub: Option<&mut PayloadScrub>,
     history_len: usize,
+    // Receive Instant for the viewed sample (live tip or scrubbed); None → hide clock.
+    sample_at: Option<Instant>,
 ) {
     let matches = find_matches(display, &search.query);
     let n = matches.len();
@@ -605,7 +627,7 @@ fn draw_searchable_body(
     let current_line = matches.get(search.current).map(|m| m.line);
     let do_scroll = search.scroll_to_current && current_line.is_some();
 
-    // Kind label + message count + optional Pro history scrub on one row.
+    // Kind label + #count + Pro scrub; receive time far-right on the same row.
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 8.0;
         if is_json {
@@ -624,6 +646,18 @@ fn draw_searchable_body(
         if let Some(scrub) = payload_scrub {
             if pro::has(Entitlement::HistoryScrubber) && history_len > 1 {
                 draw_payload_scrub(ui, scrub, history_len);
+            }
+        }
+        if let Some(at) = sample_at {
+            if pro::has(Entitlement::HistoryScrubber) {
+                ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
+                    ui.label(
+                        RichText::new(instant_hhmmss(at))
+                            .small()
+                            .monospace()
+                            .weak(),
+                    );
+                });
             }
         }
     });

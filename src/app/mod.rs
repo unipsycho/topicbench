@@ -118,6 +118,15 @@ pub struct MqttMonitorApp {
     history_fwd: Option<crate::pro::history_client::HistoryForwarder>,
     /// Payload-panel history scrub (session-only).
     payload_scrub: crate::pro::history_client::PayloadScrub,
+    /// Pro topic bookmarks.
+    bookmarks: crate::pro::bookmarks::BookmarksStore,
+    bookmarks_open: bool,
+    pending_bookmark_jump: Option<crate::ui::bookmarks_panel::PendingBookmarkJump>,
+    /// Scroll tree to this topic after a bookmark jump.
+    scroll_tree_to: Option<(String, String)>,
+    /// Pro color rules.
+    color_rules: crate::pro::color_rules::ColorRulesStore,
+    color_rules_open: bool,
 }
 
 impl MqttMonitorApp {
@@ -216,6 +225,12 @@ impl MqttMonitorApp {
                 None
             },
             payload_scrub: crate::pro::history_client::PayloadScrub::default(),
+            bookmarks: crate::pro::bookmarks::BookmarksStore::load(),
+            bookmarks_open: false,
+            pending_bookmark_jump: None,
+            scroll_tree_to: None,
+            color_rules: crate::pro::color_rules::ColorRulesStore::load(),
+            color_rules_open: false,
         }
     }
 }
@@ -371,8 +386,11 @@ impl eframe::App for MqttMonitorApp {
 
         self.handle_shortcuts(ctx);
         // Suppress tips under Settings / Shortcuts / Update overlays.
-        let block_tips =
-            self.settings_open || self.shortcuts_open || self.update_modal_open;
+        let block_tips = self.settings_open
+            || self.shortcuts_open
+            || self.update_modal_open
+            || self.bookmarks_open
+            || self.color_rules_open;
         crate::ui::hover_tip::set_block_hover_tips(ctx, block_tips);
         if block_tips {
             crate::ui::topic_tree_panel::dismiss_hover_tips(ctx);
@@ -385,6 +403,7 @@ impl eframe::App for MqttMonitorApp {
         self.draw_undocked_topic_trees(ctx);
         self.draw_undocked_payloads(ctx);
         self.draw_simulation_panel(ctx);
+        self.draw_pro_chrome_popups(ctx);
         self.draw_overlays(ctx);
 
         // Panels/actions may have rewritten `status` — refresh fade clock.

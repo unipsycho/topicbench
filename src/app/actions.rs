@@ -184,6 +184,16 @@ impl MqttMonitorApp {
                 ShortcutAction::ToggleStickySelectedTopic => {
                     self.shortcut_toggle_sticky();
                 }
+                ShortcutAction::ToggleBookmarkSelectedTopic => {
+                    self.shortcut_toggle_bookmark();
+                }
+                ShortcutAction::OpenBookmarks => {
+                    if crate::pro::has(crate::pro::Entitlement::TopicBookmarks) {
+                        self.bookmarks_open = !self.bookmarks_open;
+                    } else {
+                        self.status = "Bookmarks require TopicBench Pro".into();
+                    }
+                }
             }
         }
     }
@@ -259,5 +269,22 @@ impl MqttMonitorApp {
             self.profiles.set_sticky_and_save(&profile_id, &topic, true);
             self.status = format!("Sticky {topic}");
         }
+    }
+
+    fn shortcut_toggle_bookmark(&mut self) {
+        if !crate::pro::has(crate::pro::Entitlement::TopicBookmarks) {
+            self.status = "Bookmarks require TopicBench Pro".into();
+            return;
+        }
+        let Some((profile_id, _, topic)) = self.pins.last_tree_focus.clone() else {
+            self.status = "Click a topic tree row first (Ctrl+Shift+B)".into();
+            return;
+        };
+        let on = self.bookmarks.toggle(&profile_id, &topic);
+        self.status = if on {
+            format!("Bookmarked {topic}")
+        } else {
+            format!("Removed bookmark {topic}")
+        };
     }
 }

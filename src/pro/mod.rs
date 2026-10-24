@@ -7,7 +7,9 @@
 //! Localhost IPC for Pro MCP lives in [`bridge`] — started only when licensed.
 
 mod license_format;
+pub mod bookmarks;
 pub mod bridge;
+pub mod color_rules;
 pub mod history_client;
 pub mod sim_client;
 
@@ -28,7 +30,8 @@ pub enum Entitlement {
     TreeExport,
     HistoryScrubber,
     CsvExport,
-    Bookmarks,
+    /// Topic bookmarks / jump list (UI name TopicBookmarks).
+    TopicBookmarks,
     ColorRules,
     AutoSuggestSims,
 }

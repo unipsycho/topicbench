@@ -37,6 +37,7 @@ fn select_fill() -> Color32 {
     Color32::from_rgba_unmultiplied(56, 100, 160, 70)
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn draw(
     ui: &mut egui::Ui,
     sessions: &mut SessionManager,
@@ -51,6 +52,9 @@ pub fn draw(
     publish_from_tree: &mut Option<PublishFromTree>,
     // Profile ids whose topic tree is shown in a floating OS window.
     undocked: &mut HashSet<String>,
+    bookmarks: &mut crate::pro::bookmarks::BookmarksStore,
+    color_rules: &crate::pro::color_rules::ColorRulesStore,
+    scroll_to: &mut Option<(String, String)>,
 ) {
     icons::section_header_bar(ui, |ui| {
         icons::section_icon(ui, icons, "topic_tree");
@@ -90,11 +94,15 @@ pub fn draw(
             undocked,
             now,
             false, // docked panel: undock button pops out
+            bookmarks,
+            color_rules,
+            scroll_to,
         );
     }
 }
 
 /// Floating OS windows for each undocked broker tree (call every frame while any are open).
+#[allow(clippy::too_many_arguments)]
 pub fn draw_undocked_viewports(
     ctx: &egui::Context,
     sessions: &mut SessionManager,
@@ -106,6 +114,9 @@ pub fn draw_undocked_viewports(
     status: &mut String,
     publish_from_tree: &mut Option<PublishFromTree>,
     undocked: &mut HashSet<String>,
+    bookmarks: &mut crate::pro::bookmarks::BookmarksStore,
+    color_rules: &crate::pro::color_rules::ColorRulesStore,
+    scroll_to: &mut Option<(String, String)>,
 ) {
     let connected = connected_profile_ids(sessions, profiles);
     undocked.retain(|id| connected.iter().any(|c| c == id));
@@ -150,6 +161,9 @@ pub fn draw_undocked_viewports(
                         undocked,
                         now,
                         true, // floating: dock button restores
+                        bookmarks,
+                        color_rules,
+                        scroll_to,
                     );
                 };
 
@@ -192,6 +206,7 @@ fn connected_profile_ids(sessions: &SessionManager, profiles: &ProfileStore) -> 
 }
 
 /// One broker heading (+ pop/dock control) and its tree, or a “popped out” stub when undocked in-panel.
+#[allow(clippy::too_many_arguments)]
 fn draw_broker_block(
     ui: &mut egui::Ui,
     profile_id: &str,
@@ -207,6 +222,9 @@ fn draw_broker_block(
     now: Instant,
     // True when drawing inside the floating viewport (show dock control).
     in_viewport: bool,
+    bookmarks: &mut crate::pro::bookmarks::BookmarksStore,
+    color_rules: &crate::pro::color_rules::ColorRulesStore,
+    scroll_to: &mut Option<(String, String)>,
 ) {
     let Some(session) = sessions.open.get(profile_id) else {
         return;
@@ -287,6 +305,9 @@ fn draw_broker_block(
         filter,
         status,
         publish_from_tree,
+        bookmarks,
+        color_rules,
+        scroll_to,
     );
 }
 
@@ -365,6 +386,9 @@ fn draw_node(
     filter: &SearchFilter,
     status: &mut String,
     publish_from_tree: &mut Option<PublishFromTree>,
+    bookmarks: &mut crate::pro::bookmarks::BookmarksStore,
+    color_rules: &crate::pro::color_rules::ColorRulesStore,
+    scroll_to: &mut Option<(String, String)>,
 ) {
     for (segment, child) in &node.children {
         let child_path = if path.is_empty() {
@@ -480,6 +504,9 @@ fn draw_node(
                         status,
                         None, // folder header owns the flash
                         publish_from_tree,
+                        bookmarks,
+                        color_rules,
+                        scroll_to,
                     );
                 }
                 draw_node(
@@ -498,6 +525,9 @@ fn draw_node(
                     filter,
                     status,
                     publish_from_tree,
+                    bookmarks,
+                    color_rules,
+                    scroll_to,
                 );
             });
         } else {
@@ -514,6 +544,9 @@ fn draw_node(
                 status,
                 flash_stroke,
                 publish_from_tree,
+                bookmarks,
+                color_rules,
+                scroll_to,
             );
         }
     }
@@ -560,8 +593,9 @@ fn revision_count_label(ui: &mut egui::Ui, count: u64) {
     ui.painter().galley(pos, galley, color);
 }
 
-/// Dense row: `[copy topic][sticky] gray_topic = [copy payload] highlighted_payload… #n`
+/// Dense row: `[copy topic][sticky][bookmark?] gray_topic = [copy payload] highlighted… #n`
 /// Single-click selects for Payload; double-click fills Publish.
+#[allow(clippy::too_many_arguments)]
 fn leaf_row(
     ui: &mut egui::Ui,
     label: &str,
@@ -575,14 +609,29 @@ fn leaf_row(
     status: &mut String,
     flash_stroke: Option<egui::Stroke>,
     publish_from_tree: &mut Option<PublishFromTree>,
+    bookmarks: &mut crate::pro::bookmarks::BookmarksStore,
+    color_rules: &crate::pro::color_rules::ColorRulesStore,
+    scroll_to: &mut Option<(String, String)>,
 ) {
     let mut dbl = false;
     let selected = is_selected(pins, profile_id, full_topic);
-    let row_fill = if selected {
+    let payload = node.last_payload.as_deref().unwrap_or("");
+    // Pro color rules: first-match style for leaves with payloads.
+    let rule_style = if crate::pro::has(crate::pro::Entitlement::ColorRules) && !payload.is_empty()
+    {
+        color_rules.style_for(profile_id, full_topic, payload)
+    } else {
+        None
+    };
+    let row_fill = if let Some(bg) = rule_style.and_then(|s| s.row_bg_c32()) {
+        bg
+    } else if selected {
         select_fill()
     } else {
         Color32::TRANSPARENT
     };
+    let topic_color = rule_style.and_then(|s| s.topic_c32());
+    let value_override = rule_style.and_then(|s| s.value_c32());
 
     // See flash::ITEM_CLIP_CLEAR — not full avail, or right flash/select stroke clips.
     let row_w = (ui.available_width() - flash::ITEM_CLIP_CLEAR).max(32.0);
@@ -595,7 +644,7 @@ fn leaf_row(
             ui.set_min_width(row_w);
             ui.spacing_mut().item_spacing.x = 4.0;
 
-            // Left: copy-topic (topic_tags) + sticky toggle (always visible).
+            // Left: copy-topic + sticky + optional Pro bookmark toggle.
             if icons
                 .tiny(ui, "topic_tags", false, "Copy topic")
                 .clicked()
@@ -633,7 +682,12 @@ fn leaf_row(
                 }
             }
 
-            let payload = node.last_payload.as_deref().unwrap_or("");
+            if crate::pro::has(crate::pro::Entitlement::TopicBookmarks) {
+                crate::ui::bookmarks_panel::bookmark_toggle_icon(
+                    ui, icons, bookmarks, profile_id, full_topic, status,
+                );
+            }
+
             let show_copy_payload = !payload.is_empty();
             let msg_count = node.message_count;
 
@@ -648,8 +702,13 @@ fn leaf_row(
                     ui.set_clip_rect(ui.clip_rect().intersect(ui.max_rect()));
                     ui.spacing_mut().item_spacing.x = 2.0;
 
+                    let topic_label = if let Some(c) = topic_color {
+                        RichText::new(label).monospace().color(c)
+                    } else {
+                        json_view::topic_path_text(label)
+                    };
                     let topic_resp = ui.add(
-                        egui::Label::new(json_view::topic_path_text(label))
+                        egui::Label::new(topic_label)
                             .sense(egui::Sense::click())
                             .selectable(false),
                     );
@@ -672,13 +731,14 @@ fn leaf_row(
                             *status = "Copied payload".into();
                         }
 
-                        // Complex JSON → syntax highlight; simple values → profile accent.
-                        // available_width here is already after topic / = / copy icon.
-                        let accent = profiles
-                            .profiles
-                            .get(profile_id)
-                            .map(|p| p.color())
-                            .unwrap_or(Color32::from_rgb(90, 190, 120));
+                        // Complex JSON → syntax highlight; simple values → profile accent / rule.
+                        let accent = value_override.unwrap_or_else(|| {
+                            profiles
+                                .profiles
+                                .get(profile_id)
+                                .map(|p| p.color())
+                                .unwrap_or(Color32::from_rgb(90, 190, 120))
+                        });
                         let font_size = ui.text_style_height(&egui::TextStyle::Monospace);
                         let char_w = ui.fonts(|f| {
                             f.glyph_width(&FontId::monospace(font_size), 'M').max(1.0)
@@ -719,6 +779,14 @@ fn leaf_row(
             });
         });
     });
+    // Bookmark jump: scroll the matched row into view once.
+    if scroll_to
+        .as_ref()
+        .is_some_and(|(pid, t)| pid == profile_id && t == full_topic)
+    {
+        ui.scroll_to_rect(row.response.rect, Some(Align::Center));
+        *scroll_to = None;
+    }
     // Flash, or a steady select edge so the right border stays visible when idle.
     let edge = flash_stroke.or_else(|| {
         selected.then_some(egui::Stroke::new(

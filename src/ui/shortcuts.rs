@@ -100,6 +100,14 @@ pub const BINDINGS: &[Binding] = &[
         action: "Toggle sticky on last tree topic",
     },
     Binding {
+        keys: "Ctrl+Shift+B",
+        action: "Toggle bookmark on selected tree topic (Pro)",
+    },
+    Binding {
+        keys: "Ctrl+Shift+J",
+        action: "Open Bookmarks jump list (Pro)",
+    },
+    Binding {
         keys: "Tab / Shift+Tab",
         action: "Move focus through interactive controls",
     },
@@ -129,6 +137,8 @@ pub enum Action {
     ProfileSelectPrev,
     ProfileSelectNext,
     ToggleStickySelectedTopic,
+    ToggleBookmarkSelectedTopic,
+    OpenBookmarks,
 }
 
 fn chord(i: &mut egui::InputState, mods: Modifiers, key: Key) -> bool {
@@ -164,6 +174,12 @@ pub fn consume(ctx: &egui::Context) -> Vec<Action> {
         }
         if chord(i, cmd_shift, Key::S) {
             out.push(Action::ToggleStickySelectedTopic);
+        }
+        if chord(i, cmd_shift, Key::B) {
+            out.push(Action::ToggleBookmarkSelectedTopic);
+        }
+        if chord(i, cmd_shift, Key::J) {
+            out.push(Action::OpenBookmarks);
         }
 
         if chord(i, cmd, Key::Equals) || chord(i, cmd, Key::Plus) {

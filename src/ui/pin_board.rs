@@ -39,6 +39,7 @@ pub fn draw(
     icons: &IconSet,
     filter: &SearchFilter,
     status: &mut String,
+    color_rules: &crate::pro::color_rules::ColorRulesStore,
 ) {
     icons::section_header_bar(ui, |ui| {
         icons::section_icon(ui, icons, "sticky_topic");
@@ -172,6 +173,7 @@ pub fn draw(
                         false,
                         status,
                         &mut combined_open,
+                        color_rules,
                     ) {
                         pending_reorder = Some(r);
                     }
@@ -193,6 +195,7 @@ pub fn draw(
                             true,
                             status,
                             &mut combined_open,
+                            color_rules,
                         ) {
                             pending_reorder = Some(r);
                         }
@@ -244,6 +247,7 @@ fn draw_sticky(
     compact: bool,
     status: &mut String,
     combined_graph_open: &mut bool,
+    color_rules: &crate::pro::color_rules::ColorRulesStore,
 ) -> Option<(String, String, bool)> {
     let Some(pin) = pins.items.get(key).cloned() else {
         return None;
@@ -254,6 +258,14 @@ fn draw_sticky(
         1.0_f32,
         ui.visuals().widgets.noninteractive.bg_stroke.color,
     );
+    // Pro color rules paint sticky chrome when the topic payload matches.
+    let rule_style = if pro::has(Entitlement::ColorRules) && !pin.last_payload.is_empty() {
+        color_rules.style_for(&pin.profile_id, &pin.topic, &pin.last_payload)
+    } else {
+        None
+    };
+    let rule_bg = rule_style.and_then(|s| s.row_bg_c32());
+    let rule_topic = rule_style.and_then(|s| s.topic_c32());
 
     let mut pending_reorder = None;
     let profile_id = pin.profile_id.clone();
@@ -264,6 +276,7 @@ fn draw_sticky(
         ui.spacing_mut().item_spacing.x = 2.0;
 
         let card = egui::Frame::NONE
+            .fill(rule_bg.unwrap_or(Color32::TRANSPARENT))
             .inner_margin(egui::Margin {
                 left: (6.0 + GRIP_W) as i8,
                 right: 6,
@@ -343,8 +356,13 @@ fn draw_sticky(
                             {
                                 copy_topic = true;
                             }
+                            let topic_label = if let Some(c) = rule_topic {
+                                RichText::new(&pin.topic).monospace().color(c)
+                            } else {
+                                json_view::topic_path_text(&pin.topic)
+                            };
                             ui.add(
-                                egui::Label::new(json_view::topic_path_text(&pin.topic))
+                                egui::Label::new(topic_label)
                                     .truncate()
                                     .selectable(false),
                             );
