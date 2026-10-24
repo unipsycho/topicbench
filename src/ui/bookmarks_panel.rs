@@ -119,11 +119,14 @@ fn paint_bookmarks_body(
         icons::section_icon(ui, icons, "bookmarks");
         icons::section_title(ui, "Bookmarks");
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if icons.tiny(ui, "remove_x", false, "Close").clicked() {
+            if icons
+                .tiny_header(ui, "close_red", false, "Close")
+                .clicked()
+            {
                 *close = true;
             }
             if icons
-                .tiny(ui, "export", false, "Export bookmarks")
+                .tiny_header(ui, "export", false, "Export bookmarks")
                 .clicked()
             {
                 if let Some(path) = rfd::FileDialog::new()
@@ -140,7 +143,7 @@ fn paint_bookmarks_body(
             }
             // Import beside Export (right-to-left → appears left of Export).
             if icons
-                .tiny(ui, "import", false, "Import bookmarks")
+                .tiny_header(ui, "import", false, "Import bookmarks")
                 .clicked()
             {
                 if let Some(path) = rfd::FileDialog::new()
@@ -188,9 +191,8 @@ fn paint_bookmarks_body(
                     }
                 }
             }
-            if ui
-                .button(RichText::new("+ Add").color(CHROME_TEXT))
-                .on_hover_text("Add bookmark")
+            if icons
+                .tiny_header(ui, "add_blue", false, "Add bookmark")
                 .clicked()
             {
                 open_add = true;
@@ -542,7 +544,10 @@ fn paint_bookmarks_body(
                     ui.with_layout(
                         egui::Layout::centered_and_justified(egui::Direction::LeftToRight),
                         |ui| {
-                            if icons.tiny(ui, "trash", false, "Remove bookmark").clicked() {
+                            if icons
+                                .tiny(ui, "delete_red", false, "Remove bookmark")
+                                .clicked()
+                            {
                                 remove_id = Some(b.id.clone());
                             }
                         },

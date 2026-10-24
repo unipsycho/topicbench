@@ -71,12 +71,15 @@ pub fn draw_popup(
                     icons::section_title(ui, "Color Rules");
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if icons
-                            .tiny(ui, "remove_x", false, "Close Color Rules")
+                            .tiny_header(ui, "close_red", false, "Close Color Rules")
                             .clicked()
                         {
                             close = true;
                         }
-                        if ui.button("+ Add rule").clicked() {
+                        if icons
+                            .tiny_header(ui, "add_blue", false, "Add rule")
+                            .clicked()
+                        {
                             match store.add_blank() {
                                 Ok(()) => *status = "Added color rule".into(),
                                 Err(e) => *status = e,
@@ -223,7 +226,7 @@ fn draw_rule_row(
         );
 
         ui.add_space(4.0);
-        if icons.tiny(ui, "trash", false, "Delete rule").clicked() {
+        if icons.tiny(ui, "delete_red", false, "Delete rule").clicked() {
             *remove = Some(rule.id.clone());
         }
     });
