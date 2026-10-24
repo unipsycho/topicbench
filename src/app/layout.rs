@@ -758,6 +758,8 @@ impl MqttMonitorApp {
                                 &mut self.bookmarks,
                                 &self.color_rules,
                                 &mut self.scroll_tree_to,
+                                &mut self.recordings,
+                                &mut self.tree_export_open,
                             );
                             if self.search.query != search_before.0
                                 || self.search.scope != search_before.1
@@ -835,6 +837,7 @@ impl MqttMonitorApp {
                     &mut self.payload_popped,
                     self.history_fwd.as_ref(),
                     &mut self.payload_scrub,
+                    &mut self.bookmarks,
                 );
             });
             if self.panels.stickies != stickies_before {
@@ -884,12 +887,24 @@ impl MqttMonitorApp {
             &mut self.bookmarks,
             &self.color_rules,
             &mut self.scroll_tree_to,
+            &mut self.recordings,
         );
         self.apply_publish_from_tree(publish_from_tree);
     }
 
     /// Pro Bookmarks + Color rules popups (ribbon-opened; jump dismisses bookmarks).
     pub(super) fn draw_pro_chrome_popups(&mut self, ctx: &egui::Context) {
+        // Topic-tree Export scope modal (Pro).
+        if self.tree_export_open {
+            topic_tree_panel::draw_export_modal(
+                ctx,
+                &mut self.tree_export_open,
+                &self.sessions,
+                &self.pins,
+                &mut self.status,
+            );
+        }
+
         // Apply pending jump before drawing so expand state is ready for this frame's tree.
         if let Some(jump) = self.pending_bookmark_jump.take() {
             crate::ui::bookmarks_panel::apply_jump(

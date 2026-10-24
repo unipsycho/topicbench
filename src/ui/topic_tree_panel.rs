@@ -55,10 +55,47 @@ pub fn draw(
     bookmarks: &mut crate::pro::bookmarks::BookmarksStore,
     color_rules: &crate::pro::color_rules::ColorRulesStore,
     scroll_to: &mut Option<(String, String)>,
+    recordings: &mut crate::pro::recording::RecordingStore,
+    tree_export_open: &mut bool,
 ) {
+    let export_ok = crate::pro::has(crate::pro::Entitlement::TreeExport);
     icons::section_header_bar(ui, |ui| {
         icons::section_icon(ui, icons, "topic_tree");
         icons::section_title(ui, "Topic tree");
+        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            ui.spacing_mut().item_spacing.x = 4.0;
+            let export_tip = if export_ok {
+                "Export topic tree JSON"
+            } else {
+                "Export — requires TopicBench Pro"
+            };
+            let import_tip = if export_ok {
+                "Import topic tree JSON (republish)"
+            } else {
+                "Import — requires TopicBench Pro"
+            };
+            // Far right: Import then Export (RTL → Export appears rightmost).
+            if icons
+                .tiny(ui, "export_download", false, export_tip)
+                .clicked()
+            {
+                if export_ok {
+                    *tree_export_open = true;
+                } else {
+                    *status = "Topic tree Export requires TopicBench Pro".into();
+                }
+            }
+            if icons
+                .tiny(ui, "folder_open", false, import_tip)
+                .clicked()
+            {
+                if export_ok {
+                    run_tree_import(sessions, profiles, pins, status);
+                } else {
+                    *status = "Topic tree Import requires TopicBench Pro".into();
+                }
+            }
+        });
     });
     // Topic filter lives under the section header, above broker/tree rows.
     crate::ui::search_bar::draw(ui, filter, focus_search);
@@ -97,6 +134,7 @@ pub fn draw(
             bookmarks,
             color_rules,
             scroll_to,
+            recordings,
         );
     }
 }
@@ -117,6 +155,7 @@ pub fn draw_undocked_viewports(
     bookmarks: &mut crate::pro::bookmarks::BookmarksStore,
     color_rules: &crate::pro::color_rules::ColorRulesStore,
     scroll_to: &mut Option<(String, String)>,
+    recordings: &mut crate::pro::recording::RecordingStore,
 ) {
     let connected = connected_profile_ids(sessions, profiles);
     undocked.retain(|id| connected.iter().any(|c| c == id));
@@ -164,6 +203,7 @@ pub fn draw_undocked_viewports(
                         bookmarks,
                         color_rules,
                         scroll_to,
+                        recordings,
                     );
                 };
 
@@ -225,6 +265,7 @@ fn draw_broker_block(
     bookmarks: &mut crate::pro::bookmarks::BookmarksStore,
     color_rules: &crate::pro::color_rules::ColorRulesStore,
     scroll_to: &mut Option<(String, String)>,
+    recordings: &mut crate::pro::recording::RecordingStore,
 ) {
     let Some(session) = sessions.open.get(profile_id) else {
         return;
@@ -247,7 +288,13 @@ fn draw_broker_block(
                 .color(color)
                 .strong(),
         );
+        ui.label(
+            RichText::new(format!("· {state_label}"))
+                .small()
+                .color(color),
+        );
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            ui.spacing_mut().item_spacing.x = 4.0;
             if in_viewport || is_undocked {
                 // Dock back into the main Topic tree panel.
                 if icons
@@ -267,13 +314,50 @@ fn draw_broker_block(
             {
                 undocked.insert(profile_id.to_string());
             }
+            // Pro Record — right of broker header next to connected chrome.
+            if crate::pro::has(crate::pro::Entitlement::RecordSimulate) {
+                let recording = recordings.is_recording(profile_id);
+                let tip = if recording {
+                    format!(
+                        "Stop recording ({} events) and save CSV",
+                        recordings.event_count(profile_id)
+                    )
+                } else {
+                    "Start recording this broker to CSV".into()
+                };
+                if icons
+                    .tiny(ui, "event_log", recording, &tip)
+                    .clicked()
+                {
+                    if recording {
+                        let name =
+                            crate::pro::recording::RecordingStore::default_filename(profile_id);
+                        if let Some(path) = rfd::FileDialog::new()
+                            .set_title("Save recording CSV")
+                            .set_file_name(&name)
+                            .add_filter("CSV", &["csv"])
+                            .save_file()
+                        {
+                            match recordings.stop_to_file(profile_id, &path) {
+                                Ok((_, n)) => {
+                                    *status = format!(
+                                        "Recording saved ({n} events) → {}",
+                                        path.display()
+                                    );
+                                }
+                                Err(e) => *status = format!("Recording save failed: {e}"),
+                            }
+                        } else {
+                            // Dialog cancelled — keep recording running.
+                        }
+                    } else {
+                        recordings.start(profile_id);
+                        *status = format!("Recording {profile_name}…");
+                    }
+                }
+            }
         });
     });
-    ui.label(
-        RichText::new(format!("{state_label} · {profile_id}"))
-            .small()
-            .color(color),
-    );
 
     // In the docked panel, hide the tree body while it's floating.
     if !in_viewport && is_undocked {
@@ -642,7 +726,8 @@ fn leaf_row(
         ui.set_min_width(row_w);
         ui.horizontal(|ui| {
             ui.set_min_width(row_w);
-            ui.spacing_mut().item_spacing.x = 4.0;
+            // Tight cluster for the left action icons (copy / sticky / bookmark).
+            ui.spacing_mut().item_spacing.x = 1.0;
 
             // Left: copy-topic + sticky + optional Pro bookmark toggle.
             if icons
@@ -687,6 +772,8 @@ fn leaf_row(
                     ui, icons, bookmarks, profile_id, full_topic, status,
                 );
             }
+            // Restore spacing for the rest of the row (topic / payload).
+            ui.spacing_mut().item_spacing.x = 4.0;
 
             let show_copy_payload = !payload.is_empty();
             let msg_count = node.message_count;
@@ -971,5 +1058,157 @@ fn scrollable_hover(
     // Keep animating while the user is scrolling the popup.
     if delta != egui::Vec2::ZERO {
         ctx.request_repaint();
+    }
+}
+
+/// Export scope modal (Settings-style floating chrome).
+pub fn draw_export_modal(
+    ctx: &egui::Context,
+    open: &mut bool,
+    sessions: &SessionManager,
+    pins: &PinBoard,
+    status: &mut String,
+) {
+    if !*open {
+        return;
+    }
+    let mut close = false;
+    let mut do_export: Option<crate::pro::topic_tree_io::ExportScope> = None;
+    let has_selection = pins.last_tree_focus.is_some();
+    let modal = egui::Modal::new(egui::Id::new("topicbench_tree_export")).show(ctx, |ui| {
+        ui.set_width(360.0);
+        ui.heading("Export topic tree");
+        ui.add_space(8.0);
+        let mut scope = ui
+            .ctx()
+            .data(|d| {
+                d.get_temp::<crate::pro::topic_tree_io::ExportScope>(egui::Id::new(
+                    "tree_export_scope",
+                ))
+            })
+            .unwrap_or(if has_selection {
+                crate::pro::topic_tree_io::ExportScope::Selection
+            } else {
+                crate::pro::topic_tree_io::ExportScope::Full
+            });
+        ui.radio_value(
+            &mut scope,
+            crate::pro::topic_tree_io::ExportScope::Selection,
+            "Selected branch",
+        );
+        if !has_selection {
+            ui.label(
+                RichText::new("Select a node in the tree")
+                    .small()
+                    .color(CHROME_MUTED),
+            );
+        }
+        ui.radio_value(
+            &mut scope,
+            crate::pro::topic_tree_io::ExportScope::Full,
+            "Entire tree",
+        );
+        ui.ctx().data_mut(|d| {
+            d.insert_temp(egui::Id::new("tree_export_scope"), scope);
+        });
+        ui.add_space(12.0);
+        ui.horizontal(|ui| {
+            let can_sel = has_selection || scope == crate::pro::topic_tree_io::ExportScope::Full;
+            if ui
+                .add_enabled(can_sel, egui::Button::new("Export…"))
+                .clicked()
+            {
+                do_export = Some(scope);
+            }
+            if ui.button("Cancel").clicked() {
+                close = true;
+            }
+        });
+    });
+    if modal.should_close() {
+        close = true;
+    }
+    if let Some(scope) = do_export {
+        let selection = pins
+            .last_tree_focus
+            .as_ref()
+            .map(|(pid, _, topic)| (pid.as_str(), topic.as_str()));
+        match crate::pro::topic_tree_io::build_export(sessions, scope, selection) {
+            Ok(doc) => {
+                let name = crate::pro::topic_tree_io::default_export_filename();
+                if let Some(path) = rfd::FileDialog::new()
+                    .set_title("Export topic tree")
+                    .set_file_name(&name)
+                    .add_filter("JSON", &["json"])
+                    .save_file()
+                {
+                    match serde_json::to_string_pretty(&doc) {
+                        Ok(text) => match std::fs::write(&path, format!("{text}\n")) {
+                            Ok(()) => {
+                                *status = format!("Exported topic tree → {}", path.display());
+                                close = true;
+                            }
+                            Err(e) => *status = format!("Export write failed: {e}"),
+                        },
+                        Err(e) => *status = format!("Export JSON failed: {e}"),
+                    }
+                }
+            }
+            Err(e) => *status = format!("Export failed: {e}"),
+        }
+    }
+    if close {
+        *open = false;
+    }
+}
+
+fn run_tree_import(
+    sessions: &mut SessionManager,
+    profiles: &ProfileStore,
+    pins: &PinBoard,
+    status: &mut String,
+) {
+    let Some(path) = rfd::FileDialog::new()
+        .set_title("Import topic tree")
+        .add_filter("JSON", &["json"])
+        .pick_file()
+    else {
+        return;
+    };
+    let Ok(raw) = std::fs::read_to_string(&path) else {
+        *status = format!("Import failed: cannot read {}", path.display());
+        return;
+    };
+    let Ok(doc) = serde_json::from_str::<serde_json::Value>(&raw) else {
+        *status = "Import failed: invalid JSON".into();
+        return;
+    };
+    let connected = connected_profile_ids(sessions, profiles);
+    if connected.is_empty() {
+        *status = "Import failed: connect a broker first".into();
+        return;
+    }
+    // Prefer focused profile when connected, else first connected.
+    let target = pins
+        .last_tree_focus
+        .as_ref()
+        .map(|(pid, _, _)| pid.clone())
+        .filter(|pid| connected.iter().any(|c| c == pid))
+        .unwrap_or_else(|| connected[0].clone());
+    let confirm = rfd::MessageDialog::new()
+        .set_level(rfd::MessageLevel::Warning)
+        .set_title("Import topic tree")
+        .set_description(format!(
+            "Republish all leaf values onto profile `{target}` with retain=true?\n\
+             This may overwrite existing retained topics on the broker."
+        ))
+        .set_buttons(rfd::MessageButtons::OkCancel)
+        .show();
+    if confirm != rfd::MessageDialogResult::Ok {
+        return;
+    }
+    match crate::pro::topic_tree_io::import_republish(sessions, &target, &doc) {
+        Ok(n) => *status = format!("Imported {n} topics onto {target}"),
+        Err(e) => *status = format!("Import failed: {e}"),
     }
 }

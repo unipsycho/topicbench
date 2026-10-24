@@ -127,6 +127,10 @@ pub struct MqttMonitorApp {
     /// Pro color rules.
     color_rules: crate::pro::color_rules::ColorRulesStore,
     color_rules_open: bool,
+    /// Pro live CSV recording (per-broker, tree header controls).
+    recordings: crate::pro::recording::RecordingStore,
+    /// Topic-tree Export scope modal open.
+    tree_export_open: bool,
 }
 
 impl MqttMonitorApp {
@@ -230,7 +234,10 @@ impl MqttMonitorApp {
             pending_bookmark_jump: None,
             scroll_tree_to: None,
             color_rules: crate::pro::color_rules::ColorRulesStore::load(),
-            color_rules_open: false,
+            // Agents/tests: TOPICBENCH_OPEN_COLOR_RULES=1 opens the editor on launch.
+            color_rules_open: std::env::var_os("TOPICBENCH_OPEN_COLOR_RULES").is_some(),
+            recordings: crate::pro::recording::RecordingStore::default(),
+            tree_export_open: false,
         }
     }
 }
@@ -279,6 +286,13 @@ impl eframe::App for MqttMonitorApp {
         } else {
             // Unlicensed: discard so the buffer cannot grow forever.
             let _ = self.pins.drain_history_fwd();
+        }
+        // Capture live traffic into any active per-broker recordings (CSV tape).
+        if crate::pro::has(crate::pro::Entitlement::RecordSimulate) {
+            for m in &poll.applied {
+                self.recordings
+                    .on_message(&m.profile_id, &m.topic, &m.payload, m.retain);
+            }
         }
         // Fan MQTT applies into the Pro bridge buffer so wait_for_message / GUI stay in sync.
         if let Some(bridge) = self.pro_bridge.as_ref() {
