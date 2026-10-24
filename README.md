@@ -44,6 +44,38 @@ Paid extras for teams that outgrow the free explorer — same app, unlock Pro wh
 - **Webhooks** — on topic match, POST JSON to n8n / Slack / alert pipelines
 - **CSV / Parquet export** — time-series dumps for Excel and Pandas
 
+### Combined graphs
+
+Combined graphs let you overlay multiple channels on a single time-logged graph — useful for correlating data across topics and even across brokers.
+
+<p align="center">
+  <img src="docs/images/pro/combined-graph.png" alt="TopicBench Pro combined multi-topic graph" width="880">
+</p>
+
+### Simulation
+
+Simulation publishes scripted MQTT data into your live sessions. You can also auto-create simulations from recorded sessions to replicate datasets with a best-guess prediction of the observed series.
+
+<p align="center">
+  <img src="docs/images/pro/simulation.png" alt="TopicBench Pro Simulation panel" width="880">
+</p>
+
+### Color rules
+
+Color rules highlight topics in the tree based on payload matches, topic matches, and individual values within payloads.
+
+<p align="center">
+  <img src="docs/images/pro/color-rules.png" alt="TopicBench Pro color rules" width="880">
+</p>
+
+### Bookmarks
+
+Bookmarks jump you anywhere in a tree and auto-expand that topic for immediate access.
+
+<p align="center">
+  <img src="docs/images/pro/bookmarks.png" alt="TopicBench Pro bookmarks" width="880">
+</p>
+
 <p align="center">
   <a href="https://www.agileautomation.ca/products/topic-bench"><strong style="font-size: 1.5em">Learn about TopicBench Pro →</strong></a>
 </p>
