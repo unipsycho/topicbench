@@ -188,7 +188,7 @@ fn header_bar(
         });
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             if icons
-                .tiny(ui, "remove_x", false, "Close Simulation panel")
+                .tiny_header(ui, "close_red", false, "Close Simulation panel")
                 .clicked()
             {
                 *open = false;
@@ -203,7 +203,10 @@ fn header_bar(
             } else {
                 "panel_undock"
             };
-            if icons.tiny(ui, dock_icon, false, dock_tip).clicked() {
+            if icons
+                .tiny_header(ui, dock_icon, false, dock_tip)
+                .clicked()
+            {
                 *floating = !*floating;
             }
         });
@@ -254,7 +257,7 @@ fn body(
     // Toolbar — Start/Stop affect every simulation (icon + label, Profiles/Publish chrome).
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 6.0;
-        if toolbar_btn(ui, icons, "profile_add", "Add", true)
+        if toolbar_btn(ui, icons, "add_blue", "Add", true)
             .on_hover_text("Add a simulation row")
             .clicked()
         {
@@ -287,7 +290,7 @@ fn body(
             }
         }
         let sel = client.selected.clone();
-        if toolbar_btn(ui, icons, "trash", "Delete", sel.is_some())
+        if toolbar_btn(ui, icons, "delete_red", "Delete", sel.is_some())
             .on_hover_text("Delete selected row")
             .clicked()
         {
@@ -302,7 +305,7 @@ fn body(
         // Far right: Import / Export / Playback (CSV tape).
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             ui.spacing_mut().item_spacing.x = 6.0;
-            if toolbar_btn(ui, icons, "message_history", "Playback", true)
+            if toolbar_btn(ui, icons, "playback", "Playback", true)
                 .on_hover_text("Play a topicbench-recording CSV (all topics)")
                 .clicked()
             {

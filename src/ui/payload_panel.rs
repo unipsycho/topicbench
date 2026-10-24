@@ -322,7 +322,7 @@ fn draw_topic_body(
             ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
                 ui.spacing_mut().item_spacing.x = 2.0;
                 if icons
-                    .tiny(ui, "trash", false, "Delete topic hierarchy")
+                    .tiny(ui, "delete_red", false, "Delete topic hierarchy")
                     .clicked()
                 {
                     **delete_hierarchy = true;

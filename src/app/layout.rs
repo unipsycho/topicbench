@@ -57,7 +57,7 @@ impl MqttMonitorApp {
                     .icons
                     .command_enabled(
                         ui,
-                        "disconnect",
+                        "delete",
                         "Delete",
                         false,
                         &tip_del,
@@ -95,7 +95,7 @@ impl MqttMonitorApp {
                             .icons
                             .command_compact_enabled(
                                 ui,
-                                "disconnect",
+                                "delete",
                                 false,
                                 &tip_del,
                                 self.panels.profiles,
@@ -206,80 +206,57 @@ impl MqttMonitorApp {
             } else {
                 "Simulation — requires TopicBench Pro".to_string()
             };
-            let selected = self.simulation_open;
-            // Extra air between Pro commands (ribbon_group defaults to 1px).
-            const PRO_GAP: f32 = 8.0;
-            let clicked = if mode == SectionMode::Full {
-                self.icons
-                    .command(ui, "data_table", "Simulate", selected, &tip)
-                    .clicked()
-            } else {
-                self.icons
-                    .command_compact(ui, "data_table", selected, &tip)
-                    .clicked()
-            };
-            if clicked {
-                self.simulation_open = !self.simulation_open;
-                self.persist_panels();
-                if self.simulation_open && sim_ok {
-                    self.sim_client.poll_if_due(true);
-                }
-            }
-
-            ui.add_space(PRO_GAP);
-
-            // Bookmarks jump list — two-line caption under icon (width near Simulation).
             let bm_ok = crate::pro::has(crate::pro::Entitlement::TopicBookmarks);
             let bm_tip = if bm_ok {
                 shortcuts::tip("Bookmarks", "Ctrl+Shift+J")
             } else {
                 "Bookmarks — requires TopicBench Pro".into()
             };
-            let bm_click = if mode == SectionMode::Full {
-                self.icons
-                    .command(
-                        ui,
-                        "bookmarks",
-                        "Book-\nmarks",
-                        self.bookmarks_open,
-                        &bm_tip,
-                    )
-                    .clicked()
-            } else {
-                self.icons
-                    .command_compact(ui, "bookmarks", self.bookmarks_open, &bm_tip)
-                    .clicked()
-            };
-            if bm_click && bm_ok {
-                self.bookmarks_open = !self.bookmarks_open;
-            }
-
-            ui.add_space(PRO_GAP);
-
-            // Color Rules editor — two-line caption under icon.
             let cr_ok = crate::pro::has(crate::pro::Entitlement::ColorRules);
             let cr_tip = if cr_ok {
                 "Color Rules".to_string()
             } else {
                 "Color Rules — requires TopicBench Pro".to_string()
             };
-            let cr_click = if mode == SectionMode::Full {
-                self.icons
-                    .command(
-                        ui,
-                        "color_rules",
-                        "Color\nRules",
-                        self.color_rules_open,
-                        &cr_tip,
-                    )
-                    .clicked()
+            let names = ["data_table", "bookmarks", "color_rules"];
+            let labels = ["Simulate", "Book-\nmarks", "Color\nRules"];
+            let tips = [tip.as_str(), bm_tip.as_str(), cr_tip.as_str()];
+            let selected = [
+                self.simulation_open,
+                self.bookmarks_open,
+                self.color_rules_open,
+            ];
+            let mut clicks = [false; 3];
+            if mode == SectionMode::Full {
+                for i in 0..3 {
+                    clicks[i] = self
+                        .icons
+                        .command(ui, names[i], labels[i], selected[i], tips[i])
+                        .clicked();
+                }
             } else {
-                self.icons
-                    .command_compact(ui, "color_rules", self.color_rules_open, &cr_tip)
-                    .clicked()
-            };
-            if cr_click && cr_ok {
+                // Stack like Profiles/Panels — no extra Pro-only gaps.
+                ribbon_compact_columns(ui, 3, |i, ui| {
+                    clicks[i] = self
+                        .icons
+                        .command_compact(ui, names[i], selected[i], tips[i])
+                        .clicked();
+                });
+            }
+            if clicks[0] {
+                self.simulation_open = !self.simulation_open;
+                self.persist_panels();
+                if self.simulation_open && sim_ok {
+                    self.sim_client.poll_if_due(true);
+                }
+            }
+            if clicks[1] && bm_ok {
+                self.bookmarks_open = !self.bookmarks_open;
+                self.persist_panels();
+            }
+            if clicks[2] && cr_ok {
                 self.color_rules_open = !self.color_rules_open;
+                self.persist_panels();
             }
         });
     }
@@ -652,13 +629,21 @@ impl MqttMonitorApp {
                     .show(ui, |ui| {
                         // Keep ScrollArea's viewport clip — do not widen to content max_rect.
                         if self.panels.live_traffic {
+                            let mut traffic_h = self.settings.live_traffic_height;
                             traffic_panel::draw(
                                 ui,
                                 &self.sessions,
                                 &self.profiles.selected_id,
                                 &self.search,
+                                &self.icons,
+                                &mut self.traffic_view,
+                                &mut traffic_h,
                                 &mut self.status,
                             );
+                            if (traffic_h - self.settings.live_traffic_height).abs() > 0.5 {
+                                self.settings.live_traffic_height = traffic_h;
+                                let _ = self.settings.save();
+                            }
                             ui.add_space(8.0);
                             ui.separator();
                             ui.add_space(8.0);
