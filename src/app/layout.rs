@@ -415,11 +415,15 @@ impl MqttMonitorApp {
             egui::pos2((zoom_rect.left() - gap).max(row_rect.left()), row_rect.bottom()),
         );
 
-        // Horizontal Topic Bench wordmark — size comes from baked texture (~56px tall).
+        // Wordmark texture is baked in device px; paint at integer logical size (÷ ppp).
+        let ppp = ctx.pixels_per_point().round().clamp(1.0, 3.0);
         let logo_size = self
             .logo
             .as_ref()
-            .map(|l| l.size_vec2())
+            .map(|l| {
+                let s = l.size_vec2();
+                egui::vec2((s.x / ppp).round().max(1.0), (s.y / ppp).round().max(1.0))
+            })
             .unwrap_or(egui::vec2(120.0, 56.0));
         let logo_w = logo_size.x;
         // Wordmark already says “Topic Bench”; skip stacked title (title_w = 0).
@@ -539,12 +543,20 @@ impl MqttMonitorApp {
             ui.label(RichText::new("·").color(CHROME_MUTED));
             ui.add_space(8.0);
             ui.label(RichText::new(msgs).color(CHROME_CAPTION));
-            ui.add_space(12.0);
-            ui.label(RichText::new("·").color(CHROME_MUTED));
-            ui.add_space(12.0);
+
+            // Compact Simulation summary (no per-topic publish spam).
+            if let Some(sim_label) = self.sim_client.status_strip_label() {
+                ui.add_space(12.0);
+                ui.label(RichText::new("·").color(CHROME_MUTED));
+                ui.add_space(12.0);
+                ui.label(RichText::new(sim_label).color(CHROME_CAPTION));
+            }
 
             let alpha = status_strip_fade_alpha(self.status_changed_at, Instant::now());
             if alpha > 0.01 && !self.status.is_empty() {
+                ui.add_space(12.0);
+                ui.label(RichText::new("·").color(CHROME_MUTED));
+                ui.add_space(12.0);
                 let a = (255.0 * alpha) as u8;
                 ui.label(
                     RichText::new(&self.status).color(Color32::from_rgba_unmultiplied(
@@ -1011,16 +1023,20 @@ pub(super) fn apply_font_zoom(ctx: &egui::Context, factor: f32) {
     ctx.style_mut(|s| s.text_styles = styles);
 }
 
-/// Ribbon mark: horizontal Topic Bench wordmark (`assets/topicbench-horizontal.png`,
-/// from `assets/topicbench-horizontal.svg`). Integer 1/N downsample, painted 1:1.
-/// Target ~56 logical px tall so it fills the 70px brand band without clipping.
+/// Ribbon mark: horizontal Topic Bench wordmark (`assets/topicbench-horizontal.png`).
+/// Integer 1/N **nearest** downsample to ~56 logical px, painted 1:1 with Nearest
+/// sampling (no fractional scale / blur). Splash stays Agile.
 pub(super) fn load_logo(ctx: &egui::Context) -> Option<TextureHandle> {
+    // Bake in device pixels so 1 texel ≈ 1 physical px on the ribbon, then paint
+    // at logical size (texels / ppp) for a crisp integer fit in the 70px brand band.
+    let ppp = ctx.pixels_per_point().round().clamp(1.0, 3.0) as u32;
     load_raster_logo(
         ctx,
         "tb-horizontal-logo",
         include_bytes!("../../assets/topicbench-horizontal.png"),
-        56,
+        56u32.saturating_mul(ppp.max(1)),
         egui::TextureFilter::Nearest,
+        DownscaleMode::Nearest,
     )
 }
 
@@ -1032,25 +1048,37 @@ pub(super) fn load_splash_logo(ctx: &egui::Context) -> Option<TextureHandle> {
         include_bytes!("../../assets/agile-automation-logo.png"),
         512,
         egui::TextureFilter::Linear,
+        DownscaleMode::Box,
     )
+}
+
+enum DownscaleMode {
+    /// Point-sample (crisp ribbon wordmark).
+    Nearest,
+    /// Area average (smooth splash when downscaling).
+    Box,
 }
 
 fn load_raster_logo(
     ctx: &egui::Context,
     id: &str,
     bytes: &'static [u8],
-    max_h: u32,
+    target_h: u32,
     filter: egui::TextureFilter,
+    mode: DownscaleMode,
 ) -> Option<TextureHandle> {
     let raw = image::load_from_memory(bytes).ok()?.into_rgba8();
     let (w, h) = raw.dimensions();
-    let factor = (h / max_h).max(1);
+    let factor = best_integer_factor(h, target_h.max(1));
     let cw = (w / factor) * factor;
     let ch = (h / factor) * factor;
     let ox = (w - cw) / 2;
     let oy = (h - ch) / 2;
     let cropped = image::imageops::crop_imm(&raw, ox, oy, cw, ch).to_image();
-    let logo = integer_box_downscale(&cropped, factor);
+    let logo = match mode {
+        DownscaleMode::Nearest => integer_nearest_downscale(&cropped, factor),
+        DownscaleMode::Box => integer_box_downscale(&cropped, factor),
+    };
     let size = [logo.width() as usize, logo.height() as usize];
     let color = egui::ColorImage::from_rgba_unmultiplied(size, logo.as_raw());
     Some(ctx.load_texture(
@@ -1062,6 +1090,46 @@ fn load_raster_logo(
             ..egui::TextureOptions::LINEAR
         },
     ))
+}
+
+/// Integer factor whose `src_h / f` is closest to `target_h` (prefer sharper / larger when tied).
+fn best_integer_factor(src_h: u32, target_h: u32) -> u32 {
+    if src_h <= target_h || target_h == 0 {
+        return 1;
+    }
+    let mut best_f = 1u32;
+    let mut best_err = u32::MAX;
+    let max_f = src_h / target_h.max(1) + 2;
+    for f in 1..=max_f.max(1) {
+        let out = src_h / f;
+        if out == 0 {
+            break;
+        }
+        let err = out.abs_diff(target_h);
+        if err < best_err || (err == best_err && out >= target_h && f >= best_f) {
+            best_err = err;
+            best_f = f;
+        }
+    }
+    best_f.max(1)
+}
+
+/// Point-sample every `factor` px (crisp integer downsample).
+fn integer_nearest_downscale(src: &RgbaImage, factor: u32) -> RgbaImage {
+    if factor <= 1 {
+        return src.clone();
+    }
+    let w = src.width() / factor;
+    let h = src.height() / factor;
+    let mut out = RgbaImage::new(w, h);
+    let ox = factor / 2;
+    let oy = factor / 2;
+    for y in 0..h {
+        for x in 0..w {
+            out.put_pixel(x, y, *src.get_pixel(x * factor + ox, y * factor + oy));
+        }
+    }
+    out
 }
 
 fn integer_box_downscale(src: &RgbaImage, factor: u32) -> RgbaImage {

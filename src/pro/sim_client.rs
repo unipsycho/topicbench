@@ -139,6 +139,27 @@ impl SimClientState {
         }
     }
 
+    /// Count of running generator rows (status strip).
+    pub fn running_count(&self) -> usize {
+        self.statuses.iter().filter(|s| s.running).count()
+    }
+
+    /// Compact status-strip label, or `None` when idle (no generators / tape).
+    pub fn status_strip_label(&self) -> Option<String> {
+        let n = self.running_count();
+        let pb = self.playback.active;
+        if n == 0 && !pb {
+            return None;
+        }
+        Some(if n > 0 && pb {
+            format!("Simulation: running — {n} publishing + playback")
+        } else if n > 0 {
+            format!("Simulation: running — {n} publishing")
+        } else {
+            "Simulation: playback".into()
+        })
+    }
+
     /// Refresh list when panel is open (throttled).
     pub fn poll_if_due(&mut self, force: bool) {
         let due = force
