@@ -181,7 +181,8 @@ impl MqttMonitorApp {
         } else {
             None
         };
-        let simulation_open = settings.show_simulation;
+        let simulation_open = settings.show_simulation
+            || std::env::var_os("TOPICBENCH_OPEN_SIMULATION").is_some();
         let simulation_floating = settings.simulation_floating;
         Self {
             profiles,
@@ -230,7 +231,7 @@ impl MqttMonitorApp {
             },
             payload_scrub: crate::pro::history_client::PayloadScrub::default(),
             bookmarks: crate::pro::bookmarks::BookmarksStore::load(),
-            bookmarks_open: false,
+            bookmarks_open: std::env::var_os("TOPICBENCH_OPEN_BOOKMARKS").is_some(),
             pending_bookmark_jump: None,
             scroll_tree_to: None,
             color_rules: crate::pro::color_rules::ColorRulesStore::load(),

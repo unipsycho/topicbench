@@ -76,7 +76,7 @@ pub fn draw(
             };
             // Far right: Import then Export (RTL → Export appears rightmost).
             if icons
-                .tiny(ui, "export_download", false, export_tip)
+                .tiny(ui, "export", false, export_tip)
                 .clicked()
             {
                 if export_ok {
@@ -86,7 +86,7 @@ pub fn draw(
                 }
             }
             if icons
-                .tiny(ui, "folder_open", false, import_tip)
+                .tiny(ui, "import", false, import_tip)
                 .clicked()
             {
                 if export_ok {

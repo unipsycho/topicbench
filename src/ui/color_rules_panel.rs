@@ -4,8 +4,15 @@
 //! click a chip for a swatch popover (hue + alpha).
 
 use crate::pro::color_rules::{ColorRule, ColorRulesStore, MatchPred, RuleStyle};
-use crate::ui::icons::{self, IconSet, CHROME_BG, CHROME_MUTED};
-use eframe::egui::{self, Color32, Id, Pos2, RichText, ViewportBuilder, ViewportClass};
+use crate::ui::icons::{self, IconSet, CHROME_BG, CHROME_CAPTION, CHROME_MUTED};
+use eframe::egui::{self, Color32, Id, Pos2, RichText, TextStyle, ViewportBuilder, ViewportClass};
+
+/// Body-sized field label (Topic / Match / Value / Background) — never `.small()`.
+fn field_label(text: &str) -> RichText {
+    RichText::new(text)
+        .text_style(TextStyle::Body)
+        .color(CHROME_CAPTION)
+}
 
 /// Preset hues + greys. Alpha comes from click Y inside each gradient swatch.
 const PRESETS: &[(&str, [u8; 3])] = &[
@@ -49,13 +56,16 @@ pub fn draw_popup(
     let mut close = false;
     // OS window — draggable outside the main TopicBench frame.
     ctx.show_viewport_immediate(
-        egui::ViewportId::from_hash_of("topicbench_color_rules_vp"),
+        // Id bump resets stale tiny OS window size from earlier sessions.
+        egui::ViewportId::from_hash_of("topicbench_color_rules_vp_v2"),
         ViewportBuilder::default()
             .with_title("Color Rules")
-            .with_inner_size([720.0, 420.0])
-            .with_min_inner_size([520.0, 240.0]),
+            // Wide enough for Topic / Match / Value / Background on one row.
+            .with_inner_size([900.0, 440.0])
+            .with_min_inner_size([640.0, 280.0]),
         |ctx, class| {
             let mut paint = |ui: &mut egui::Ui| {
+                // Header bar: icon + title + actions only (no subtitle here).
                 icons::section_header_bar(ui, |ui| {
                     icons::section_icon(ui, icons, "color_rules");
                     icons::section_title(ui, "Color Rules");
@@ -74,12 +84,14 @@ pub fn draw_popup(
                         }
                     });
                 });
-                // Subtitle under header — body size, not cramped header chrome.
-                ui.add_space(4.0);
+                // Own line under the header — body font (same as panel text, not tiny/muted).
+                ui.add_space(6.0);
                 ui.label(
-                    RichText::new("First match wins · leaves with payloads").color(CHROME_MUTED),
+                    RichText::new("First match wins · leaves with payloads")
+                        .text_style(TextStyle::Body)
+                        .color(CHROME_CAPTION),
                 );
-                ui.add_space(2.0);
+                ui.add_space(4.0);
                 ui.separator();
 
                 let mut remove: Option<String> = None;
@@ -165,8 +177,8 @@ fn draw_rule_row(
         {
             *dirty = true;
         }
-        // Column labels use normal panel body size (not .small()).
-        ui.label(RichText::new("Topic").color(CHROME_MUTED));
+        // Column labels: normal body size (locked — not `.small()`).
+        ui.label(field_label("Topic"));
         if ui
             .add(
                 egui::TextEdit::singleline(&mut rule.topic_glob)
@@ -178,7 +190,7 @@ fn draw_rule_row(
             *dirty = true;
         }
 
-        ui.label(RichText::new("Match").color(CHROME_MUTED));
+        ui.label(field_label("Match"));
         draw_match_controls(ui, rule, dirty);
 
         ui.add_space(6.0);
@@ -302,7 +314,7 @@ fn color_chip_column(
 ) {
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 3.0;
-        ui.label(RichText::new(label).color(CHROME_MUTED));
+        ui.label(field_label(label));
         let popup_id = Id::new(("cr_color_pop", rule_id, slot_key));
         let tip = match slot {
             Some([r, g, b, a]) => format!("{label} color · rgba({r},{g},{b},{a}) — click to change"),

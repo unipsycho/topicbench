@@ -116,14 +116,14 @@ fn paint_bookmarks_body(
 ) {
     let mut open_add = false;
     icons::section_header_bar(ui, |ui| {
-        icons::section_icon(ui, icons, "message_history");
+        icons::section_icon(ui, icons, "bookmarks");
         icons::section_title(ui, "Bookmarks");
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             if icons.tiny(ui, "remove_x", false, "Close").clicked() {
                 *close = true;
             }
             if icons
-                .tiny(ui, "export_download", false, "Export bookmarks")
+                .tiny(ui, "export", false, "Export bookmarks")
                 .clicked()
             {
                 if let Some(path) = rfd::FileDialog::new()
@@ -140,7 +140,7 @@ fn paint_bookmarks_body(
             }
             // Import beside Export (right-to-left → appears left of Export).
             if icons
-                .tiny(ui, "folder_open", false, "Import bookmarks")
+                .tiny(ui, "import", false, "Import bookmarks")
                 .clicked()
             {
                 if let Some(path) = rfd::FileDialog::new()
@@ -712,12 +712,12 @@ pub fn bookmark_toggle_icon(
     } else {
         "Bookmark"
     };
-    // message_history (not topic_tags — that is copy-topic on the same row).
+    // bookmarks icon (not topic_tags — that is copy-topic on the same row).
     let tip = shortcuts_tip(tip);
     let resp = if cluster {
-        icons.tiny_cluster(ui, "message_history", on, &tip)
+        icons.tiny_cluster(ui, "bookmarks", on, &tip)
     } else {
-        icons.tiny(ui, "message_history", on, &tip)
+        icons.tiny(ui, "bookmarks", on, &tip)
     };
     if resp.clicked() {
         let now_on = store.toggle(profile_id, topic);
