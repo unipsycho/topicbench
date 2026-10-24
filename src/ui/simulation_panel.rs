@@ -241,13 +241,13 @@ fn body(
     if let Some(err) = &client.last_error {
         ui.colored_label(Color32::from_rgb(220, 140, 100), err);
         ui.label(
-            RichText::new("Start the sidecar: cargo run --release --bin topicbench-pro")
+            RichText::new("TopicBench Pro is not running — start it and try again.")
                 .small()
                 .color(CHROME_MUTED),
         );
     } else if !client.sidecar_up && client.rows.is_empty() {
         ui.label(
-            RichText::new("Connecting to topicbench-pro…").color(CHROME_MUTED),
+            RichText::new("Connecting to TopicBench Pro…").color(CHROME_MUTED),
         );
     }
 
