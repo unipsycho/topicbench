@@ -671,8 +671,6 @@ impl MqttMonitorApp {
                                 &self.icons,
                                 &self.search,
                                 &mut self.status,
-                                self.history_fwd.as_ref(),
-                                &mut self.scrub_ui,
                             );
                             ui.add_space(8.0);
                             ui.separator();
@@ -773,6 +771,8 @@ impl MqttMonitorApp {
                     &mut self.panels.stickies,
                     &mut self.status,
                     &mut self.payload_popped,
+                    self.history_fwd.as_ref(),
+                    &mut self.payload_scrub,
                 );
             });
             if self.panels.stickies != stickies_before {
