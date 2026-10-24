@@ -726,12 +726,12 @@ fn leaf_row(
         ui.set_min_width(row_w);
         ui.horizontal(|ui| {
             ui.set_min_width(row_w);
-            // Tight cluster for the left action icons (copy / sticky / bookmark).
-            ui.spacing_mut().item_spacing.x = 1.0;
+            // Left action icons: zero gap + half-pad hit targets (tighter than prior 1px+pad2).
+            ui.spacing_mut().item_spacing.x = 0.0;
 
             // Left: copy-topic + sticky + optional Pro bookmark toggle.
             if icons
-                .tiny(ui, "topic_tags", false, "Copy topic")
+                .tiny_cluster(ui, "topic_tags", false, "Copy topic")
                 .clicked()
             {
                 ui.ctx().copy_text(full_topic.to_string());
@@ -748,7 +748,7 @@ fn leaf_row(
                 "Ctrl+Shift+S",
             );
             if icons
-                .tiny(ui, "sticky_topic", sticky, &sticky_tip)
+                .tiny_cluster(ui, "sticky_topic", sticky, &sticky_tip)
                 .clicked()
             {
                 select_topic(pins, profile_id, profile_name, full_topic);
@@ -769,7 +769,7 @@ fn leaf_row(
 
             if crate::pro::has(crate::pro::Entitlement::TopicBookmarks) {
                 crate::ui::bookmarks_panel::bookmark_toggle_icon(
-                    ui, icons, bookmarks, profile_id, full_topic, status,
+                    ui, icons, bookmarks, profile_id, full_topic, status, true,
                 );
             }
             // Restore spacing for the rest of the row (topic / payload).
