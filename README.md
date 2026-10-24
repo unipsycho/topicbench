@@ -94,20 +94,6 @@ Bookmarks jump you anywhere in a tree and auto-expand that topic for immediate a
   <a href="https://www.agileautomation.ca/products/topic-bench"><strong style="font-size: 1.5em">Learn about TopicBench Pro →</strong></a>
 </p>
 
-## Download
-
-Latest free release: **[v1.1.0](https://github.com/unipsycho/topicbench/releases/tag/v1.1.0)**
-
-| | |
-|:--|:--|
-| **Windows** (x64) | [topicbench-windows-x64.exe](https://github.com/unipsycho/topicbench/releases/download/v1.1.0/topicbench-windows-x64.exe) |
-| **Linux** (x64) | [topicbench-linux-x64](https://github.com/unipsycho/topicbench/releases/download/v1.1.0/topicbench-linux-x64) |
-| SHA-256 checksums | [SHA256SUMS](https://github.com/unipsycho/topicbench/releases/download/v1.1.0/SHA256SUMS) |
-
-[All releases](https://github.com/unipsycho/topicbench/releases) · [Source on GitHub](https://github.com/unipsycho/topicbench)
-
-TopicBench Pro binaries are distributed separately to licensed customers (not on this public Releases page). See [TopicBench Pro](https://www.agileautomation.ca/products/topic-bench).
-
 ## Build from source
 
 **Requirements:** Rust stable ≥ 1.80 (`rustup update stable`), plus Linux GUI libs (typically `libxcb`, `libxkbcommon`, and a Vulkan/GL stack).
