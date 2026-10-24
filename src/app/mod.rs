@@ -131,6 +131,8 @@ pub struct MqttMonitorApp {
     recordings: crate::pro::recording::RecordingStore,
     /// Topic-tree Export scope modal open.
     tree_export_open: bool,
+    /// Live traffic pause / frozen snapshot.
+    traffic_view: crate::ui::traffic_panel::TrafficViewState,
 }
 
 impl MqttMonitorApp {
@@ -184,6 +186,10 @@ impl MqttMonitorApp {
         let simulation_open = settings.show_simulation
             || std::env::var_os("TOPICBENCH_OPEN_SIMULATION").is_some();
         let simulation_floating = settings.simulation_floating;
+        let bookmarks_open = settings.show_bookmarks
+            || std::env::var_os("TOPICBENCH_OPEN_BOOKMARKS").is_some();
+        let color_rules_open = settings.show_color_rules
+            || std::env::var_os("TOPICBENCH_OPEN_COLOR_RULES").is_some();
         Self {
             profiles,
             sessions,
@@ -231,14 +237,14 @@ impl MqttMonitorApp {
             },
             payload_scrub: crate::pro::history_client::PayloadScrub::default(),
             bookmarks: crate::pro::bookmarks::BookmarksStore::load(),
-            bookmarks_open: std::env::var_os("TOPICBENCH_OPEN_BOOKMARKS").is_some(),
+            bookmarks_open,
             pending_bookmark_jump: None,
             scroll_tree_to: None,
             color_rules: crate::pro::color_rules::ColorRulesStore::load(),
-            // Agents/tests: TOPICBENCH_OPEN_COLOR_RULES=1 opens the editor on launch.
-            color_rules_open: std::env::var_os("TOPICBENCH_OPEN_COLOR_RULES").is_some(),
+            color_rules_open,
             recordings: crate::pro::recording::RecordingStore::default(),
             tree_export_open: false,
+            traffic_view: crate::ui::traffic_panel::TrafficViewState::default(),
         }
     }
 }
@@ -316,6 +322,13 @@ impl eframe::App for MqttMonitorApp {
                 ctx,
                 &mut self.status,
             );
+        }
+        // Keep /sim warm for the status strip even when Simulation is closed.
+        if crate::pro::has(crate::pro::Entitlement::Simulation) {
+            self.sim_client.poll_if_due(false);
+            if self.sim_client.status_strip_label().is_some() {
+                ctx.request_repaint_after(std::time::Duration::from_millis(750));
+            }
         }
         // Stats ribbon labels: rebuild frozen snapshot at most once per second.
         let _ = self.sessions.traffic_stats.refresh_display_if_due();

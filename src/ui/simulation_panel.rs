@@ -44,6 +44,7 @@ const COL_PREC: f32 = 44.0;
 const COL_VALUE: f32 = 92.0;
 const COL_GEN: f32 = 118.0;
 const COL_SETTINGS: f32 = 400.0;
+const COL_DELETE: f32 = 36.0;
 
 /// Floating Simulation as a real OS viewport (`floating == true`).
 /// Docked UI paints in the central column via [`draw_docked`].
@@ -154,12 +155,38 @@ fn header_bar(
     icons::section_header_bar(ui, |ui| {
         icons::section_icon(ui, icons, "data_table");
         icons::section_title(ui, "Simulation");
-        // Status pill — padded chip next to title (dark chrome, not a purple default).
+        // Status pill — playback takes priority over generator Running/Stopped.
         ui.add_space(8.0);
+        let pb = &client.playback;
         let any_running = client.statuses.iter().any(|s| s.running);
-        let (label, fg, bg, border) = if any_running {
+        let (label, tip, fg, bg, border) = if pb.active {
+            if pb.paused {
+                (
+                    "Playback paused",
+                    format!(
+                        "CSV tape paused · loops completed: {} (0 = still on first pass)",
+                        pb.loops_completed
+                    ),
+                    Color32::from_rgb(230, 200, 140),
+                    Color32::from_rgb(52, 44, 28),
+                    Color32::from_rgb(180, 140, 70),
+                )
+            } else {
+                (
+                    "Playback running",
+                    format!(
+                        "CSV tape playing · loops completed: {} (0 = still on first pass)",
+                        pb.loops_completed
+                    ),
+                    Color32::from_rgb(170, 210, 240),
+                    Color32::from_rgb(28, 44, 60),
+                    Color32::from_rgb(80, 140, 190),
+                )
+            }
+        } else if any_running {
             (
                 "Running",
+                "Generator simulations running".into(),
                 Color32::from_rgb(170, 225, 180),
                 Color32::from_rgb(32, 52, 40),
                 Color32::from_rgb(80, 150, 100),
@@ -167,13 +194,12 @@ fn header_bar(
         } else {
             (
                 "Stopped",
+                "No generators or playback active".into(),
                 CHROME_MUTED,
                 Color32::from_rgb(46, 48, 54),
                 Color32::from_rgb(78, 82, 92),
             )
         };
-        // Cap height so the Frame does not stretch to the 36px section-icon row.
-        // Centered in the header → visible air above/below the pill.
         ui.scope(|ui| {
             ui.set_height(20.0);
             ui.set_max_height(20.0);
@@ -183,12 +209,25 @@ fn header_bar(
                 .corner_radius(8.0)
                 .inner_margin(egui::Margin::symmetric(8, 2))
                 .show(ui, |ui| {
-                    ui.label(RichText::new(label).size(12.0).strong().color(fg));
+                    ui.label(RichText::new(label).size(12.0).strong().color(fg))
+                        .on_hover_text(tip);
                 });
         });
+        if pb.active {
+            ui.add_space(6.0);
+            ui.label(
+                RichText::new(format!("Loops: {}", pb.loops_completed))
+                    .size(12.0)
+                    .color(CHROME_CAPTION),
+            )
+            .on_hover_text(
+                "Loops completed — increments each time the CSV finishes and restarts. \
+                 0 means still on the first pass.",
+            );
+        }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             if icons
-                .tiny(ui, "remove_x", false, "Close Simulation panel")
+                .tiny_header(ui, "close_red", false, "Close Simulation panel")
                 .clicked()
             {
                 *open = false;
@@ -203,7 +242,10 @@ fn header_bar(
             } else {
                 "panel_undock"
             };
-            if icons.tiny(ui, dock_icon, false, dock_tip).clicked() {
+            if icons
+                .tiny_header(ui, dock_icon, false, dock_tip)
+                .clicked()
+            {
                 *floating = !*floating;
             }
         });
@@ -221,6 +263,9 @@ fn body(
     // True in the floating window (both-axis scroll); false when docked in central column.
     scroll_both: bool,
 ) {
+    // Dev/screenshot: TOPICBENCH_OPEN_PLAYBACK_MODAL=/path/to.csv seeds the Open playback modal once.
+    seed_open_playback_modal(client, sessions, profiles);
+
     if !licensed {
         ui.add_space(12.0);
         ui.label(
@@ -251,10 +296,10 @@ fn body(
         );
     }
 
-    // Toolbar — Start/Stop affect every simulation (icon + label, Profiles/Publish chrome).
+    // Toolbar — Start/Stop control the CSV tape while playback is active.
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 6.0;
-        if toolbar_btn(ui, icons, "profile_add", "Add", true)
+        if toolbar_btn(ui, icons, "add_blue", "Add", true)
             .on_hover_text("Add a simulation row")
             .clicked()
         {
@@ -268,63 +313,110 @@ fn body(
                 Err(e) => *status = e,
             }
         }
-        if toolbar_btn(ui, icons, "connect", "Start", true)
-            .on_hover_text("Start all simulations")
+        let pb_active = client.playback.active;
+        let pb_paused = client.playback.paused;
+        let play_tip = if pb_active {
+            if pb_paused {
+                "Resume CSV playback"
+            } else {
+                "Playback is already running"
+            }
+        } else {
+            "Start all simulations"
+        };
+        let pause_tip = if pb_active {
+            if pb_paused {
+                "Playback is paused"
+            } else {
+                "Pause CSV playback"
+            }
+        } else {
+            "Stop all simulations (also cancels playback)"
+        };
+        if toolbar_btn(ui, icons, "play", "Start", true)
+            .on_hover_text(play_tip)
             .clicked()
         {
-            match client.start_all() {
-                Ok(()) => *status = "Started all simulations".into(),
-                Err(e) => *status = e,
+            if pb_active {
+                match client.resume_playback() {
+                    Ok(()) => *status = "Playback resumed".into(),
+                    Err(e) => *status = e,
+                }
+            } else {
+                match client.start_all() {
+                    Ok(()) => *status = "Started all simulations".into(),
+                    Err(e) => *status = e,
+                }
             }
         }
-        if toolbar_btn(ui, icons, "disconnect", "Stop", true)
-            .on_hover_text("Stop all simulations")
+        if toolbar_btn(ui, icons, "pause", "Stop", true)
+            .on_hover_text(pause_tip)
             .clicked()
         {
-            match client.stop_all() {
-                Ok(()) => *status = "Stopped all simulations".into(),
-                Err(e) => *status = e,
+            if pb_active && !pb_paused {
+                match client.pause_playback() {
+                    Ok(()) => *status = "Playback paused".into(),
+                    Err(e) => *status = e,
+                }
+            } else if pb_active && pb_paused {
+                // Second Stop while paused ends the tape.
+                match client.stop_playback() {
+                    Ok(()) => *status = "Playback stopped".into(),
+                    Err(e) => *status = e,
+                }
+            } else {
+                match client.stop_all() {
+                    Ok(()) => *status = "Stopped all simulations".into(),
+                    Err(e) => *status = e,
+                }
             }
         }
-        let sel = client.selected.clone();
-        if toolbar_btn(ui, icons, "trash", "Delete", sel.is_some())
-            .on_hover_text("Delete selected row")
-            .clicked()
-        {
-            if let Some(id) = &sel {
-                match client.delete(id) {
-                    Ok(()) => *status = format!("Deleted {id}"),
+        if pb_active {
+            let mut loop_on = client.playback.loop_on;
+            if ui
+                .checkbox(&mut loop_on, "Loop")
+                .on_hover_text("Restart the CSV when it ends and keep looping")
+                .changed()
+            {
+                match client.set_playback_loop(loop_on) {
+                    Ok(()) => {
+                        *status = if loop_on {
+                            "Playback loop on".into()
+                        } else {
+                            "Playback loop off".into()
+                        };
+                    }
                     Err(e) => *status = e,
                 }
             }
         }
 
-        // Far right: Import / Export / Playback (CSV tape).
+        // Far right: Import / Export / Open playback (CSV tape).
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             ui.spacing_mut().item_spacing.x = 6.0;
-            if toolbar_btn(ui, icons, "message_history", "Playback", true)
-                .on_hover_text("Play a topicbench-recording CSV (all topics)")
+            if toolbar_btn(ui, icons, "playback", "Open playback", true)
+                .on_hover_text("Open a topicbench-recording CSV — play back and/or suggest sims")
                 .clicked()
             {
                 if let Some(path) = rfd::FileDialog::new()
-                    .set_title("Playback CSV recording")
+                    .set_title("Open playback CSV")
                     .add_filter("CSV", &["csv"])
                     .pick_file()
                 {
                     match std::fs::read_to_string(&path) {
                         Ok(csv) => {
-                            let profile = default_profile(sessions, profiles);
-                            match client.start_playback(&csv, &profile) {
-                                Ok(()) => {
-                                    *status = format!(
-                                        "Playback started ({})",
-                                        path.file_name()
-                                            .and_then(|n| n.to_str())
-                                            .unwrap_or("csv")
-                                    );
-                                }
-                                Err(e) => *status = e,
-                            }
+                            client.pending_playback = Some(sim_client::PendingPlayback {
+                                csv,
+                                file_label: path
+                                    .file_name()
+                                    .and_then(|n| n.to_str())
+                                    .unwrap_or("recording.csv")
+                                    .to_string(),
+                                profile: default_profile(sessions, profiles),
+                                play: true,
+                                suggest: true,
+                                loop_on: false,
+                            });
                         }
                         Err(e) => *status = format!("read {}: {e}", path.display()),
                     }
@@ -440,12 +532,12 @@ fn body(
 
     let sheet = |ui: &mut egui::Ui| {
         egui::Grid::new("sim_sheet")
-            .num_columns(8)
+            .num_columns(9)
             .spacing([5.0, 6.0])
             .min_col_width(36.0)
             .striped(true)
             .show(ui, |ui| {
-                // Profile → Topic → Field → Refresh → Prec → Value → Generator → Settings
+                // Profile → Topic → Field → Refresh → Prec → Value → Generator → Settings → Delete
                 header_cell(ui, COL_PROFILE, "Profile");
                 header_cell(ui, COL_TOPIC, "Topic");
                 header_cell(ui, COL_FIELD, "Field");
@@ -454,11 +546,12 @@ fn body(
                 header_cell(ui, COL_VALUE, "Current value");
                 header_cell(ui, COL_GEN, "Generator");
                 header_cell(ui, COL_SETTINGS, "Settings");
+                header_cell(ui, COL_DELETE, "");
                 ui.end_row();
 
                 let rows = client.rows.clone();
                 for row in rows {
-                    draw_row(ui, &row, client, sessions, profiles, status);
+                    draw_row(ui, &row, client, sessions, profiles, icons, status);
                     ui.end_row();
                 }
             });
@@ -473,6 +566,9 @@ fn body(
             .auto_shrink([false, false])
             .show(ui, sheet);
     }
+
+    // Overlay last so it dims toolbar + sheet (and stays on top).
+    draw_open_playback_modal(ui, client, status);
 }
 
 fn header_cell(ui: &mut egui::Ui, width: f32, label: &str) {
@@ -492,6 +588,7 @@ fn draw_row(
     client: &mut SimClientState,
     sessions: &SessionManager,
     profiles: &ProfileStore,
+    icons: &IconSet,
     status: &mut String,
 ) {
     let selected = client.selected.as_deref() == Some(row.id.as_str());
@@ -648,7 +745,7 @@ fn draw_row(
         },
     );
 
-    // Current value — click selects row for Delete
+    // Current value — click selects row
     let val = sim_client::value_label(st.as_ref());
     ui.allocate_ui_with_layout(
         Vec2::new(COL_VALUE, 28.0),
@@ -707,6 +804,29 @@ fn draw_row(
             ui.set_max_height(28.0);
             if edit_generator_inline(ui, &row.id, &gen_type, &mut draft.generator, client) {
                 dirty = true;
+            }
+        },
+    );
+
+    // Per-row delete
+    ui.allocate_ui_with_layout(
+        Vec2::new(COL_DELETE, 28.0),
+        egui::Layout::left_to_right(egui::Align::Center),
+        |ui| {
+            ui.set_min_width(COL_DELETE);
+            if icons
+                .tiny(ui, "delete_red", false, "Delete this simulation")
+                .clicked()
+            {
+                match client.delete(&row.id) {
+                    Ok(()) => {
+                        if client.selected.as_deref() == Some(row.id.as_str()) {
+                            client.selected = None;
+                        }
+                        *status = format!("Deleted {}", row.id);
+                    }
+                    Err(e) => *status = e,
+                }
             }
         },
     );
@@ -1105,7 +1225,155 @@ fn toolbar_btn(
     } else {
         egui::Button::new(label)
     };
-    ui.add_enabled(enabled, btn.min_size(egui::vec2(88.0, 28.0)))
+    let min_w = if label.len() > 10 { 128.0 } else { 88.0 };
+    ui.add_enabled(enabled, btn.min_size(egui::vec2(min_w, 28.0)))
+}
+
+/// One-shot seed from `TOPICBENCH_OPEN_PLAYBACK_MODAL` (path to a recording CSV).
+fn seed_open_playback_modal(
+    client: &mut SimClientState,
+    sessions: &SessionManager,
+    profiles: &ProfileStore,
+) {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    static SEEDED: AtomicBool = AtomicBool::new(false);
+    if client.pending_playback.is_some() || SEEDED.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    let Ok(path) = std::env::var("TOPICBENCH_OPEN_PLAYBACK_MODAL") else {
+        return;
+    };
+    let path = path.trim();
+    if path.is_empty() {
+        return;
+    }
+    match std::fs::read_to_string(path) {
+        Ok(csv) => {
+            let label = std::path::Path::new(path)
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("recording.csv")
+                .to_string();
+            client.pending_playback = Some(sim_client::PendingPlayback {
+                csv,
+                file_label: label,
+                profile: default_profile(sessions, profiles),
+                play: true,
+                suggest: true,
+                loop_on: false,
+            });
+        }
+        Err(e) => eprintln!("topicbench: TOPICBENCH_OPEN_PLAYBACK_MODAL read {path}: {e}"),
+    }
+}
+
+/// Modal after picking a CSV: play back / suggest / loop (in-panel overlay — reliable in OS viewports).
+fn draw_open_playback_modal(
+    ui: &mut egui::Ui,
+    client: &mut SimClientState,
+    status: &mut String,
+) {
+    let Some(pending) = client.pending_playback.clone() else {
+        return;
+    };
+    let mut draft = pending;
+    let mut close = false;
+    let mut confirm = false;
+
+    let full = ui.max_rect();
+    // Dim the sheet behind the modal.
+    ui.painter()
+        .rect_filled(full, 0.0, Color32::from_black_alpha(140));
+    // Block clicks to the sheet while the modal is open.
+    ui.interact(
+        full,
+        ui.id().with("open_playback_dim"),
+        egui::Sense::click(),
+    );
+
+    let panel = egui::Area::new(egui::Id::new("open_playback_modal"))
+        .order(egui::Order::Foreground)
+        .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+        .movable(false)
+        .show(ui.ctx(), |ui| {
+            egui::Frame::NONE
+                .fill(Color32::from_rgb(36, 38, 44))
+                .stroke(egui::Stroke::new(1.0, Color32::from_rgb(90, 96, 110)))
+                .corner_radius(8.0)
+                .inner_margin(egui::Margin::symmetric(16, 14))
+                .show(ui, |ui| {
+                    ui.set_min_width(360.0);
+                    ui.label(RichText::new("Open playback").strong().size(15.0));
+                    ui.add_space(4.0);
+                    ui.label(
+                        RichText::new(format!("File: {}", draft.file_label))
+                            .color(CHROME_CAPTION),
+                    );
+                    ui.add_space(10.0);
+                    ui.checkbox(&mut draft.play, "Play it back")
+                        .on_hover_text("Start CSV tape playback through the live session");
+                    ui.checkbox(&mut draft.suggest, "Suggest simulation values")
+                        .on_hover_text(
+                            "Analyze the tape and merge stopped generator drafts into the list",
+                        );
+                    ui.add_enabled_ui(draft.play, |ui| {
+                        ui.checkbox(&mut draft.loop_on, "Loop")
+                            .on_hover_text("When playing, restart the CSV when it ends");
+                    });
+                    ui.add_space(14.0);
+                    ui.horizontal(|ui| {
+                        if ui.button("Cancel").clicked() {
+                            close = true;
+                        }
+                        let can = draft.play || draft.suggest;
+                        if ui
+                            .add_enabled(
+                                can,
+                                egui::Button::new("OK").min_size(egui::vec2(72.0, 0.0)),
+                            )
+                            .clicked()
+                        {
+                            confirm = true;
+                        }
+                    });
+                });
+        });
+    let _ = panel;
+
+    if confirm {
+        let mut notes = Vec::new();
+        if draft.suggest {
+            match client.suggest_from_recording(&draft.csv, &draft.profile) {
+                Ok(rows) => {
+                    if rows.is_empty() {
+                        notes.push("no suggestions".into());
+                    } else {
+                        let arr: Vec<Value> = rows
+                            .iter()
+                            .filter_map(|r| serde_json::to_value(r).ok())
+                            .collect();
+                        match client.import_sims_mode(&Value::Array(arr), "merge") {
+                            Ok(n) => notes.push(format!("suggested {n} sims")),
+                            Err(e) => notes.push(format!("suggest merge: {e}")),
+                        }
+                    }
+                }
+                Err(e) => notes.push(format!("suggest: {e}")),
+            }
+        }
+        if draft.play {
+            match client.start_playback(&draft.csv, &draft.profile, draft.loop_on) {
+                Ok(()) => notes.push("playback started".into()),
+                Err(e) => notes.push(format!("playback: {e}")),
+            }
+        }
+        *status = notes.join(" · ");
+        client.pending_playback = None;
+    } else if close {
+        client.pending_playback = None;
+    } else if let Some(slot) = client.pending_playback.as_mut() {
+        *slot = draft;
+    }
 }
 
 fn default_profile(sessions: &SessionManager, profiles: &ProfileStore) -> String {

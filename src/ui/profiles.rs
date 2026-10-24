@@ -382,7 +382,7 @@ pub fn draw(
                     ui.label("Username");
                     ui.text_edit_singleline(&mut profile.username);
                 });
-                // Password + eyeball toggle (masked by default; revealed text is selectable).
+                // Password + Show/Hide text toggle (masked by default).
                 ui.horizontal(|ui| {
                     ui.label("Password");
                     ui.add(
@@ -390,12 +390,16 @@ pub fn draw(
                             .password(!*show_password)
                             .desired_width(160.0),
                     );
-                    let (eye_icon, eye_tip) = if *show_password {
-                        ("eye_off", "Hide password")
-                    } else {
-                        ("eye", "Show password")
-                    };
-                    if icons.tiny(ui, eye_icon, *show_password, eye_tip).clicked() {
+                    let label = if *show_password { "Hide" } else { "Show" };
+                    if ui
+                        .small_button(label)
+                        .on_hover_text(if *show_password {
+                            "Hide password"
+                        } else {
+                            "Show password"
+                        })
+                        .clicked()
+                    {
                         *show_password = !*show_password;
                     }
                 });
@@ -418,7 +422,7 @@ pub fn draw(
                             .hint_text("/path/to/certs"),
                     );
                     if icons
-                        .tiny(ui, "folder_open", false, "Choose certs folder")
+                        .tiny(ui, "certificates", false, "Choose certs folder")
                         .clicked()
                     {
                         if let Some(path) = rfd::FileDialog::new()
@@ -431,7 +435,7 @@ pub fn draw(
                     }
                     if !profile.certs_dir.trim().is_empty()
                         && icons
-                            .tiny(ui, "remove_x", false, "Clear certs folder")
+                            .tiny(ui, "close_red", false, "Clear certs folder")
                             .clicked()
                     {
                         profile.certs_dir.clear();
@@ -499,7 +503,7 @@ pub fn draw(
                                             egui::Layout::right_to_left(egui::Align::Center),
                                             |ui| {
                                                 if icons
-                                                    .tiny(ui, "remove_x", false, "Remove filter")
+                                                    .tiny(ui, "close_red", false, "Remove filter")
                                                     .clicked()
                                                 {
                                                     remove_at = Some(i);

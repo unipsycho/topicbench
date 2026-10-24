@@ -20,8 +20,8 @@ use image::RgbaImage;
 use std::collections::BTreeMap;
 use std::time::Instant;
 
-/// Ribbon panel height: brand/group band (`brand_h` 70) + vertical frame margins (4+4).
-const RIBBON_PANEL_H: f32 = 78.0;
+/// Fallback ribbon panel height when logo is unavailable (70 brand + 4+4 margins).
+const RIBBON_PANEL_H_MIN: f32 = 78.0;
 const STATUS_STRIP_H: f32 = 24.0;
 
 /// Rects reserved by top chrome panels (real UI paints later on Middle overlays).
@@ -57,7 +57,7 @@ impl MqttMonitorApp {
                     .icons
                     .command_enabled(
                         ui,
-                        "disconnect",
+                        "delete",
                         "Delete",
                         false,
                         &tip_del,
@@ -95,7 +95,7 @@ impl MqttMonitorApp {
                             .icons
                             .command_compact_enabled(
                                 ui,
-                                "disconnect",
+                                "delete",
                                 false,
                                 &tip_del,
                                 self.panels.profiles,
@@ -207,80 +207,57 @@ impl MqttMonitorApp {
             } else {
                 "Simulation — requires TopicBench Pro".to_string()
             };
-            let selected = self.simulation_open;
-            // Extra air between Pro commands (ribbon_group defaults to 1px).
-            const PRO_GAP: f32 = 8.0;
-            let clicked = if mode == SectionMode::Full {
-                self.icons
-                    .command(ui, "data_table", "Simulate", selected, &tip)
-                    .clicked()
-            } else {
-                self.icons
-                    .command_compact(ui, "data_table", selected, &tip)
-                    .clicked()
-            };
-            if clicked {
-                self.simulation_open = !self.simulation_open;
-                self.persist_panels();
-                if self.simulation_open && sim_ok {
-                    self.sim_client.poll_if_due(true);
-                }
-            }
-
-            ui.add_space(PRO_GAP);
-
-            // Bookmarks jump list — two-line caption under icon (width near Simulation).
             let bm_ok = crate::pro::has(crate::pro::Entitlement::TopicBookmarks);
             let bm_tip = if bm_ok {
                 shortcuts::tip("Bookmarks", "Ctrl+Shift+J")
             } else {
                 "Bookmarks — requires TopicBench Pro".into()
             };
-            let bm_click = if mode == SectionMode::Full {
-                self.icons
-                    .command(
-                        ui,
-                        "bookmarks",
-                        "Book-\nmarks",
-                        self.bookmarks_open,
-                        &bm_tip,
-                    )
-                    .clicked()
-            } else {
-                self.icons
-                    .command_compact(ui, "bookmarks", self.bookmarks_open, &bm_tip)
-                    .clicked()
-            };
-            if bm_click && bm_ok {
-                self.bookmarks_open = !self.bookmarks_open;
-            }
-
-            ui.add_space(PRO_GAP);
-
-            // Color Rules editor — two-line caption under icon.
             let cr_ok = crate::pro::has(crate::pro::Entitlement::ColorRules);
             let cr_tip = if cr_ok {
                 "Color Rules".to_string()
             } else {
                 "Color Rules — requires TopicBench Pro".to_string()
             };
-            let cr_click = if mode == SectionMode::Full {
-                self.icons
-                    .command(
-                        ui,
-                        "color_rules",
-                        "Color\nRules",
-                        self.color_rules_open,
-                        &cr_tip,
-                    )
-                    .clicked()
+            let names = ["data_table", "bookmarks", "color_rules"];
+            let labels = ["Simulate", "Book-\nmarks", "Color\nRules"];
+            let tips = [tip.as_str(), bm_tip.as_str(), cr_tip.as_str()];
+            let selected = [
+                self.simulation_open,
+                self.bookmarks_open,
+                self.color_rules_open,
+            ];
+            let mut clicks = [false; 3];
+            if mode == SectionMode::Full {
+                for i in 0..3 {
+                    clicks[i] = self
+                        .icons
+                        .command(ui, names[i], labels[i], selected[i], tips[i])
+                        .clicked();
+                }
             } else {
-                self.icons
-                    .command_compact(ui, "color_rules", self.color_rules_open, &cr_tip)
-                    .clicked()
-            };
-            if cr_click && cr_ok {
+                // Stack like Profiles/Panels — no extra Pro-only gaps.
+                ribbon_compact_columns(ui, 3, |i, ui| {
+                    clicks[i] = self
+                        .icons
+                        .command_compact(ui, names[i], selected[i], tips[i])
+                        .clicked();
+                });
+            }
+            if clicks[0] {
+                self.simulation_open = !self.simulation_open;
+                self.persist_panels();
+                if self.simulation_open && sim_ok {
+                    self.sim_client.poll_if_due(true);
+                }
+            }
+            if clicks[1] && bm_ok {
+                self.bookmarks_open = !self.bookmarks_open;
+                self.persist_panels();
+            }
+            if clicks[2] && cr_ok {
                 self.color_rules_open = !self.color_rules_open;
+                self.persist_panels();
             }
         });
     }
@@ -374,9 +351,10 @@ impl MqttMonitorApp {
     /// Reserve top chrome space only — real ribbon/status paint after CentralPanel
     /// on Middle overlays so sticky/tree scroll cannot draw over the navbar.
     pub(super) fn reserve_top_chrome(&mut self, ctx: &egui::Context) -> TopChromeRects {
+        let ribbon_h = ribbon_panel_height(self.logo.as_ref(), ctx.pixels_per_point());
         let ribbon = egui::TopBottomPanel::top("ribbon")
             .resizable(false)
-            .exact_height(RIBBON_PANEL_H)
+            .exact_height(ribbon_h)
             .show_separator_line(false)
             .frame(
                 egui::Frame::NONE
@@ -420,7 +398,11 @@ impl MqttMonitorApp {
         ui.visuals_mut().override_text_color = Some(CHROME_TEXT);
         ui.spacing_mut().item_spacing.y = 0.0;
 
-        let brand_h = 70.0; // match ribbon group / separator height
+        // Native 1:1 logo (1 source px = 1 device px); brand band grows to fit.
+        let ppp = ctx.pixels_per_point().max(0.5);
+        let logo_size = ribbon_logo_paint_size(self.logo.as_ref(), ppp);
+        let logo_w = logo_size.x;
+        let brand_h = logo_size.y.max(70.0);
         let gap = 6.0;
         // Absolute right strip — never culled by LTR overflow / leftover width.
         let zoom_strip_w = icons::ZOOM_STACK_W;
@@ -437,14 +419,6 @@ impl MqttMonitorApp {
             row_rect.min,
             egui::pos2((zoom_rect.left() - gap).max(row_rect.left()), row_rect.bottom()),
         );
-
-        // Horizontal Topic Bench wordmark — size comes from baked texture (~56px tall).
-        let logo_size = self
-            .logo
-            .as_ref()
-            .map(|l| l.size_vec2())
-            .unwrap_or(egui::vec2(120.0, 56.0));
-        let logo_w = logo_size.x;
         // Wordmark already says “Topic Bench”; skip stacked title (title_w = 0).
         let title_w = 0.0_f32;
 
@@ -562,12 +536,20 @@ impl MqttMonitorApp {
             ui.label(RichText::new("·").color(CHROME_MUTED));
             ui.add_space(8.0);
             ui.label(RichText::new(msgs).color(CHROME_CAPTION));
-            ui.add_space(12.0);
-            ui.label(RichText::new("·").color(CHROME_MUTED));
-            ui.add_space(12.0);
+
+            // Compact Simulation summary (no per-topic publish spam).
+            if let Some(sim_label) = self.sim_client.status_strip_label() {
+                ui.add_space(12.0);
+                ui.label(RichText::new("·").color(CHROME_MUTED));
+                ui.add_space(12.0);
+                ui.label(RichText::new(sim_label).color(CHROME_CAPTION));
+            }
 
             let alpha = status_strip_fade_alpha(self.status_changed_at, Instant::now());
             if alpha > 0.01 && !self.status.is_empty() {
+                ui.add_space(12.0);
+                ui.label(RichText::new("·").color(CHROME_MUTED));
+                ui.add_space(12.0);
                 let a = (255.0 * alpha) as u8;
                 ui.label(
                     RichText::new(&self.status).color(Color32::from_rgba_unmultiplied(
@@ -653,13 +635,21 @@ impl MqttMonitorApp {
                     .show(ui, |ui| {
                         // Keep ScrollArea's viewport clip — do not widen to content max_rect.
                         if self.panels.live_traffic {
+                            let mut traffic_h = self.settings.live_traffic_height;
                             traffic_panel::draw(
                                 ui,
-                                &self.sessions,
+                                &mut self.sessions,
                                 &self.profiles.selected_id,
                                 &self.search,
+                                &self.icons,
+                                &mut self.traffic_view,
+                                &mut traffic_h,
                                 &mut self.status,
                             );
+                            if (traffic_h - self.settings.live_traffic_height).abs() > 0.5 {
+                                self.settings.live_traffic_height = traffic_h;
+                                let _ = self.settings.save();
+                            }
                             ui.add_space(8.0);
                             ui.separator();
                             ui.add_space(8.0);
@@ -1026,40 +1016,52 @@ pub(super) fn apply_font_zoom(ctx: &egui::Context, factor: f32) {
     ctx.style_mut(|s| s.text_styles = styles);
 }
 
-/// Ribbon mark: horizontal Topic Bench wordmark (`assets/topicbench-horizontal.png`,
-/// from `assets/topicbench-horizontal.svg`). Integer 1/N downsample, painted 1:1.
-/// Target ~56 logical px tall so it fills the 70px brand band without clipping.
+/// Ribbon brand: `assets/topicbench-logo-small.png` at **native 1:1** (no resize).
+/// Splash stays Agile. Point/Nearest sampling only.
 pub(super) fn load_logo(ctx: &egui::Context) -> Option<TextureHandle> {
-    load_raster_logo(
-        ctx,
-        "tb-horizontal-logo",
-        include_bytes!("../../assets/topicbench-horizontal.png"),
-        56,
-        egui::TextureFilter::Nearest,
-    )
+    let raw = image::load_from_memory(include_bytes!(
+        "../../assets/topicbench-logo-small.png"
+    ))
+    .ok()?
+    .into_rgba8();
+    let size = [raw.width() as usize, raw.height() as usize];
+    let color = egui::ColorImage::from_rgba_unmultiplied(size, raw.as_raw());
+    Some(ctx.load_texture(
+        "tb-logo-small",
+        color,
+        egui::TextureOptions {
+            magnification: egui::TextureFilter::Nearest,
+            minification: egui::TextureFilter::Nearest,
+            ..egui::TextureOptions::LINEAR
+        },
+    ))
+}
+
+/// Paint size in points: 1 source pixel = 1 device pixel (`texels / ppp`).
+fn ribbon_logo_paint_size(logo: Option<&TextureHandle>, ppp: f32) -> egui::Vec2 {
+    let ppp = ppp.max(0.5);
+    logo.map(|l| {
+        let s = l.size_vec2();
+        egui::vec2((s.x / ppp).round().max(1.0), (s.y / ppp).round().max(1.0))
+    })
+    .unwrap_or(egui::vec2(194.0, 90.0))
+}
+
+fn ribbon_panel_height(logo: Option<&TextureHandle>, ppp: f32) -> f32 {
+    let brand = ribbon_logo_paint_size(logo, ppp).y.max(70.0);
+    (brand + 8.0).max(RIBBON_PANEL_H_MIN)
 }
 
 /// Larger AA mark for the startup splash (~half-window paint).
 pub(super) fn load_splash_logo(ctx: &egui::Context) -> Option<TextureHandle> {
-    load_raster_logo(
-        ctx,
-        "splash-aa-logo",
-        include_bytes!("../../assets/agile-automation-logo.png"),
-        512,
-        egui::TextureFilter::Linear,
-    )
-}
-
-fn load_raster_logo(
-    ctx: &egui::Context,
-    id: &str,
-    bytes: &'static [u8],
-    max_h: u32,
-    filter: egui::TextureFilter,
-) -> Option<TextureHandle> {
-    let raw = image::load_from_memory(bytes).ok()?.into_rgba8();
+    let raw = image::load_from_memory(include_bytes!(
+        "../../assets/agile-automation-logo.png"
+    ))
+    .ok()?
+    .into_rgba8();
     let (w, h) = raw.dimensions();
-    let factor = (h / max_h).max(1);
+    let target_h = 512u32;
+    let factor = (h / target_h).max(1);
     let cw = (w / factor) * factor;
     let ch = (h / factor) * factor;
     let ox = (w - cw) / 2;
@@ -1069,11 +1071,11 @@ fn load_raster_logo(
     let size = [logo.width() as usize, logo.height() as usize];
     let color = egui::ColorImage::from_rgba_unmultiplied(size, logo.as_raw());
     Some(ctx.load_texture(
-        id,
+        "splash-aa-logo",
         color,
         egui::TextureOptions {
-            magnification: filter,
-            minification: filter,
+            magnification: egui::TextureFilter::Linear,
+            minification: egui::TextureFilter::Linear,
             ..egui::TextureOptions::LINEAR
         },
     ))

@@ -28,6 +28,58 @@ Free, open-source MQTT explorer and monitor for builders and testers.
 - Publish with QoS and retain
 - Full keyboard shortcuts & navigation — F1 / `?` help, panel toggles, search focus, and more
 
+## TopicBench Pro
+
+Paid extras for teams that outgrow the free explorer — same app, unlock Pro when you need them.
+
+- **MCP server** — connect, subscribe, publish, and wait from Cursor / CI against live sessions
+- **Topic & payload simulation** — generators and formulas for whole payloads or JSON fields
+- **Record → simulate** — capture live traffic, then suggest Simulate rows from the tape
+- **Scenario player** — sequenced, timed multi-topic publish scripts
+- **Combined multi-topic graph** — shared time axis across Graph stickies
+- **History scrubber** — scrub per-topic history in the Payload panel
+- **Topic bookmarks** — jump list into deep trees
+- **Custom color rules** — paint tree rows by topic / payload predicates
+- **Topic tree export & import** — JSON hierarchy out, republish onto a target broker
+- **Webhooks** — on topic match, POST JSON to n8n / Slack / alert pipelines
+- **CSV / Parquet export** — time-series dumps for Excel and Pandas
+
+### Combined graphs
+
+Combined graphs let you overlay multiple channels on a single time-logged graph — useful for correlating data across topics and even across brokers.
+
+<p align="center">
+  <img src="docs/images/pro/combined-graph.png" alt="TopicBench Pro combined multi-topic graph" width="880">
+</p>
+
+### Simulation
+
+Simulation publishes scripted MQTT data into your live sessions. You can also auto-create simulations from recorded sessions to replicate datasets with a best-guess prediction of the observed series.
+
+<p align="center">
+  <img src="docs/images/pro/simulation.png" alt="TopicBench Pro Simulation panel" width="880">
+</p>
+
+### Color rules
+
+Color rules highlight topics in the tree based on payload matches, topic matches, and individual values within payloads.
+
+<p align="center">
+  <img src="docs/images/pro/color-rules.png" alt="TopicBench Pro color rules" width="880">
+</p>
+
+### Bookmarks
+
+Bookmarks jump you anywhere in a tree and auto-expand that topic for immediate access.
+
+<p align="center">
+  <img src="docs/images/pro/bookmarks.png" alt="TopicBench Pro bookmarks" width="880">
+</p>
+
+<p align="center">
+  <a href="https://www.agileautomation.ca/products/topic-bench"><strong style="font-size: 1.5em">Learn about TopicBench Pro →</strong></a>
+</p>
+
 ## Download
 
 **[v1.0.0](https://github.com/unipsycho/topicbench/releases/tag/v1.0.0)** — Linux (`topicbench-linux-x64`) and Windows (`topicbench-windows-x64.exe`), plus `SHA256SUMS`.

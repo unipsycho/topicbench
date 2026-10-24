@@ -146,6 +146,15 @@ pub struct AppSettings {
     /// Simulation panel floats as a window when true; docked in the middle column when false.
     #[serde(default = "default_true")]
     pub simulation_floating: bool,
+    /// Pro Bookmarks OS window open/closed.
+    #[serde(default)]
+    pub show_bookmarks: bool,
+    /// Pro Color Rules OS window open/closed.
+    #[serde(default)]
+    pub show_color_rules: bool,
+    /// Live traffic panel scroll height (px); user-resizable.
+    #[serde(default = "default_live_traffic_height")]
+    pub live_traffic_height: f32,
     /// Search bar text (supports `|` OR terms) — restored on reload.
     #[serde(default)]
     pub search_query: String,
@@ -182,6 +191,10 @@ fn default_combined_graph_height() -> f32 {
     120.0
 }
 
+fn default_live_traffic_height() -> f32 {
+    160.0
+}
+
 /// Combined graph plot height range (drag-resize).
 pub const COMBINED_GRAPH_H_MIN: f32 = 80.0;
 pub const COMBINED_GRAPH_H_MAX: f32 = 480.0;
@@ -206,6 +219,9 @@ impl Default for AppSettings {
             show_topic_tree: true,
             show_simulation: false,
             simulation_floating: true,
+            show_bookmarks: false,
+            show_color_rules: false,
+            live_traffic_height: default_live_traffic_height(),
             search_query: String::new(),
             search_scope: SearchScope::All,
             search_apply_to_stickies: true,
@@ -338,6 +354,12 @@ impl AppSettings {
     pub fn set_simulation_panel(&mut self, open: bool, floating: bool) {
         self.show_simulation = open;
         self.simulation_floating = floating;
+    }
+
+    /// Persist Bookmarks / Color Rules window open flags.
+    pub fn set_pro_windows(&mut self, bookmarks: bool, color_rules: bool) {
+        self.show_bookmarks = bookmarks;
+        self.show_color_rules = color_rules;
     }
 
     /// Snapshot search bar query + scope + stickies apply (call before save).

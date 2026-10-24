@@ -331,13 +331,12 @@ fn draw_broker_block(
                         recordings.max_secs / 60
                     )
                 };
-                if icons
-                    .tiny(ui, "event_log", recording, &tip)
-                    .clicked()
-                {
+                let rec_icon = if recording { "record_red" } else { "record" };
+                if icons.tiny(ui, rec_icon, recording, &tip).clicked() {
                     if recording {
-                        let name =
-                            crate::pro::recording::RecordingStore::default_filename(profile_id);
+                        let name = crate::pro::recording::RecordingStore::default_filename(
+                            profile_name.as_str(),
+                        );
                         if let Some(path) = rfd::FileDialog::new()
                             .set_title("Save recording CSV")
                             .set_file_name(&name)

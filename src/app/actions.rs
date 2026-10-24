@@ -32,6 +32,8 @@ impl MqttMonitorApp {
         );
         self.settings
             .set_simulation_panel(self.simulation_open, self.simulation_floating);
+        self.settings
+            .set_pro_windows(self.bookmarks_open, self.color_rules_open);
         let _ = self.settings.save();
     }
 
