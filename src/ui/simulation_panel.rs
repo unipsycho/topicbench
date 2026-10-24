@@ -358,7 +358,7 @@ fn body(
             }
             if toolbar_btn(ui, icons, "import", "Import", true)
                 .on_hover_text(
-                    "Import a bare JSON array of sims — Replace / Merge / Cancel",
+                    "Import sims JSON ([…] or {simulations:[…]}) — Replace / Merge / Cancel",
                 )
                 .clicked()
             {
@@ -377,7 +377,7 @@ fn body(
                             .set_description(
                                 "Replace the current list, or Merge (update matching \
                                  profile+topic+field rows and append the rest)?\n\
-                                 File must be a bare JSON array [ … ].",
+                                 Accepts bare [ … ] or { \"simulations\": [ … ] }.",
                             )
                             .set_buttons(rfd::MessageButtons::YesNoCancelCustom(
                                 "Replace".into(),
@@ -402,6 +402,16 @@ fn body(
                         }
                     };
                     if let Some(mode) = mode {
+                        let fail = |status: &mut String, msg: String| {
+                            *status = msg.clone();
+                            // Modal so parse/shape errors aren't a silent no-op.
+                            let _ = rfd::MessageDialog::new()
+                                .set_level(rfd::MessageLevel::Error)
+                                .set_title("Import failed")
+                                .set_description(&msg)
+                                .set_buttons(rfd::MessageButtons::Ok)
+                                .show();
+                        };
                         match std::fs::read_to_string(&path) {
                             Ok(raw) => match serde_json::from_str::<serde_json::Value>(&raw) {
                                 Ok(v) => match client.import_sims_mode(&v, mode) {
@@ -409,16 +419,16 @@ fn body(
                                         *status =
                                             format!("Imported {n} simulations ({mode})")
                                     }
-                                    Err(e) => *status = format!("Import failed: {e}"),
+                                    Err(e) => fail(status, format!("Import failed: {e}")),
                                 },
                                 Err(e) => {
-                                    *status = format!("Import failed: parse JSON: {e}")
+                                    fail(status, format!("Import failed: parse JSON: {e}"))
                                 }
                             },
-                            Err(e) => {
-                                *status =
-                                    format!("Import failed: read {}: {e}", path.display())
-                            }
+                            Err(e) => fail(
+                                status,
+                                format!("Import failed: read {}: {e}", path.display()),
+                            ),
                         }
                     }
                 }

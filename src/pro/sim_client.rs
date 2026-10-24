@@ -172,14 +172,15 @@ impl SimClientState {
         Ok(())
     }
 
-    /// Replace all sims. Body must be a bare JSON array of defs.
+    /// Replace all sims. Accepts bare `[…]` or `{simulations|sims:[…]}`.
     pub fn import_sims(&mut self, json: &Value) -> Result<usize, String> {
         self.import_sims_mode(json, "replace")
     }
 
-    /// Import with `replace` or `merge`. File/body must be a bare `[…]` array.
+    /// Import with `replace` or `merge`. Accepts bare or wrapped sims JSON.
     pub fn import_sims_mode(&mut self, json: &Value, mode: &str) -> Result<usize, String> {
-        let sims = require_bare_sim_array(json)?;
+        // Normalize to bare array for the wire (sidecar also accepts wrapped).
+        let sims = parse_simulations_array(json)?;
         let mode = if mode.eq_ignore_ascii_case("merge") {
             "merge"
         } else {
@@ -202,16 +203,13 @@ impl SimClientState {
         Ok(n)
     }
 
-    /// Current defs as a bare JSON array (same as Import file shape).
+    /// Current defs as a bare JSON array (Export file shape).
     pub fn export_sims(&mut self) -> Result<Value, String> {
         let v = self.http("GET", "/sim/export", None)?;
-        // Sidecar returns a bare array; tolerate a mistaken wrapper once.
-        if v.is_array() {
-            Ok(v)
-        } else if let Some(a) = v.get("simulations") {
-            Ok(a.clone())
-        } else {
-            Err("export response was not a JSON array".into())
+        // Sidecar returns a bare array; tolerate a wrapper if present.
+        match parse_simulations_array(&v) {
+            Ok(arr) => Ok(Value::Array(arr.to_vec())),
+            Err(_) => Err("export response was not a JSON array".into()),
         }
     }
 
@@ -349,20 +347,24 @@ impl SimClientState {
     }
 }
 
-/// Import/export file shape: bare JSON array of sim defs only.
-pub fn require_bare_sim_array(json: &Value) -> Result<&Vec<Value>, String> {
+/// Import/load shape: bare `[…]` or wrapped `{ "simulations"|"sims": […] }`.
+pub fn parse_simulations_array(json: &Value) -> Result<&[Value], String> {
     if let Some(arr) = json.as_array() {
-        return Ok(arr);
+        return Ok(arr.as_slice());
     }
-    if json.as_object().is_some() {
+    if let Some(obj) = json.as_object() {
+        for key in ["simulations", "sims"] {
+            if let Some(arr) = obj.get(key).and_then(|x| x.as_array()) {
+                return Ok(arr.as_slice());
+            }
+        }
         return Err(
-            "import JSON must be a bare array [ … ] — \
-             wrapped { \"simulations\": […] } is not supported"
+            "import JSON must be a bare array [ … ] or { \"simulations\": [ … ] }"
                 .into(),
         );
     }
     Err(format!(
-        "import JSON must be a bare array [ … ] — found {}",
+        "import JSON must be a bare array [ … ] or {{ \"simulations\": [ … ] }} — found {}",
         match json {
             Value::Null => "null",
             Value::Bool(_) => "bool",
@@ -372,6 +374,35 @@ pub fn require_bare_sim_array(json: &Value) -> Result<&Vec<Value>, String> {
             Value::Object(_) => "object",
         }
     ))
+}
+
+#[cfg(test)]
+mod parse_simulations_tests {
+    use super::parse_simulations_array;
+    use serde_json::json;
+
+    #[test]
+    fn accepts_bare_and_wrapped() {
+        assert_eq!(
+            parse_simulations_array(&json!([{ "id": "a" }]))
+                .unwrap()
+                .len(),
+            1
+        );
+        assert_eq!(
+            parse_simulations_array(&json!({ "simulations": [{ "id": "a" }, { "id": "b" }] }))
+                .unwrap()
+                .len(),
+            2
+        );
+        assert_eq!(
+            parse_simulations_array(&json!({ "sims": [{ "id": "a" }] }))
+                .unwrap()
+                .len(),
+            1
+        );
+        assert!(parse_simulations_array(&json!({ "other": [] })).is_err());
+    }
 }
 
 fn token_path() -> PathBuf {
