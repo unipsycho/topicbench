@@ -17,7 +17,7 @@ pub struct TrafficViewState {
 
 pub fn draw(
     ui: &mut egui::Ui,
-    sessions: &SessionManager,
+    sessions: &mut SessionManager,
     target_session_id: &Option<String>,
     filter: &SearchFilter,
     icons: &IconSet,
@@ -33,24 +33,24 @@ pub fn draw(
             if icons
                 .tiny_header(
                     ui,
-                    "refresh",
+                    "playback",
                     false,
-                    "Reset — clear the list and resume live traffic",
+                    "Reset — clear traffic and start the list empty",
                 )
                 .clicked()
             {
                 view.paused = false;
                 view.frozen.clear();
+                if let Some(id) = target_session_id.as_ref() {
+                    if let Some(session) = sessions.open.get_mut(id) {
+                        session.traffic.clear();
+                    }
+                }
                 *status = "Live traffic reset".into();
             }
             if view.paused {
                 if icons
-                    .tiny_header(
-                        ui,
-                        "play",
-                        false,
-                        "Play — resume live traffic (scroll & copy stay enabled while paused)",
-                    )
+                    .tiny_header(ui, "play", false, "Play — resume live traffic")
                     .clicked()
                 {
                     view.paused = false;
