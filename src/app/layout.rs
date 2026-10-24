@@ -228,7 +228,7 @@ impl MqttMonitorApp {
 
             ui.add_space(PRO_GAP);
 
-            // Marks = Bookmarks jump list (short ribbon label; tooltip keeps full name).
+            // Bookmarks jump list — two-line caption under icon (width near Simulation).
             let bm_ok = crate::pro::has(crate::pro::Entitlement::TopicBookmarks);
             let bm_tip = if bm_ok {
                 shortcuts::tip("Bookmarks", "Ctrl+Shift+J")
@@ -237,7 +237,13 @@ impl MqttMonitorApp {
             };
             let bm_click = if mode == SectionMode::Full {
                 self.icons
-                    .command(ui, "message_history", "Marks", self.bookmarks_open, &bm_tip)
+                    .command(
+                        ui,
+                        "message_history",
+                        "Book-\nmarks",
+                        self.bookmarks_open,
+                        &bm_tip,
+                    )
                     .clicked()
             } else {
                 self.icons
@@ -250,7 +256,7 @@ impl MqttMonitorApp {
 
             ui.add_space(PRO_GAP);
 
-            // Colors = Color rules editor (short ribbon label; tooltip keeps full name).
+            // Color rules editor — two-line caption under icon.
             let cr_ok = crate::pro::has(crate::pro::Entitlement::ColorRules);
             let cr_tip = if cr_ok {
                 "Color rules".to_string()
@@ -259,7 +265,13 @@ impl MqttMonitorApp {
             };
             let cr_click = if mode == SectionMode::Full {
                 self.icons
-                    .command(ui, "alerts", "Colors", self.color_rules_open, &cr_tip)
+                    .command(
+                        ui,
+                        "alerts",
+                        "Color\nrules",
+                        self.color_rules_open,
+                        &cr_tip,
+                    )
                     .clicked()
             } else {
                 self.icons
