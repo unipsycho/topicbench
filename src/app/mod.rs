@@ -323,6 +323,13 @@ impl eframe::App for MqttMonitorApp {
                 &mut self.status,
             );
         }
+        // Keep /sim warm for the status strip even when Simulation is closed.
+        if crate::pro::has(crate::pro::Entitlement::Simulation) {
+            self.sim_client.poll_if_due(false);
+            if self.sim_client.status_strip_label().is_some() {
+                ctx.request_repaint_after(std::time::Duration::from_millis(750));
+            }
+        }
         // Stats ribbon labels: rebuild frozen snapshot at most once per second.
         let _ = self.sessions.traffic_stats.refresh_display_if_due();
 
