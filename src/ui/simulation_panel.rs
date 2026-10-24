@@ -9,7 +9,7 @@ use crate::pro::sim_client::{self, SimClientState, SimRow};
 use crate::ui::icons::{
     self, IconSet, CHROME_BG, CHROME_CAPTION, CHROME_MUTED, CHROME_TEXT, TINY_ICON,
 };
-use eframe::egui::{self, Color32, RichText, Vec2};
+use eframe::egui::{self, Color32, RichText, Vec2, ViewportBuilder, ViewportClass};
 use serde_json::{json, Value};
 
 /// Wire ids ordered by display label (Bool Toggle … Random, Random Walk …).
@@ -45,8 +45,8 @@ const COL_VALUE: f32 = 92.0;
 const COL_GEN: f32 = 118.0;
 const COL_SETTINGS: f32 = 400.0;
 
-/// Floating Simulation window only (`floating == true`). Docked UI paints in the
-/// central column via [`draw_docked`].
+/// Floating Simulation as a real OS viewport (`floating == true`).
+/// Docked UI paints in the central column via [`draw_docked`].
 pub fn draw(
     ctx: &egui::Context,
     open: &mut bool,
@@ -68,22 +68,52 @@ pub fn draw(
         ctx.request_repaint_after(std::time::Duration::from_millis(500));
     }
 
-    // Single chrome: inner header only (title + pill + dock + close).
-    // Hide outer egui title bar so there is no second “Simulation”, close, or collapse ▾.
-    egui::Window::new("Simulation")
-        .id(egui::Id::new("topicbench_simulation_win"))
-        .title_bar(false)
-        .collapsible(false)
-        .default_size([1100.0, 360.0])
-        .min_width(900.0)
-        .min_height(220.0)
-        .frame(egui::Frame::window(&ctx.style()).fill(CHROME_BG))
-        .show(ctx, |ui| {
-            header_bar(ui, icons, floating, open, client);
-            ui.separator();
-            // Window owns both axes — sheet scrolls inside.
-            body(ui, licensed, client, sessions, profiles, icons, status, true);
-        });
+    let mut close = false;
+    // OS window (Payload undock pattern) — draggable outside the main TopicBench frame.
+    ctx.show_viewport_immediate(
+        egui::ViewportId::from_hash_of("topicbench_simulation_vp"),
+        ViewportBuilder::default()
+            .with_title("Simulation")
+            .with_inner_size([1100.0, 360.0])
+            .with_min_inner_size([900.0, 220.0]),
+        |ctx, class| {
+            let mut paint = |ui: &mut egui::Ui| {
+                header_bar(ui, icons, floating, open, client);
+                ui.separator();
+                // Viewport owns both axes — sheet scrolls inside.
+                body(ui, licensed, client, sessions, profiles, icons, status, true);
+            };
+            match class {
+                ViewportClass::Embedded => {
+                    // Backend cannot spawn real windows — fall back to egui Window.
+                    egui::Window::new("Simulation")
+                        .id(egui::Id::new("topicbench_simulation_win"))
+                        .title_bar(false)
+                        .collapsible(false)
+                        .default_size([1100.0, 360.0])
+                        .min_width(900.0)
+                        .min_height(220.0)
+                        .frame(egui::Frame::window(&ctx.style()).fill(CHROME_BG))
+                        .show(ctx, |ui| paint(ui));
+                }
+                _ => {
+                    egui::CentralPanel::default()
+                        .frame(
+                            egui::Frame::central_panel(&ctx.style())
+                                .fill(CHROME_BG)
+                                .inner_margin(egui::Margin::same(8)),
+                        )
+                        .show(ctx, |ui| paint(ui));
+                }
+            }
+            if ctx.input(|i| i.viewport().close_requested()) {
+                close = true;
+            }
+        },
+    );
+    if close {
+        *open = false;
+    }
 }
 
 /// Docked Simulation section for the main middle column (same target as stickies / topic tree).
