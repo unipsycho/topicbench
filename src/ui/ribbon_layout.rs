@@ -62,7 +62,7 @@ pub fn plan_width(logo_w: f32, title_w: f32, stats_w: f32, plan: RibbonPlan, zoo
     let mut w = brand_w(logo_w, title_w, plan.show_title) + sep;
     w += section_w(plan.profiles, 4, zoom) + sep;
     w += section_w(plan.panels, 5, zoom) + sep;
-    w += section_w(plan.pro, 1, zoom) + sep;
+    w += section_w(plan.pro, 3, zoom) + sep;
     // App is Settings only. Zoom +/− is reserved outside this plan (absolute right).
     w += section_w(plan.app, 1, zoom);
     if plan.show_stats {
