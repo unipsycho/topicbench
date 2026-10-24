@@ -170,7 +170,24 @@ impl IconSet {
             ui.painter().rect_filled(rect, 3.0, CHROME_HOVER);
         }
 
-        let icon_center = egui::pos2(rect.center().x, rect.top() + 22.0);
+        // Caption with a few px clearance above the cell bottom (avoids section chrome collision).
+        // `\n` → two-line captions (e.g. Book- / marks, Color / rules) under the same icon.
+        let caption = if !enabled {
+            Color32::from_rgb(100, 104, 112)
+        } else if selected {
+            Color32::from_rgb(180, 210, 255)
+        } else {
+            CHROME_TEXT
+        };
+        let font = FontId::proportional(zoomed_font_size(ui, 11.0));
+        let lines: Vec<&str> = label.lines().filter(|l| !l.is_empty()).collect();
+        // Two-line captions need a slightly higher icon so text doesn't collide.
+        let icon_y = if lines.len() > 1 {
+            rect.top() + 18.0
+        } else {
+            rect.top() + 22.0
+        };
+        let icon_center = egui::pos2(rect.center().x, icon_y);
         if let Some(tex) = self.get(name) {
             // Exact square cell — no stretch; texture already pre-scaled to 2×.
             let mut img = egui::Image::new(tex)
@@ -183,21 +200,30 @@ impl IconSet {
             img.paint_at(ui, img_rect);
         }
 
-        // Caption with a few px clearance above the cell bottom (avoids section chrome collision).
-        let caption = if !enabled {
-            Color32::from_rgb(100, 104, 112)
-        } else if selected {
-            Color32::from_rgb(180, 210, 255)
+        if lines.len() <= 1 {
+            ui.painter().text(
+                egui::pos2(rect.center().x, rect.bottom() - 10.0),
+                egui::Align2::CENTER_CENTER,
+                lines.first().copied().unwrap_or(label),
+                font,
+                caption,
+            );
         } else {
-            CHROME_TEXT
-        };
-        ui.painter().text(
-            egui::pos2(rect.center().x, rect.bottom() - 10.0),
-            egui::Align2::CENTER_CENTER,
-            label,
-            FontId::proportional(zoomed_font_size(ui, 11.0)),
-            caption,
-        );
+            let line_step = zoomed_font_size(ui, 11.0) + 1.0;
+            // Stack upward from near the cell bottom so multi-line captions stay clear of the icon.
+            let base_y = rect.bottom() - 6.0;
+            let n = lines.len();
+            for (i, line) in lines.iter().enumerate() {
+                let y = base_y - ((n - 1 - i) as f32) * line_step;
+                ui.painter().text(
+                    egui::pos2(rect.center().x, y),
+                    egui::Align2::CENTER_CENTER,
+                    *line,
+                    font.clone(),
+                    caption,
+                );
+            }
+        }
         response
     }
 
