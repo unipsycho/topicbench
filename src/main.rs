@@ -52,9 +52,9 @@ fn main() -> eframe::Result<()> {
     )
 }
 
-/// Window/taskbar icon from the broker_server mark (same art as Windows .ico).
+/// Window/taskbar icon — TB monogram (same art as Windows PE app.ico).
 fn load_window_icon() -> Option<IconData> {
-    let bytes = include_bytes!("../assets/icons/broker_server.png");
+    let bytes = include_bytes!("../assets/icons/topicbench-app-icon-256.png");
     let img = image::load_from_memory(bytes).ok()?.into_rgba8();
     let (width, height) = img.dimensions();
     Some(IconData {
