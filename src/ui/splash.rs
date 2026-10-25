@@ -4,7 +4,9 @@
 //! Subtle −15% scale over the whole logo life. Click / Space / Esc skips.
 
 use crate::ui::icons::CHROME_BG;
-use eframe::egui::{self, Color32, Pos2, Rect, Sense, TextureHandle, ViewportCommand};
+use eframe::egui::{self, Color32, Pos2, Rect, Sense, TextureHandle};
+#[cfg(not(windows))]
+use eframe::egui::ViewportCommand;
 use std::time::Instant;
 
 const LOGO_IN: f32 = 0.50;
@@ -65,9 +67,14 @@ impl SplashIntro {
 
     /// Restore normal window chrome (title bar, opaque). Call once when splash ends.
     pub fn handoff_viewport(ctx: &egui::Context) {
-        ctx.send_viewport_cmd(ViewportCommand::Decorations(true));
-        ctx.send_viewport_cmd(ViewportCommand::Transparent(false));
-        // Opaque panel fills again (splash left them transparent).
+        // Windows already starts decorated/opaque (see main.rs) — flipping decorations
+        // after create is what produces the black top strip + click Y-offset there.
+        #[cfg(not(windows))]
+        {
+            ctx.send_viewport_cmd(ViewportCommand::Decorations(true));
+            ctx.send_viewport_cmd(ViewportCommand::Transparent(false));
+        }
+        // Opaque panel fills again (splash left them transparent on glass platforms).
         ctx.style_mut(|s| {
             s.visuals.panel_fill = CHROME_BG;
             s.visuals.window_fill = CHROME_BG;
