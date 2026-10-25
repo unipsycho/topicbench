@@ -198,27 +198,13 @@ impl MqttMonitorApp {
         });
     }
 
-    /// Pro ribbon group: Simulation + Bookmarks + Color Rules (locked when unlicensed).
+    /// Pro ribbon group: Simulate + Bookmarks + Color Rules.
+    /// Caller must only invoke when [`crate::pro::is_licensed`] — never draw an empty/locked strip.
     fn draw_ribbon_pro(&mut self, ui: &mut egui::Ui, mode: SectionMode) {
         icons::ribbon_group(ui, "Pro", TINT_PRO, |ui| {
-            let sim_ok = crate::pro::has(crate::pro::Entitlement::Simulation);
-            let tip = if sim_ok {
-                "Open Simulation panel (topic / payload generators)".to_string()
-            } else {
-                "Simulation — requires TopicBench Pro".to_string()
-            };
-            let bm_ok = crate::pro::has(crate::pro::Entitlement::TopicBookmarks);
-            let bm_tip = if bm_ok {
-                shortcuts::tip("Bookmarks", "Ctrl+Shift+J")
-            } else {
-                "Bookmarks — requires TopicBench Pro".into()
-            };
-            let cr_ok = crate::pro::has(crate::pro::Entitlement::ColorRules);
-            let cr_tip = if cr_ok {
-                "Color Rules".to_string()
-            } else {
-                "Color Rules — requires TopicBench Pro".to_string()
-            };
+            let tip = "Open Simulation panel (topic / payload generators)".to_string();
+            let bm_tip = shortcuts::tip("Bookmarks", "Ctrl+Shift+J");
+            let cr_tip = "Color Rules".to_string();
             let names = ["data_table", "bookmarks", "color_rules"];
             let labels = ["Simulate", "Book-\nmarks", "Color\nRules"];
             let tips = [tip.as_str(), bm_tip.as_str(), cr_tip.as_str()];
@@ -247,15 +233,15 @@ impl MqttMonitorApp {
             if clicks[0] {
                 self.simulation_open = !self.simulation_open;
                 self.persist_panels();
-                if self.simulation_open && sim_ok {
+                if self.simulation_open {
                     self.sim_client.poll_if_due(true);
                 }
             }
-            if clicks[1] && bm_ok {
+            if clicks[1] {
                 self.bookmarks_open = !self.bookmarks_open;
                 self.persist_panels();
             }
-            if clicks[2] && cr_ok {
+            if clicks[2] {
                 self.color_rules_open = !self.color_rules_open;
                 self.persist_panels();
             }
@@ -423,12 +409,15 @@ impl MqttMonitorApp {
         let title_w = 0.0_f32;
 
         // Collapse plan uses left budget only (zoom strip already reserved).
+        // Pro group is omitted entirely when unlicensed (no locked/empty strip).
+        let show_pro = crate::pro::is_licensed();
         let plan = ribbon_layout::plan_for_width(
             left_rect.width(),
             logo_w,
             title_w,
             stats_ribbon::estimate_width(),
             icons::font_zoom_factor(ui),
+            show_pro,
         );
 
         const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -488,8 +477,10 @@ impl MqttMonitorApp {
                 self.draw_ribbon_profiles(ui, plan.profiles);
                 icons::ribbon_separator(ui);
                 self.draw_ribbon_panels(ui, plan.panels);
-                icons::ribbon_separator(ui);
-                self.draw_ribbon_pro(ui, plan.pro);
+                if show_pro {
+                    icons::ribbon_separator(ui);
+                    self.draw_ribbon_pro(ui, plan.pro);
+                }
                 icons::ribbon_separator(ui);
                 self.draw_ribbon_app(ui, ctx, plan.app);
 
