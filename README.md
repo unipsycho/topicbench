@@ -12,10 +12,12 @@ Latest free release: **[v1.1.0](https://github.com/unipsycho/topicbench/releases
 
 | | |
 |:--|:--|
-| **Windows** (x64) | [topicbench-windows-x64.exe](https://github.com/unipsycho/topicbench/releases/download/v1.1.0/topicbench-windows-x64.exe) |
-| **Linux** (x64) | [topicbench-linux-x64](https://github.com/unipsycho/topicbench/releases/download/v1.1.0/topicbench-linux-x64) |
-| **Linux AppImage** (x64) | [TopicBench-x86_64.AppImage](https://github.com/unipsycho/topicbench/releases/download/v1.1.0/TopicBench-x86_64.AppImage) |
+| **Windows** portable (x64) | [TopicBench-windows-x64-portable.zip](https://github.com/unipsycho/topicbench/releases/download/v1.1.0/TopicBench-windows-x64-portable.zip) |
+| **Linux** AppImage (x64) | [TopicBench-x86_64.AppImage](https://github.com/unipsycho/topicbench/releases/download/v1.1.0/TopicBench-x86_64.AppImage) |
+| **Linux** binary (x64) | [topicbench-linux-x64](https://github.com/unipsycho/topicbench/releases/download/v1.1.0/topicbench-linux-x64) |
 | SHA-256 checksums | [SHA256SUMS](https://github.com/unipsycho/topicbench/releases/download/v1.1.0/SHA256SUMS) |
+
+Windows: unzip and run `TopicBench.exe`. The Release also keeps `topicbench-windows-x64.exe` for in-app updates.
 
 [All releases](https://github.com/unipsycho/topicbench/releases) · [Source on GitHub](https://github.com/unipsycho/topicbench)
 
