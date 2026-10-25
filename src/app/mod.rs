@@ -250,10 +250,18 @@ impl MqttMonitorApp {
 }
 
 impl eframe::App for MqttMonitorApp {
-    /// Transparent during splash so the AA logo can float; opaque chrome after.
+    /// Transparent during splash so the AA logo can float (Linux); opaque chrome after.
+    /// Windows splash runs in a decorated opaque window — never clear to glass.
     fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
         if self.splash.is_some() {
-            [0.0, 0.0, 0.0, 0.0]
+            #[cfg(windows)]
+            {
+                CHROME_BG.to_normalized_gamma_f32()
+            }
+            #[cfg(not(windows))]
+            {
+                [0.0, 0.0, 0.0, 0.0]
+            }
         } else {
             CHROME_BG.to_normalized_gamma_f32()
         }
