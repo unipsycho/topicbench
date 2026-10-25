@@ -14,14 +14,22 @@ use ui::icons::{CHROME_BG, STATUS_BG};
 
 fn main() -> eframe::Result<()> {
     let icon = load_window_icon();
+    // Linux: undecorated + transparent for the floating AA splash, then hand off to OS chrome.
+    // Windows: start decorated/opaque — winit undecorated + later Decorations(true) leaves a
+    // caption-height black strip and Y-offsets hit tests (WS_CAPTION client inset mismatch).
     let mut viewport = egui::ViewportBuilder::default()
         .with_inner_size([1200.0, 760.0])
         .with_title("TopicBench")
         // Wayland app_id — keep stable so Hyprland rules keep matching.
-        .with_app_id("com.agileautomation.mqtt-master")
-        // Splash starts as a floating AA logo; decorations + opacity restored when it ends.
-        .with_transparent(true)
-        .with_decorations(false);
+        .with_app_id("com.agileautomation.mqtt-master");
+    #[cfg(windows)]
+    {
+        viewport = viewport.with_decorations(true).with_transparent(false);
+    }
+    #[cfg(not(windows))]
+    {
+        viewport = viewport.with_transparent(true).with_decorations(false);
+    }
     if let Some(icon) = icon {
         viewport = viewport.with_icon(icon);
     }
