@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <rect width="512" height="512" fill="#12141A"/>
+  <!-- nodes behind -->
+  <g stroke="#397BCE" stroke-width="18" stroke-linecap="round">
+    <line x1="400" y1="143" x2="461" y2="72"/>
+    <line x1="440" y1="246" x2="481" y2="205"/>
+    <line x1="113" y1="369" x2="51" y2="440"/>
+    <line x1="92" y1="205" x2="41" y2="143"/>
+  </g>
+  <circle cx="461" cy="72" r="22" fill="#348DF0"/>
+  <circle cx="481" cy="205" r="18" fill="#397BCE"/>
+  <circle cx="51" cy="440" r="20" fill="#348DF0"/>
+  <circle cx="41" cy="143" r="18" fill="#397BCE"/>
+  <!-- T -->
+  <rect x="51" y="82" width="246" height="82" fill="#397BCE"/>
+  <rect x="143" y="82" width="72" height="348" fill="#397BCE"/>
+  <!-- B -->
+  <rect x="235" y="82" width="62" height="348" fill="#4BD03C"/>
+  <ellipse cx="348" cy="174" rx="92" ry="92" fill="#4BD03C"/>
+  <ellipse cx="358" cy="328" rx="102" ry="102" fill="#4BD03C"/>
+  <rect x="256" y="205" width="112" height="82" fill="#4BD03C"/>
+  <ellipse cx="343" cy="179" rx="46" ry="46" fill="#12141A"/>
+  <ellipse cx="353" cy="328" rx="56" ry="51" fill="#12141A"/>
+</svg>
