@@ -14,6 +14,7 @@ Latest free release: **[v1.1.0](https://github.com/unipsycho/topicbench/releases
 |:--|:--|
 | **Windows** (x64) | [topicbench-windows-x64.exe](https://github.com/unipsycho/topicbench/releases/download/v1.1.0/topicbench-windows-x64.exe) |
 | **Linux** (x64) | [topicbench-linux-x64](https://github.com/unipsycho/topicbench/releases/download/v1.1.0/topicbench-linux-x64) |
+| **Linux AppImage** (x64) | [TopicBench-x86_64.AppImage](https://github.com/unipsycho/topicbench/releases/download/v1.1.0/TopicBench-x86_64.AppImage) |
 | SHA-256 checksums | [SHA256SUMS](https://github.com/unipsycho/topicbench/releases/download/v1.1.0/SHA256SUMS) |
 
 [All releases](https://github.com/unipsycho/topicbench/releases) · [Source on GitHub](https://github.com/unipsycho/topicbench)
