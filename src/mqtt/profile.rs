@@ -119,6 +119,10 @@ pub struct ConnectionProfile {
     pub host: String,
     pub port: u16,
     pub client_id: String,
+    /// When true, each Connect uses a fresh UUID v4 as the MQTT client ID
+    /// (static [`Self::client_id`] is kept for when this option is off).
+    #[serde(default)]
+    pub unique_client_id: bool,
     #[serde(default)]
     pub username: String,
     /// In-memory only — never written to profiles.json (OS keyring).
@@ -186,6 +190,19 @@ impl ConnectionProfile {
         }
     }
 
+    /// Client ID for the MQTT CONNECT packet (fresh UUID when [`Self::unique_client_id`]).
+    ///
+    /// Regenerated on each user Connect (`live::spawn`), so multiple TopicBench
+    /// instances sharing a profile do not collide. rumqttc auto-reconnect within
+    /// one session keeps the same options (same UUID) until the user Disconnects.
+    pub fn connect_client_id(&self) -> String {
+        if self.unique_client_id {
+            uuid::Uuid::new_v4().to_string()
+        } else {
+            self.client_id.clone()
+        }
+    }
+
     pub fn new_blank(id: String) -> Self {
         Self {
             id: id.clone(),
@@ -193,6 +210,7 @@ impl ConnectionProfile {
             host: "127.0.0.1".into(),
             port: 1883,
             client_id: format!("topicbench-{id}"),
+            unique_client_id: false,
             username: String::new(),
             password: String::new(),
             transport: ProfileTransport::Mqtt,
@@ -212,6 +230,7 @@ impl ConnectionProfile {
             host: "127.0.0.1".into(),
             port: 1883,
             client_id: "topicbench".into(),
+            unique_client_id: false,
             username: String::new(),
             password: String::new(),
             transport: ProfileTransport::Mqtt,
@@ -231,6 +250,7 @@ impl ConnectionProfile {
             host: "broker.lab.local".into(),
             port: 1883,
             client_id: "topicbench-lab".into(),
+            unique_client_id: false,
             username: String::new(),
             password: String::new(),
             transport: ProfileTransport::Mqtt,
@@ -735,6 +755,22 @@ mod tests {
         let local_pos = text.find("\"id\": \"local\"").unwrap();
         assert!(lab_pos < local_pos);
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn legacy_profiles_default_unique_client_id_off() {
+        let json = r#"{"profiles":[{"id":"x","name":"X","host":"h","port":1883,"client_id":"c"}]}"#;
+        let file: ProfilesFile = serde_json::from_str(json).unwrap();
+        let p = &file.profiles[0];
+        assert!(!p.unique_client_id);
+        assert_eq!(p.connect_client_id(), "c");
+        let mut with_uuid = p.clone();
+        with_uuid.unique_client_id = true;
+        let a = with_uuid.connect_client_id();
+        let b = with_uuid.connect_client_id();
+        assert_ne!(a, b);
+        assert_eq!(a.len(), 36); // UUID v4 hyphenated
+        assert_eq!(with_uuid.client_id, "c"); // static field unchanged
     }
 
     #[test]
