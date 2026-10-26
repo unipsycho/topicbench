@@ -436,6 +436,22 @@ impl eframe::App for MqttMonitorApp {
         if block_tips {
             crate::ui::topic_tree_panel::dismiss_hover_tips(ctx);
         }
+        // Apply bookmark jump before any tree paint (expand + scroll_tree_to ready).
+        // Pending is often set late in the previous frame (Bookmarks UI / MCP).
+        if let Some(jump) = self.pending_bookmark_jump.take() {
+            crate::ui::bookmarks_panel::apply_jump(
+                ctx,
+                &self.sessions,
+                &mut self.pins,
+                &jump,
+                &mut self.scroll_tree_to,
+                &mut self.status,
+            );
+        }
+        // Keep painting while a scroll target is waiting for the row to appear.
+        if self.scroll_tree_to.is_some() {
+            ctx.request_repaint();
+        }
         // Reserve top chrome, paint central/sides, then ribbon/status on Middle overlays
         // so sticky/tree scroll cannot draw over the navbar (same pattern as side panels).
         let top_chrome = self.reserve_top_chrome(ctx);
