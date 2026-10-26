@@ -10,6 +10,16 @@
 //! On Windows, UDS is unavailable — `BridgeHandle::start` returns an error and
 //! the app continues without a local MCP bridge (HTTP sim/history clients still work).
 
+use crate::pro::bookmarks::{BookmarkJump, BookmarksStore};
+use crate::pro::color_rules::ColorRulesStore;
+
+/// Mutable Pro UI stores drained on the egui thread with SessionHub.
+pub struct BridgeProState<'a> {
+    pub bookmarks: &'a mut BookmarksStore,
+    pub color_rules: &'a mut ColorRulesStore,
+    pub pending_bookmark_jump: &'a mut Option<BookmarkJump>,
+}
+
 #[cfg(unix)]
 #[path = "bridge_unix.rs"]
 mod imp;
@@ -22,6 +32,7 @@ mod imp {
     use std::path::PathBuf;
 
     use crate::mqtt::paths;
+    use super::BridgeProState;
 
     /// Socket filename under the TopicBench config dir (path reserved for future).
     pub const BRIDGE_SOCK_NAME: &str = "bridge.sock";
@@ -65,6 +76,7 @@ mod imp {
             _max_packet_bytes: usize,
             _ctx: &Context,
             _status_out: &mut String,
+            _pro: &mut BridgeProState<'_>,
         ) {
         }
     }
