@@ -207,9 +207,12 @@ impl MqttMonitorApp {
     /// Caller must only invoke when [`crate::pro::is_licensed`] — never draw an empty/locked strip.
     fn draw_ribbon_pro(&mut self, ui: &mut egui::Ui, mode: SectionMode) {
         icons::ribbon_group(ui, "Pro", TINT_PRO, |ui| {
-            let tip = "Open Simulation panel (topic / payload generators)".to_string();
+            let tip = shortcuts::tip(
+                "Open Simulation panel (topic / payload generators)",
+                "Ctrl+Shift+M",
+            );
             let bm_tip = shortcuts::tip("Bookmarks", "Ctrl+Shift+J");
-            let cr_tip = "Color Rules".to_string();
+            let cr_tip = shortcuts::tip("Color Rules", "Ctrl+Shift+C");
             let names = ["data_table", "bookmarks", "color_rules"];
             let labels = ["Simulate", "Book-\nmarks", "Color\nRules"];
             let tips = [tip.as_str(), bm_tip.as_str(), cr_tip.as_str()];
