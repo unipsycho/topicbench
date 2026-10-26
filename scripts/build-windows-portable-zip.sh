@@ -37,8 +37,9 @@ install -m 644 "$WIN_EXE" "$STAGE/TopicBench.exe"
 cat > "$STAGE/README.txt" <<'EOF'
 TopicBench portable (Windows x64)
 
-Unzip this folder anywhere and run TopicBench.exe.
-No installer. Settings and profiles stay in your user data.
+Unzip this folder anywhere and run TopicBench.exe from that folder.
+No installer. Settings, profiles, and Pro license.json live in the
+topicbench subfolder next to this exe (same place as license-request.json).
 
 Checksums for this release: SHA256SUMS on the GitHub Release.
 EOF
