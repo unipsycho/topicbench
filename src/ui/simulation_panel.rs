@@ -46,6 +46,57 @@ const COL_GEN: f32 = 118.0;
 const COL_SETTINGS: f32 = 400.0;
 const COL_DELETE: f32 = 36.0;
 
+/// Match Simulate toolbar **Start** (resume CSV tape, else start_all).
+pub fn action_start(client: &mut SimClientState, status: &mut String) {
+    if client.playback.active {
+        match client.resume_playback() {
+            Ok(()) => *status = "Playback resumed".into(),
+            Err(e) => *status = e,
+        }
+    } else {
+        match client.start_all() {
+            Ok(()) => *status = "Started all simulations".into(),
+            Err(e) => *status = e,
+        }
+    }
+}
+
+/// Match Simulate toolbar **Stop** (pause → stop tape → stop_all).
+pub fn action_stop(client: &mut SimClientState, status: &mut String) {
+    let pb_active = client.playback.active;
+    let pb_paused = client.playback.paused;
+    if pb_active && !pb_paused {
+        match client.pause_playback() {
+            Ok(()) => *status = "Playback paused".into(),
+            Err(e) => *status = e,
+        }
+    } else if pb_active && pb_paused {
+        match client.stop_playback() {
+            Ok(()) => *status = "Playback stopped".into(),
+            Err(e) => *status = e,
+        }
+    } else {
+        match client.stop_all() {
+            Ok(()) => *status = "Stopped all simulations".into(),
+            Err(e) => *status = e,
+        }
+    }
+}
+
+/// Consume Ctrl+Shift+G / H on this context (main shell or Simulation viewport).
+pub fn consume_transport_keys(ctx: &egui::Context) -> Option<&'static str> {
+    let mut out = None;
+    ctx.input_mut(|i| {
+        let mods = egui::Modifiers::COMMAND | egui::Modifiers::SHIFT;
+        if i.consume_key(mods, egui::Key::G) {
+            out = Some("start");
+        } else if i.consume_key(mods, egui::Key::H) {
+            out = Some("stop");
+        }
+    });
+    out
+}
+
 /// Floating Simulation as a real OS viewport (`floating == true`).
 /// Docked UI paints in the central column via [`draw_docked`].
 pub fn draw(
@@ -78,6 +129,14 @@ pub fn draw(
             .with_inner_size([1100.0, 360.0])
             .with_min_inner_size([900.0, 220.0]),
         |ctx, class| {
+            // Same chords as global — viewport focus does not reach main handle_shortcuts.
+            if licensed {
+                match consume_transport_keys(ctx) {
+                    Some("start") => action_start(client, status),
+                    Some("stop") => action_stop(client, status),
+                    _ => {}
+                }
+            }
             let mut paint = |ui: &mut egui::Ui| {
                 header_bar(ui, icons, floating, open, client);
                 ui.separator();
@@ -317,59 +376,36 @@ fn body(
         let pb_paused = client.playback.paused;
         let play_tip = if pb_active {
             if pb_paused {
-                "Resume CSV playback"
+                crate::ui::shortcuts::tip("Resume CSV playback", "Ctrl+Shift+G")
             } else {
-                "Playback is already running"
+                crate::ui::shortcuts::tip("Playback is already running", "Ctrl+Shift+G")
             }
         } else {
-            "Start all simulations"
+            crate::ui::shortcuts::tip("Start all simulations", "Ctrl+Shift+G")
         };
         let pause_tip = if pb_active {
             if pb_paused {
-                "Playback is paused"
+                crate::ui::shortcuts::tip("Playback is paused — Stop again to end tape", "Ctrl+Shift+H")
             } else {
-                "Pause CSV playback"
+                crate::ui::shortcuts::tip("Pause CSV playback", "Ctrl+Shift+H")
             }
         } else {
-            "Stop all simulations (also cancels playback)"
+            crate::ui::shortcuts::tip(
+                "Stop all simulations (also cancels playback)",
+                "Ctrl+Shift+H",
+            )
         };
         if toolbar_btn(ui, icons, "play", "Start", true)
             .on_hover_text(play_tip)
             .clicked()
         {
-            if pb_active {
-                match client.resume_playback() {
-                    Ok(()) => *status = "Playback resumed".into(),
-                    Err(e) => *status = e,
-                }
-            } else {
-                match client.start_all() {
-                    Ok(()) => *status = "Started all simulations".into(),
-                    Err(e) => *status = e,
-                }
-            }
+            action_start(client, status);
         }
         if toolbar_btn(ui, icons, "pause", "Stop", true)
             .on_hover_text(pause_tip)
             .clicked()
         {
-            if pb_active && !pb_paused {
-                match client.pause_playback() {
-                    Ok(()) => *status = "Playback paused".into(),
-                    Err(e) => *status = e,
-                }
-            } else if pb_active && pb_paused {
-                // Second Stop while paused ends the tape.
-                match client.stop_playback() {
-                    Ok(()) => *status = "Playback stopped".into(),
-                    Err(e) => *status = e,
-                }
-            } else {
-                match client.stop_all() {
-                    Ok(()) => *status = "Stopped all simulations".into(),
-                    Err(e) => *status = e,
-                }
-            }
+            action_stop(client, status);
         }
         if pb_active {
             let mut loop_on = client.playback.loop_on;
