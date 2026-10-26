@@ -85,6 +85,21 @@ impl std::fmt::Display for LicenseError {
     }
 }
 
+impl LicenseError {
+    /// Customer-facing reason (no DEV / key / mint hints).
+    pub fn customer_reason(&self) -> &'static str {
+        match self {
+            Self::Io(_) => "could not read file",
+            Self::Json(_) => "bad JSON",
+            Self::Version => "unsupported license version",
+            Self::Signature | Self::BadKey => "bad signature",
+            Self::Expired => "license expired",
+            Self::NotLicensed => "payload does not grant Pro",
+            Self::MachineMismatch => "machine_id mismatch",
+        }
+    }
+}
+
 /// Verify bytes of a license file against the embedded public key.
 pub fn verify_license_bytes(bytes: &[u8]) -> Result<LicensePayload, LicenseError> {
     verify_license_bytes_with_key(bytes, &LICENSE_VERIFY_KEY)

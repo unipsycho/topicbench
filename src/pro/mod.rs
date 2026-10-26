@@ -193,15 +193,33 @@ fn try_dev_unlock() -> bool {
 
 fn try_load_signed_license() -> bool {
     // Portable Windows: cwd .\topicbench\ first; then USERPROFILE\.config\topicbench.
+    let mut tried = Vec::new();
     for dir in paths::license_search_dirs() {
         for name in [LICENSE_FILE_NAME, LICENSE_FILE_ALT] {
             let path = dir.join(name);
+            tried.push(path.clone());
             match load_license_path(&path) {
                 Ok(Some(_)) => return true,
                 Ok(None) => continue,
-                Err(_) => continue,
+                Err(e) => {
+                    // Found but invalid — never collapse into silent "missing".
+                    eprintln!(
+                        "topicbench: Pro license invalid ({}) — {}",
+                        e.customer_reason(),
+                        paths::abs_display(&path)
+                    );
+                    return false;
+                }
             }
         }
+    }
+    if env_truthy("TOPICBENCH_PRO_DEBUG") {
+        let list = tried
+            .iter()
+            .map(|p| paths::abs_display(p))
+            .collect::<Vec<_>>()
+            .join(", ");
+        eprintln!("topicbench: Pro license not found — looked for: {list}");
     }
     false
 }
