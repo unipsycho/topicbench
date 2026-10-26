@@ -79,7 +79,7 @@ pub fn draw(
         icons::section_icon(ui, icons, "configuration_sliders");
         icons::section_title(ui, "Settings");
     });
-    ui.label("Persisted under ~/.config/topicbench/settings.json");
+    ui.label("Persisted under ~/.config/topicbench/settings.json (Windows portable: .\\topicbench\\)");
 
     // Accent bar under title + persist line.
     ui.add_space(6.0);
