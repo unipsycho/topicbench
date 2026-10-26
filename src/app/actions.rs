@@ -192,8 +192,28 @@ impl MqttMonitorApp {
                 ShortcutAction::OpenBookmarks => {
                     if crate::pro::has(crate::pro::Entitlement::TopicBookmarks) {
                         self.bookmarks_open = !self.bookmarks_open;
+                        self.persist_panels();
                     } else {
                         self.status = "Bookmarks require TopicBench Pro".into();
+                    }
+                }
+                ShortcutAction::ToggleSimulation => {
+                    if crate::pro::has(crate::pro::Entitlement::Simulation) {
+                        self.simulation_open = !self.simulation_open;
+                        self.persist_panels();
+                        if self.simulation_open {
+                            self.sim_client.poll_if_due(true);
+                        }
+                    } else {
+                        self.status = "Simulate requires TopicBench Pro".into();
+                    }
+                }
+                ShortcutAction::ToggleColorRules => {
+                    if crate::pro::has(crate::pro::Entitlement::ColorRules) {
+                        self.color_rules_open = !self.color_rules_open;
+                        self.persist_panels();
+                    } else {
+                        self.status = "Color Rules require TopicBench Pro".into();
                     }
                 }
             }
