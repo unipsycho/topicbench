@@ -20,6 +20,14 @@ pub struct Bookmark {
     pub order: u32,
 }
 
+/// Pending tree jump (UI panel or MCP `bookmark_jump`).
+#[derive(Clone, Debug)]
+pub struct BookmarkJump {
+    pub profile_id: String,
+    pub topic: String,
+    pub expand_subtree: bool,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct FileShape {
     version: u32,
@@ -90,8 +98,13 @@ impl BookmarksStore {
     /// Load bookmarks.json shape from `src`. `mode`: `"replace"` or `"merge"`.
     pub fn import_from(&mut self, src: &std::path::Path, mode: &str) -> Result<usize, String> {
         let text = fs::read_to_string(src).map_err(|e| e.to_string())?;
+        self.import_json(&text, mode)
+    }
+
+    /// Import from bookmarks.json text (MCP / bridge). `mode`: `"replace"` or `"merge"`.
+    pub fn import_json(&mut self, text: &str, mode: &str) -> Result<usize, String> {
         let file: FileShape =
-            serde_json::from_str(&text).map_err(|e| format!("parse bookmarks JSON: {e}"))?;
+            serde_json::from_str(text).map_err(|e| format!("parse bookmarks JSON: {e}"))?;
         let incoming = file.bookmarks;
         let n = incoming.len();
         match mode {
@@ -118,6 +131,19 @@ impl BookmarksStore {
         self.items.sort_by_key(|b| b.order);
         self.save()?;
         Ok(n)
+    }
+
+    /// Export current store as bookmarks.json Value (version + bookmarks).
+    pub fn export_json(&self) -> Result<serde_json::Value, String> {
+        let mut bookmarks = self.items.clone();
+        for (i, b) in bookmarks.iter_mut().enumerate() {
+            b.order = i as u32;
+        }
+        serde_json::to_value(FileShape {
+            version: 1,
+            bookmarks,
+        })
+        .map_err(|e| e.to_string())
     }
 
     pub fn is_bookmarked(&self, profile_id: &str, topic: &str) -> bool {

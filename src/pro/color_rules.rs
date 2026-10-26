@@ -181,9 +181,15 @@ impl ColorRulesStore {
         self.save()
     }
 
-    pub fn remove(&mut self, id: &str) {
+    pub fn remove(&mut self, id: &str) -> bool {
+        let before = self.rules.len();
         self.rules.retain(|r| r.id != id);
-        let _ = self.save();
+        if self.rules.len() != before {
+            let _ = self.save();
+            true
+        } else {
+            false
+        }
     }
 
     pub fn reorder(&mut self, from: usize, to: usize) {
@@ -193,6 +199,96 @@ impl ColorRulesStore {
         let item = self.rules.remove(from);
         self.rules.insert(to, item);
         let _ = self.save();
+    }
+
+    /// Reorder by id (insert before/after target) — first-match eval order.
+    pub fn reorder_ids(&mut self, dragged: &str, target: &str, after: bool) -> bool {
+        if dragged == target {
+            return false;
+        }
+        let Some(from) = self.rules.iter().position(|r| r.id == dragged) else {
+            return false;
+        };
+        let Some(mut to) = self.rules.iter().position(|r| r.id == target) else {
+            return false;
+        };
+        let item = self.rules.remove(from);
+        if from < to {
+            to -= 1;
+        }
+        if after {
+            to += 1;
+        }
+        to = to.min(self.rules.len());
+        self.rules.insert(to, item);
+        let _ = self.save();
+        true
+    }
+
+    /// Create or replace a rule from product JSON (`match` key). Empty/missing id → new.
+    pub fn upsert_json(&mut self, v: &Value) -> Result<ColorRule, String> {
+        let mut rule = rule_from_json(v)?;
+        if rule.id.trim().is_empty() {
+            rule.id = new_id();
+        }
+        if let Some(existing) = self.rules.iter_mut().find(|r| r.id == rule.id) {
+            let order = existing.order;
+            *existing = rule.clone();
+            existing.order = order;
+        } else {
+            if self.rules.len() >= MAX_RULES {
+                return Err(format!("at most {MAX_RULES} color rules"));
+            }
+            rule.order = self.rules.len() as u32;
+            self.rules.push(rule.clone());
+        }
+        self.save()?;
+        Ok(rule)
+    }
+
+    /// Import `{version, rules:[…]}`. `mode`: `"replace"` or `"merge"` (by id).
+    pub fn import_json(&mut self, text: &str, mode: &str) -> Result<usize, String> {
+        let incoming = parse_file(text)?;
+        let n = incoming.len();
+        match mode {
+            "replace" => {
+                if n > MAX_RULES {
+                    return Err(format!("at most {MAX_RULES} color rules"));
+                }
+                self.rules = incoming;
+            }
+            "merge" => {
+                for r in incoming {
+                    if let Some(existing) = self.rules.iter_mut().find(|x| x.id == r.id) {
+                        let order = existing.order;
+                        *existing = r;
+                        existing.order = order;
+                    } else {
+                        if self.rules.len() >= MAX_RULES {
+                            return Err(format!("at most {MAX_RULES} color rules"));
+                        }
+                        self.rules.push(r);
+                    }
+                }
+            }
+            _ => return Err(format!("unknown import mode: {mode}")),
+        }
+        self.rules.sort_by_key(|r| r.order);
+        self.save()?;
+        Ok(n)
+    }
+
+    /// Export product file shape (`match` key on each rule).
+    pub fn export_json(&self) -> Result<Value, String> {
+        let mut rules = self.rules.clone();
+        for (i, r) in rules.iter_mut().enumerate() {
+            r.order = i as u32;
+        }
+        let arr: Vec<Value> = rules
+            .iter()
+            .filter_map(|r| rule_to_json(r).ok())
+            .collect();
+        Ok(serde_json::json!({ "version": 1, "rules": arr }))
     }
 
     /// First matching enabled rule for this leaf topic + payload.
