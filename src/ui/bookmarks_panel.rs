@@ -3,7 +3,7 @@
 use crate::mqtt::pins::PinBoard;
 use crate::mqtt::session::SessionManager;
 use crate::mqtt::topic_tree::TopicNode;
-use crate::pro::bookmarks::{Bookmark, BookmarksStore};
+use crate::pro::bookmarks::{Bookmark, BookmarkJump, BookmarksStore};
 use crate::ui::icons::{
     self, IconSet, CHROME_ACCENT_BORDER, CHROME_BG, CHROME_HOVER, CHROME_MUTED, CHROME_ROW,
     CHROME_TEXT,
@@ -21,12 +21,7 @@ const EDIT_W: f32 = 22.0;
 const ACTIONS_W: f32 = EDIT_W + 2.0 + JUMP_W + 2.0 + TRASH_W + 2.0;
 
 /// Pending jump after popup click (applied once tree paints).
-#[derive(Clone, Debug)]
-pub struct PendingBookmarkJump {
-    pub profile_id: String,
-    pub topic: String,
-    pub expand_subtree: bool,
-}
+pub type PendingBookmarkJump = BookmarkJump;
 
 /// Add / edit draft kept in egui temp memory across frames.
 #[derive(Clone, Default)]

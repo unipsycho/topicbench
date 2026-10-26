@@ -10,6 +10,7 @@ mod license_format;
 pub mod machine_id;
 pub mod bookmarks;
 pub mod bridge;
+pub mod bridge_pro_tools;
 pub mod color_rules;
 pub mod history_client;
 pub mod recording;

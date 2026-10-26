@@ -223,6 +223,7 @@ impl BridgeHandle {
         max_packet_bytes: usize,
         ctx: &Context,
         status_out: &mut String,
+        pro: &mut super::BridgeProState<'_>,
     ) {
         self.tick_waiters();
         loop {
@@ -231,7 +232,16 @@ impl BridgeHandle {
                 Err(TryRecvError::Empty) => break,
                 Err(TryRecvError::Disconnected) => break,
             };
-            let resp = dispatch(call.req, profiles, sessions, max_packet_bytes, ctx, &self.shared, status_out);
+            let resp = dispatch(
+                call.req,
+                profiles,
+                sessions,
+                max_packet_bytes,
+                ctx,
+                &self.shared,
+                status_out,
+                pro,
+            );
             let _ = call.reply.send(resp);
         }
     }
@@ -474,8 +484,29 @@ fn dispatch(
     ctx: &Context,
     shared: &Arc<Mutex<Shared>>,
     status_out: &mut String,
+    pro: &mut super::BridgeProState<'_>,
 ) -> BridgeResponse {
     let id = req.id;
+    // Bookmarks / color rules — additive Pro store tools.
+    if let Some(pro_result) = crate::pro::bridge_pro_tools::try_dispatch(
+        &req.method,
+        &req.params,
+        profiles,
+        pro,
+    ) {
+        return match pro_result {
+            Ok(v) => BridgeResponse {
+                id,
+                result: Some(v),
+                error: None,
+            },
+            Err(e) => BridgeResponse {
+                id,
+                result: None,
+                error: Some(e),
+            },
+        };
+    }
     let result = match req.method.as_str() {
         "ping" => Ok(json!({"pong": true})),
         "list_profiles" => Ok(list_profiles(profiles, sessions)),
