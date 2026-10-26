@@ -192,12 +192,15 @@ fn try_dev_unlock() -> bool {
 }
 
 fn try_load_signed_license() -> bool {
-    for name in [LICENSE_FILE_NAME, LICENSE_FILE_ALT] {
-        let path = paths::config_file(name);
-        match load_license_path(&path) {
-            Ok(Some(_)) => return true,
-            Ok(None) => continue,
-            Err(_) => continue,
+    // Portable Windows: cwd .\topicbench\ first; then USERPROFILE\.config\topicbench.
+    for dir in paths::license_search_dirs() {
+        for name in [LICENSE_FILE_NAME, LICENSE_FILE_ALT] {
+            let path = dir.join(name);
+            match load_license_path(&path) {
+                Ok(Some(_)) => return true,
+                Ok(None) => continue,
+                Err(_) => continue,
+            }
         }
     }
     false
