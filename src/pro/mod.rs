@@ -7,6 +7,7 @@
 //! Localhost IPC for Pro MCP lives in [`bridge`] — started only when licensed.
 
 mod license_format;
+mod machine_id;
 pub mod bookmarks;
 pub mod bridge;
 pub mod color_rules;
