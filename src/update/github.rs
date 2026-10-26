@@ -131,7 +131,8 @@ pub fn open_release_page(html_url: &str) -> Result<(), String> {
     open_url(html_url)
 }
 
-fn open_url(url: &str) -> Result<(), String> {
+/// Open a URL in the default browser (release page, Pro marketing site, …).
+pub fn open_url(url: &str) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     {
         std::process::Command::new("cmd")
