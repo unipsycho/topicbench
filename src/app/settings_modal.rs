@@ -130,7 +130,7 @@ impl MqttMonitorApp {
                 ui.set_min_width(480.0);
                 ui.set_max_width(560.0);
                 egui::ScrollArea::vertical()
-                    .max_height(520.0)
+                    .max_height(640.0)
                     .show(ui, |ui| {
                         shortcuts::draw_help(ui);
                     });

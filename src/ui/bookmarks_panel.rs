@@ -9,7 +9,7 @@ use crate::ui::icons::{
     CHROME_TEXT,
 };
 use eframe::egui::{
-    self, CursorIcon, RichText, Sense, ViewportBuilder, ViewportClass,
+    self, CursorIcon, Key, RichText, Sense, ViewportBuilder, ViewportClass,
 };
 
 const ROW_H: f32 = 28.0;
@@ -17,6 +17,8 @@ const GRIP_W: f32 = 14.0;
 const TRASH_W: f32 = 22.0;
 const JUMP_W: f32 = 22.0;
 const EDIT_W: f32 = 22.0;
+/// Fixed trailing strip: edit · jump · trash (+ gaps + right pad).
+const ACTIONS_W: f32 = EDIT_W + 2.0 + JUMP_W + 2.0 + TRASH_W + 2.0;
 
 /// Pending jump after popup click (applied once tree paints).
 #[derive(Clone, Debug)]
@@ -333,6 +335,60 @@ fn paint_bookmarks_body(
 
     // Group by profile (profiles list order); rows omit redundant profile name.
     let groups = grouped_bookmark_ids(store, profiles_names);
+    let flat_ids: Vec<String> = groups
+        .iter()
+        .flat_map(|(_, _, ids)| ids.iter().cloned())
+        .collect();
+
+    // Keyboard nav while Bookmarks viewport focused (skip when typing in Add/Edit).
+    let sel_id = egui::Id::new("bm_kb_selected");
+    let mut selected = ui.ctx().data(|d| d.get_temp::<String>(sel_id));
+    if selected
+        .as_ref()
+        .is_some_and(|id| !flat_ids.iter().any(|x| x == id))
+    {
+        selected = None;
+    }
+    if selected.is_none() {
+        selected = flat_ids.first().cloned();
+    }
+    let typing = ui.ctx().wants_keyboard_input();
+    if !typing && !flat_ids.is_empty() {
+        let mut delta = 0i32;
+        let mut activate = false;
+        ui.ctx().input_mut(|i| {
+            if i.consume_key(egui::Modifiers::NONE, Key::ArrowUp) {
+                delta = -1;
+            } else if i.consume_key(egui::Modifiers::NONE, Key::ArrowDown) {
+                delta = 1;
+            } else if i.consume_key(egui::Modifiers::NONE, Key::Enter) {
+                activate = true;
+            }
+        });
+        if delta != 0 {
+            let cur = selected
+                .as_ref()
+                .and_then(|id| flat_ids.iter().position(|x| x == id))
+                .unwrap_or(0);
+            let next = (cur as i32 + delta).clamp(0, flat_ids.len() as i32 - 1) as usize;
+            selected = Some(flat_ids[next].clone());
+        }
+        if activate {
+            if let Some(id) = selected.clone() {
+                if let Some(b) = store.items.iter().find(|x| x.id == id) {
+                    jump = Some(PendingBookmarkJump {
+                        profile_id: b.profile_id.clone(),
+                        topic: b.topic.clone(),
+                        expand_subtree: b.expand_subtree,
+                    });
+                    *close = true;
+                }
+            }
+        }
+    }
+    if let Some(ref id) = selected {
+        ui.ctx().data_mut(|d| d.insert_temp(sel_id, id.clone()));
+    }
 
     egui::ScrollArea::vertical().show(ui, |ui| {
         for (group_pid, group_name, ids) in &groups {
@@ -343,22 +399,46 @@ fn paint_bookmarks_body(
                     .color(CHROME_ACCENT_BORDER),
             );
             ui.add_space(2.0);
+            // Pin width once — body widgets must not widen the ScrollArea (icons drift right).
+            let row_w = ui.available_width();
             for id in ids {
                 let Some(b) = store.items.iter().find(|x| x.id == *id).cloned() else {
                     continue;
                 };
 
                 let (row_rect, drop_response) =
-                    ui.allocate_exact_size(egui::vec2(ui.available_width(), ROW_H), Sense::hover());
-                ui.painter().rect_filled(row_rect, 2.0, CHROME_ROW);
+                    ui.allocate_exact_size(egui::vec2(row_w, ROW_H), Sense::click());
+                let is_selected = selected.as_ref().is_some_and(|s| s == id);
+                ui.painter().rect_filled(
+                    row_rect,
+                    2.0,
+                    if is_selected { CHROME_HOVER } else { CHROME_ROW },
+                );
+                if is_selected {
+                    ui.painter().rect_stroke(
+                        row_rect,
+                        2.0,
+                        egui::Stroke::new(1.0, CHROME_ACCENT_BORDER),
+                        egui::StrokeKind::Inside,
+                    );
+                }
+                // Clicking the row body selects it for keyboard Enter.
+                if drop_response.clicked() {
+                    selected = Some(id.clone());
+                    ui.ctx().data_mut(|d| d.insert_temp(sel_id, id.clone()));
+                }
 
                 let grip_rect = egui::Rect::from_min_size(
                     egui::pos2(row_rect.left() + 2.0, row_rect.top()),
                     egui::vec2(GRIP_W, ROW_H),
                 );
-                // Right-justified: edit · jump · trash.
+                // Fixed trailing column — same X for every row (not driven by label length).
+                let actions_rect = egui::Rect::from_min_size(
+                    egui::pos2(row_rect.right() - ACTIONS_W, row_rect.top()),
+                    egui::vec2(ACTIONS_W, ROW_H),
+                );
                 let trash_rect = egui::Rect::from_min_size(
-                    egui::pos2(row_rect.right() - TRASH_W - 2.0, row_rect.top()),
+                    egui::pos2(actions_rect.right() - TRASH_W - 2.0, row_rect.top()),
                     egui::vec2(TRASH_W, ROW_H),
                 );
                 let jump_rect = egui::Rect::from_min_size(
@@ -371,7 +451,7 @@ fn paint_bookmarks_body(
                 );
                 let body_rect = egui::Rect::from_min_max(
                     egui::pos2(grip_rect.right() + 4.0, row_rect.top()),
-                    egui::pos2(edit_rect.left() - 4.0, row_rect.bottom()),
+                    egui::pos2(actions_rect.left() - 4.0, row_rect.bottom()),
                 );
 
                 icons::paint_drag_grip(ui, grip_rect);
@@ -460,13 +540,15 @@ fn paint_bookmarks_body(
                 } else {
                     b.label.clone()
                 };
-                let tip = format!("{} — click to jump", b.topic);
+                let tip = format!("{} — click or Enter to jump", b.topic);
                 ui.allocate_new_ui(egui::UiBuilder::new().max_rect(body_rect), |ui| {
-                    ui.set_min_height(ROW_H);
+                    // Stay inside body_rect so ScrollArea content width cannot grow.
+                    ui.set_min_size(body_rect.size());
+                    ui.set_max_size(body_rect.size());
+                    ui.set_clip_rect(ui.clip_rect().intersect(body_rect));
                     ui.horizontal_centered(|ui| {
                         ui.spacing_mut().item_spacing.x = 8.0;
-                        let hover_pad = ui.available_rect_before_wrap();
-                        let hovering_body = ui.rect_contains_pointer(hover_pad);
+                        let hovering_body = ui.rect_contains_pointer(body_rect);
                         if hovering_body {
                             ui.painter().rect_filled(body_rect, 2.0, CHROME_HOVER);
                         }
@@ -475,30 +557,41 @@ fn paint_bookmarks_body(
                         } else {
                             CHROME_TEXT
                         };
-                        let name_resp = ui
-                            .add(
-                                egui::Label::new(RichText::new(&label).color(name_color))
-                                    .sense(Sense::click())
-                                    .selectable(false),
-                            )
-                            .on_hover_cursor(CursorIcon::PointingHand)
-                            .on_hover_text(&tip);
-                        if name_resp.hovered() {
-                            ui.painter().hline(
-                                name_resp.rect.x_range(),
-                                name_resp.rect.bottom() - 1.0,
-                                egui::Stroke::new(1.0_f32, CHROME_ACCENT_BORDER),
-                            );
-                        }
-                        if name_resp.clicked() {
-                            jump = Some(PendingBookmarkJump {
-                                profile_id: b.profile_id.clone(),
-                                topic: b.topic.clone(),
-                                expand_subtree: b.expand_subtree,
-                            });
-                            *close = true;
-                        }
+                        // Expand fixed on the right of body; label uses remaining left (truncated).
                         let mut exp = b.expand_subtree;
+                        let expand_w = 72.0_f32;
+                        let label_w = (ui.available_width() - expand_w - 8.0).max(24.0);
+                        ui.allocate_ui_with_layout(
+                            egui::vec2(label_w, ROW_H),
+                            egui::Layout::left_to_right(egui::Align::Center),
+                            |ui| {
+                                ui.set_max_width(label_w);
+                                let name_resp = ui
+                                    .add(
+                                        egui::Label::new(RichText::new(&label).color(name_color))
+                                            .sense(Sense::click())
+                                            .selectable(false)
+                                            .truncate(),
+                                    )
+                                    .on_hover_cursor(CursorIcon::PointingHand)
+                                    .on_hover_text(&tip);
+                                if name_resp.hovered() {
+                                    ui.painter().hline(
+                                        name_resp.rect.x_range(),
+                                        name_resp.rect.bottom() - 1.0,
+                                        egui::Stroke::new(1.0_f32, CHROME_ACCENT_BORDER),
+                                    );
+                                }
+                                if name_resp.clicked() {
+                                    jump = Some(PendingBookmarkJump {
+                                        profile_id: b.profile_id.clone(),
+                                        topic: b.topic.clone(),
+                                        expand_subtree: b.expand_subtree,
+                                    });
+                                    *close = true;
+                                }
+                            },
+                        );
                         if ui
                             .checkbox(&mut exp, "expand")
                             .on_hover_text("Expand subtree when jumping")
@@ -527,7 +620,7 @@ fn paint_bookmarks_body(
                         egui::Layout::centered_and_justified(egui::Direction::LeftToRight),
                         |ui| {
                             if icons
-                                .tiny(ui, "topic_tags", false, "Jump to bookmark")
+                                .tiny(ui, "topic_tags", false, "Jump to bookmark (Enter)")
                                 .clicked()
                             {
                                 jump = Some(PendingBookmarkJump {
