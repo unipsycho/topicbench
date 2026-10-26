@@ -1,8 +1,10 @@
-//! Signed license file verify (ed25519).
+//! Signed license file verify (ed25519) + machine-ID binding.
 //!
-//! Payload is all-or-nothing Pro: `licensed: true` (+ optional expires/licensee).
-//! Legacy files with an `entitlements` array still verify as full Pro.
+//! Payload is all-or-nothing Pro: `licensed: true` + required `machine_id`
+//! (+ optional expires/licensee). Legacy `entitlements` still mean full Pro.
+//! Unbound licenses (missing/empty `machine_id`) are rejected.
 
+use super::machine_id;
 use base64::Engine;
 use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 use serde::{Deserialize, Serialize};
@@ -36,6 +38,9 @@ pub struct LicensePayload {
     /// Legacy per-feature list — presence of any entry means full Pro.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub entitlements: Vec<String>,
+    /// Required machine binding (`tb1:` + sha256 hex). Missing = reject.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub machine_id: Option<String>,
     /// Optional `YYYY-MM-DD` (UTC). Missing = no expiry.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expires: Option<String>,
@@ -59,6 +64,8 @@ pub enum LicenseError {
     BadKey,
     Expired,
     NotLicensed,
+    /// License `machine_id` missing or does not match this host.
+    MachineMismatch,
 }
 
 impl std::fmt::Display for LicenseError {
@@ -71,6 +78,7 @@ impl std::fmt::Display for LicenseError {
             Self::BadKey => write!(f, "bad verify/signing key"),
             Self::Expired => write!(f, "license expired"),
             Self::NotLicensed => write!(f, "payload does not grant Pro"),
+            Self::MachineMismatch => write!(f, "license not valid for this machine"),
         }
     }
 }
@@ -106,6 +114,17 @@ pub fn verify_license_bytes_with_key(
         if is_expired(exp)? {
             return Err(LicenseError::Expired);
         }
+    }
+    // Require machine binding — unbound (v1-without-id) licenses no longer unlock.
+    let Some(ref licensed_mid) = payload.machine_id else {
+        return Err(LicenseError::MachineMismatch);
+    };
+    if licensed_mid.trim().is_empty() {
+        return Err(LicenseError::MachineMismatch);
+    }
+    let this_mid = machine_id::current_machine_id().map_err(|_| LicenseError::MachineMismatch)?;
+    if licensed_mid.trim() != this_mid {
+        return Err(LicenseError::MachineMismatch);
     }
     Ok(payload)
 }
@@ -144,7 +163,6 @@ fn utc_ymd_today() -> (i32, u32, u32) {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs() as i64)
         .unwrap_or(0);
-    // Civil from days since Unix epoch (Howard Hinnant algorithm).
     let days = secs.div_euclid(86_400) as i32;
     let z = days + 719_468;
     let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
@@ -182,6 +200,7 @@ mod tests {
         assert!(LicensePayload {
             licensed: true,
             entitlements: vec![],
+            machine_id: Some("tb1:deadbeef".into()),
             expires: None,
             licensee: None,
         }
@@ -189,6 +208,7 @@ mod tests {
         assert!(LicensePayload {
             licensed: false,
             entitlements: vec!["multi_graph".into()],
+            machine_id: None,
             expires: None,
             licensee: None,
         }
@@ -196,6 +216,7 @@ mod tests {
         assert!(!LicensePayload {
             licensed: false,
             entitlements: vec![],
+            machine_id: None,
             expires: None,
             licensee: None,
         }
