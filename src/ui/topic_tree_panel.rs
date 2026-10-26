@@ -213,10 +213,20 @@ pub fn draw_undocked_viewports(
                         egui::Window::new(&title)
                             .id(egui::Id::new(("topic_tree_pop_win", profile_id.as_str())))
                             .default_size([440.0, 560.0])
-                            .show(ctx, |ui| body(ui));
+                            .show(ctx, |ui| {
+                                egui::ScrollArea::vertical()
+                                    .id_salt(("topic_tree_pop_scroll", profile_id.as_str()))
+                                    .auto_shrink([false, false])
+                                    .show(ui, |ui| body(ui));
+                            });
                     }
                     _ => {
-                        egui::CentralPanel::default().show(ctx, |ui| body(ui));
+                        egui::CentralPanel::default().show(ctx, |ui| {
+                            egui::ScrollArea::vertical()
+                                .id_salt(("topic_tree_pop_scroll", profile_id.as_str()))
+                                .auto_shrink([false, false])
+                                .show(ui, |ui| body(ui));
+                        });
                     }
                 }
 
@@ -458,6 +468,35 @@ fn node_matches(node: &TopicNode, path: &str, filter: &SearchFilter) -> bool {
     false
 }
 
+/// Keep scroll-target path (and its ancestors) visible even when search would hide them.
+fn reveal_for_scroll(
+    path: &str,
+    profile_id: &str,
+    scroll_to: &Option<(String, String)>,
+) -> bool {
+    scroll_to.as_ref().is_some_and(|(pid, topic)| {
+        pid == profile_id
+            && (path == topic.as_str() || topic.starts_with(&format!("{path}/")))
+    })
+}
+
+/// Bookmark jump: scroll the matched row into the parent ScrollArea once.
+fn scroll_tree_row_into_view(
+    ui: &mut egui::Ui,
+    profile_id: &str,
+    topic: &str,
+    row_rect: egui::Rect,
+    scroll_to: &mut Option<(String, String)>,
+) {
+    if scroll_to
+        .as_ref()
+        .is_some_and(|(pid, t)| pid == profile_id && t == topic)
+    {
+        ui.scroll_to_rect(row_rect, Some(Align::Center));
+        *scroll_to = None;
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn draw_node(
     ui: &mut egui::Ui,
@@ -485,7 +524,9 @@ fn draw_node(
         } else {
             format!("{path}/{segment}")
         };
-        if !node_matches(child, &child_path, filter) {
+        if !reveal_for_scroll(&child_path, profile_id, scroll_to)
+            && !node_matches(child, &child_path, filter)
+        {
             continue;
         }
         let has_kids = !child.children.is_empty();
@@ -555,6 +596,14 @@ fn draw_node(
             });
             // Pulse inside the header row rect — layout size stays constant.
             flash::paint_inset(ui, header_row.response.rect, flash_stroke);
+            // Parent-path bookmarks: scroll the folder header (no leaf_row).
+            scroll_tree_row_into_view(
+                ui,
+                profile_id,
+                &child_path,
+                header_row.response.rect,
+                scroll_to,
+            );
             let (toggle_resp, label_resp) = header_row.inner;
 
             // Double-click folder row → flip open + whole subtree.
@@ -871,14 +920,8 @@ fn leaf_row(
             });
         });
     });
-    // Bookmark jump: scroll the matched row into view once.
-    if scroll_to
-        .as_ref()
-        .is_some_and(|(pid, t)| pid == profile_id && t == full_topic)
-    {
-        ui.scroll_to_rect(row.response.rect, Some(Align::Center));
-        *scroll_to = None;
-    }
+    // Bookmark jump: scroll the matched leaf into the topic-tree ScrollArea.
+    scroll_tree_row_into_view(ui, profile_id, full_topic, row.response.rect, scroll_to);
     // Flash, or a steady select edge so the right border stays visible when idle.
     let edge = flash_stroke.or_else(|| {
         selected.then_some(egui::Stroke::new(
