@@ -19,6 +19,8 @@ pub const LICENSE_VERIFY_KEY: [u8; 32] = [
 
 pub const LICENSE_FILE_NAME: &str = "license.json";
 pub const LICENSE_FILE_ALT: &str = "license.lic";
+/// Unsigned customer request (same shape Pro CLI writes) — support / re-bind.
+pub const LICENSE_REQUEST_FILE_NAME: &str = "license-request.json";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LicenseFileV1 {
@@ -138,6 +140,43 @@ pub fn load_license_path(path: &Path) -> Result<Option<LicensePayload>, LicenseE
     Ok(Some(verify_license_bytes(&bytes)?))
 }
 
+/// Unsigned license request (order-form paste is preferred; this is for support).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LicenseRequestV1 {
+    pub v: u32,
+    pub product: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub product_version: Option<String>,
+    pub machine_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub licensee: Option<String>,
+    pub requested_at: String,
+}
+
+impl LicenseRequestV1 {
+    /// Build a request for this host (no private key — safe in OSS).
+    pub fn for_this_machine(licensee: Option<String>) -> Result<Self, LicenseError> {
+        let mid = machine_id::current_machine_id().map_err(LicenseError::Io)?;
+        Ok(Self {
+            v: 1,
+            product: "topicbench-pro".into(),
+            product_version: Some(env!("CARGO_PKG_VERSION").into()),
+            machine_id: mid,
+            licensee,
+            requested_at: utc_rfc3339_now(),
+        })
+    }
+}
+
+/// Write pretty JSON request for support / re-bind (same shape as Pro CLI).
+pub fn write_license_request(path: &Path, req: &LicenseRequestV1) -> Result<(), LicenseError> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| LicenseError::Io(e.to_string()))?;
+    }
+    let json = serde_json::to_string_pretty(req).map_err(|e| LicenseError::Json(e.to_string()))?;
+    std::fs::write(path, format!("{json}\n")).map_err(|e| LicenseError::Io(e.to_string()))
+}
+
 /// Parse `YYYY-MM-DD`; true if today (UTC) is after that day.
 fn is_expired(expires: &str) -> Result<bool, LicenseError> {
     let parts: Vec<_> = expires.trim().split('-').collect();
@@ -163,6 +202,7 @@ fn utc_ymd_today() -> (i32, u32, u32) {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs() as i64)
         .unwrap_or(0);
+    // Civil from days since Unix epoch (Howard Hinnant algorithm).
     let days = secs.div_euclid(86_400) as i32;
     let z = days + 719_468;
     let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
@@ -175,6 +215,20 @@ fn utc_ymd_today() -> (i32, u32, u32) {
     let m = if mp < 10 { mp + 3 } else { mp - 9 };
     let y = if m <= 2 { y + 1 } else { y };
     (y, m, d)
+}
+
+fn utc_rfc3339_now() -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let secs = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+    let (y, m, d) = utc_ymd_today();
+    let day_secs = secs.rem_euclid(86_400) as u32;
+    let hh = day_secs / 3600;
+    let mm = (day_secs % 3600) / 60;
+    let ss = day_secs % 60;
+    format!("{y:04}-{m:02}-{d:02}T{hh:02}:{mm:02}:{ss:02}Z")
 }
 
 #[cfg(test)]

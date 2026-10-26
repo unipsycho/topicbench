@@ -7,7 +7,7 @@
 //! Localhost IPC for Pro MCP lives in [`bridge`] — started only when licensed.
 
 mod license_format;
-mod machine_id;
+pub mod machine_id;
 pub mod bookmarks;
 pub mod bridge;
 pub mod color_rules;
@@ -20,6 +20,10 @@ use std::sync::OnceLock;
 
 use crate::mqtt::paths;
 use license_format::{load_license_path, LICENSE_FILE_ALT, LICENSE_FILE_NAME};
+
+pub use license_format::{
+    write_license_request, LicenseRequestV1, LICENSE_REQUEST_FILE_NAME,
+};
 
 /// Named capability flags (UI / call sites). All true when Pro is licensed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

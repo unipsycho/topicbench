@@ -1,8 +1,10 @@
 //! Settings content (shown in a modal; edits a draft until Save).
 
+use crate::mqtt::paths;
 use crate::mqtt::settings::{
     AppSettings, StickyLayoutMode, TopicTreeExpandMode, MAX_PACKET_MAX, MAX_PACKET_MIN,
 };
+use crate::pro::{self, machine_id};
 use crate::ui::icons::{self, IconSet, CHROME_ACCENT_BORDER, CHROME_MUTED, CHROME_TEXT};
 use crate::ui::shortcuts;
 use crate::update::{self, UpdateStatus};
@@ -184,5 +186,91 @@ pub fn draw(
     );
     if check_btn.clicked() {
         *updates.check_now = true;
+    }
+
+    // TopicBench Pro — machine ID for order form (no private key in OSS).
+    ui.add_space(12.0);
+    draw_pro_machine_id_section(ui);
+}
+
+/// Show this PC's machine ID + Copy / optional license-request save.
+fn draw_pro_machine_id_section(ui: &mut egui::Ui) {
+    ui.strong("TopicBench Pro");
+    ui.label(
+        RichText::new(
+            "Paste this into the Machine ID field when you order TopicBench Pro. \
+             After payment you’ll get the Pro download and a license.json for this PC.",
+        )
+        .color(CHROME_MUTED),
+    );
+    ui.add_space(6.0);
+
+    let mid = machine_id::current_machine_id();
+    match mid {
+        Ok(id) => {
+            ui.horizontal(|ui| {
+                ui.label(RichText::new("Machine ID").color(CHROME_TEXT));
+                if ui
+                    .button("Copy")
+                    .on_hover_text("Copy machine ID to clipboard")
+                    .clicked()
+                {
+                    ui.ctx().copy_text(id.clone());
+                    ui.memory_mut(|m| {
+                        m.data.insert_temp(egui::Id::new("settings_mid_copied"), true);
+                    });
+                }
+            });
+            ui.add(
+                egui::Label::new(RichText::new(&id).monospace().small().color(CHROME_TEXT))
+                    .selectable(true),
+            );
+            if ui.memory(|m| {
+                m.data
+                    .get_temp::<bool>(egui::Id::new("settings_mid_copied"))
+                    .unwrap_or(false)
+            }) {
+                ui.label(RichText::new("Copied.").small().color(CHROME_MUTED));
+            }
+        }
+        Err(e) => {
+            ui.label(
+                RichText::new(format!("Could not read machine ID: {e}")).color(CHROME_MUTED),
+            );
+        }
+    }
+
+    ui.add_space(6.0);
+    if ui
+        .button("Save license-request.json…")
+        .on_hover_text(
+            "Optional support file (same shape Pro writes). Prefer pasting Machine ID at checkout.",
+        )
+        .clicked()
+    {
+        let default_name = pro::LICENSE_REQUEST_FILE_NAME;
+        if let Some(path) = rfd::FileDialog::new()
+            .set_file_name(default_name)
+            .set_directory(paths::config_dir())
+            .save_file()
+        {
+            let msg = match pro::LicenseRequestV1::for_this_machine(None) {
+                Ok(req) => match pro::write_license_request(&path, &req) {
+                    Ok(()) => format!("Saved {}", path.display()),
+                    Err(e) => format!("Save failed: {e}"),
+                },
+                Err(e) => format!("Request failed: {e}"),
+            };
+            ui.memory_mut(|m| {
+                m.data
+                    .insert_temp(egui::Id::new("settings_mid_save_msg"), msg);
+            });
+        }
+    }
+    if let Some(msg) = ui.memory(|m| {
+        m.data
+            .get_temp::<String>(egui::Id::new("settings_mid_save_msg"))
+    }) {
+        ui.label(RichText::new(msg).small().color(CHROME_MUTED));
     }
 }

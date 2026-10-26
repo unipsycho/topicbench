@@ -166,10 +166,11 @@ impl MqttMonitorApp {
             let checking = matches!(self.update_status, UpdateStatus::Checking);
             let status_snapshot = self.update_status.clone();
             let modal = egui::Modal::new(egui::Id::new("mqtt_master_settings")).show(ctx, |ui| {
-                ui.set_min_width(420.0);
-                ui.set_max_width(480.0);
+                // Wide enough for monospace machine ID (tb1: + 64 hex).
+                ui.set_min_width(460.0);
+                ui.set_max_width(540.0);
                 egui::ScrollArea::vertical()
-                    .max_height(520.0)
+                    .max_height(560.0)
                     .show(ui, |ui| {
                         if let Some(draft) = self.settings_draft.as_mut() {
                             settings_panel::draw(
