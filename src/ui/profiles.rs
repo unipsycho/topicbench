@@ -477,7 +477,7 @@ pub fn draw(
             });
             ui.weak("Topic filters for this profile (`+` / `#` OK). Saved with the profile.");
 
-            // Topic filters as a Profiles-style list (row strip + red X remove).
+            // Topic filters as a Profiles-style list (row strip + red trash remove).
             let mut remove_at: Option<usize> = None;
             let sub_row_bg = CHROME_ROW;
             if let Some(profile) = profiles.profiles.get(&id) {
@@ -485,35 +485,44 @@ pub fn draw(
                     ui.weak("No filters yet.");
                 } else {
                     for (i, sub) in profile.subscriptions.iter().enumerate() {
-                        let row_h = 28.0;
+                        // Match tiny hit cell (TINY_ICON + 2px pad each side) so the
+                        // trash glyph centers in the full row, not a vertically shrunk strip.
+                        let row_h = TINY_ICON + 4.0;
                         let (rect, _response) = ui.allocate_exact_size(
                             egui::vec2(ui.available_width(), row_h),
                             egui::Sense::hover(),
                         );
                         ui.painter().rect_filled(rect, 2.0, sub_row_bg);
-                        ui.allocate_new_ui(
-                            egui::UiBuilder::new().max_rect(rect.shrink2(egui::vec2(8.0, 4.0))),
-                            |ui| {
-                                ui.with_layout(
-                                    egui::Layout::left_to_right(egui::Align::Center),
-                                    |ui| {
-                                        ui.spacing_mut().item_spacing.x = 6.0;
-                                        clipboard::topic_label(ui, sub, status);
-                                        ui.with_layout(
-                                            egui::Layout::right_to_left(egui::Align::Center),
-                                            |ui| {
-                                                if icons
-                                                    .tiny(ui, "close_red", false, "Remove filter")
-                                                    .clicked()
-                                                {
-                                                    remove_at = Some(i);
-                                                }
-                                            },
-                                        );
-                                    },
-                                );
-                            },
+                        let btn_w = TINY_ICON + 4.0;
+                        let remove_rect = egui::Rect::from_min_size(
+                            egui::pos2(rect.right() - btn_w - 4.0, rect.top()),
+                            egui::vec2(btn_w, row_h),
                         );
+                        let text_rect = egui::Rect::from_min_max(
+                            egui::pos2(rect.left() + 8.0, rect.top()),
+                            egui::pos2(remove_rect.left() - 4.0, rect.bottom()),
+                        );
+                        ui.allocate_new_ui(egui::UiBuilder::new().max_rect(text_rect), |ui| {
+                            ui.with_layout(
+                                egui::Layout::left_to_right(egui::Align::Center),
+                                |ui| {
+                                    clipboard::topic_label(ui, sub, status);
+                                },
+                            );
+                        });
+                        ui.allocate_new_ui(egui::UiBuilder::new().max_rect(remove_rect), |ui| {
+                            ui.with_layout(
+                                egui::Layout::left_to_right(egui::Align::Center),
+                                |ui| {
+                                    if icons
+                                        .tiny(ui, "delete_red", false, "Remove filter")
+                                        .clicked()
+                                    {
+                                        remove_at = Some(i);
+                                    }
+                                },
+                            );
+                        });
                         ui.add_space(2.0);
                     }
                 }
