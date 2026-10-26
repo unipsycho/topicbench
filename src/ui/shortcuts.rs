@@ -113,8 +113,24 @@ pub const PRO_BINDINGS: &[Binding] = &[
         action: "Toggle Simulate panel",
     },
     Binding {
+        keys: "Ctrl+Shift+G",
+        action: "Start all simulations / resume playback",
+    },
+    Binding {
+        keys: "Ctrl+Shift+H",
+        action: "Stop / pause simulations",
+    },
+    Binding {
         keys: "Ctrl+Shift+J",
         action: "Toggle Bookmarks panel",
+    },
+    Binding {
+        keys: "↑ / ↓",
+        action: "Select bookmark (Bookmarks panel)",
+    },
+    Binding {
+        keys: "Enter",
+        action: "Jump to selected bookmark (Bookmarks panel)",
     },
     Binding {
         keys: "Ctrl+Shift+C",
@@ -154,6 +170,8 @@ pub enum Action {
     OpenBookmarks,
     ToggleSimulation,
     ToggleColorRules,
+    SimStart,
+    SimStop,
 }
 
 fn chord(i: &mut egui::InputState, mods: Modifiers, key: Key) -> bool {
@@ -201,6 +219,12 @@ pub fn consume(ctx: &egui::Context) -> Vec<Action> {
         }
         if chord(i, cmd_shift, Key::C) {
             out.push(Action::ToggleColorRules);
+        }
+        if chord(i, cmd_shift, Key::G) {
+            out.push(Action::SimStart);
+        }
+        if chord(i, cmd_shift, Key::H) {
+            out.push(Action::SimStop);
         }
 
         if chord(i, cmd, Key::Equals) || chord(i, cmd, Key::Plus) {

@@ -9,7 +9,7 @@ use crate::ui::icons::{
     CHROME_TEXT,
 };
 use eframe::egui::{
-    self, CursorIcon, RichText, Sense, ViewportBuilder, ViewportClass,
+    self, CursorIcon, Key, RichText, Sense, ViewportBuilder, ViewportClass,
 };
 
 const ROW_H: f32 = 28.0;
@@ -333,6 +333,60 @@ fn paint_bookmarks_body(
 
     // Group by profile (profiles list order); rows omit redundant profile name.
     let groups = grouped_bookmark_ids(store, profiles_names);
+    let flat_ids: Vec<String> = groups
+        .iter()
+        .flat_map(|(_, _, ids)| ids.iter().cloned())
+        .collect();
+
+    // Keyboard nav while Bookmarks viewport focused (skip when typing in Add/Edit).
+    let sel_id = egui::Id::new("bm_kb_selected");
+    let mut selected = ui.ctx().data(|d| d.get_temp::<String>(sel_id));
+    if selected
+        .as_ref()
+        .is_some_and(|id| !flat_ids.iter().any(|x| x == id))
+    {
+        selected = None;
+    }
+    if selected.is_none() {
+        selected = flat_ids.first().cloned();
+    }
+    let typing = ui.ctx().wants_keyboard_input();
+    if !typing && !flat_ids.is_empty() {
+        let mut delta = 0i32;
+        let mut activate = false;
+        ui.ctx().input_mut(|i| {
+            if i.consume_key(egui::Modifiers::NONE, Key::ArrowUp) {
+                delta = -1;
+            } else if i.consume_key(egui::Modifiers::NONE, Key::ArrowDown) {
+                delta = 1;
+            } else if i.consume_key(egui::Modifiers::NONE, Key::Enter) {
+                activate = true;
+            }
+        });
+        if delta != 0 {
+            let cur = selected
+                .as_ref()
+                .and_then(|id| flat_ids.iter().position(|x| x == id))
+                .unwrap_or(0);
+            let next = (cur as i32 + delta).clamp(0, flat_ids.len() as i32 - 1) as usize;
+            selected = Some(flat_ids[next].clone());
+        }
+        if activate {
+            if let Some(id) = selected.clone() {
+                if let Some(b) = store.items.iter().find(|x| x.id == id) {
+                    jump = Some(PendingBookmarkJump {
+                        profile_id: b.profile_id.clone(),
+                        topic: b.topic.clone(),
+                        expand_subtree: b.expand_subtree,
+                    });
+                    *close = true;
+                }
+            }
+        }
+    }
+    if let Some(ref id) = selected {
+        ui.ctx().data_mut(|d| d.insert_temp(sel_id, id.clone()));
+    }
 
     egui::ScrollArea::vertical().show(ui, |ui| {
         for (group_pid, group_name, ids) in &groups {
@@ -349,8 +403,26 @@ fn paint_bookmarks_body(
                 };
 
                 let (row_rect, drop_response) =
-                    ui.allocate_exact_size(egui::vec2(ui.available_width(), ROW_H), Sense::hover());
-                ui.painter().rect_filled(row_rect, 2.0, CHROME_ROW);
+                    ui.allocate_exact_size(egui::vec2(ui.available_width(), ROW_H), Sense::click());
+                let is_selected = selected.as_ref().is_some_and(|s| s == id);
+                ui.painter().rect_filled(
+                    row_rect,
+                    2.0,
+                    if is_selected { CHROME_HOVER } else { CHROME_ROW },
+                );
+                if is_selected {
+                    ui.painter().rect_stroke(
+                        row_rect,
+                        2.0,
+                        egui::Stroke::new(1.0, CHROME_ACCENT_BORDER),
+                        egui::StrokeKind::Inside,
+                    );
+                }
+                // Clicking the row body selects it for keyboard Enter.
+                if drop_response.clicked() {
+                    selected = Some(id.clone());
+                    ui.ctx().data_mut(|d| d.insert_temp(sel_id, id.clone()));
+                }
 
                 let grip_rect = egui::Rect::from_min_size(
                     egui::pos2(row_rect.left() + 2.0, row_rect.top()),
@@ -460,7 +532,7 @@ fn paint_bookmarks_body(
                 } else {
                     b.label.clone()
                 };
-                let tip = format!("{} — click to jump", b.topic);
+                let tip = format!("{} — click or Enter to jump", b.topic);
                 ui.allocate_new_ui(egui::UiBuilder::new().max_rect(body_rect), |ui| {
                     ui.set_min_height(ROW_H);
                     ui.horizontal_centered(|ui| {
@@ -527,7 +599,7 @@ fn paint_bookmarks_body(
                         egui::Layout::centered_and_justified(egui::Direction::LeftToRight),
                         |ui| {
                             if icons
-                                .tiny(ui, "topic_tags", false, "Jump to bookmark")
+                                .tiny(ui, "topic_tags", false, "Jump to bookmark (Enter)")
                                 .clicked()
                             {
                                 jump = Some(PendingBookmarkJump {
