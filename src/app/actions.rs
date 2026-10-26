@@ -216,6 +216,26 @@ impl MqttMonitorApp {
                         self.status = "Color Rules require TopicBench Pro".into();
                     }
                 }
+                ShortcutAction::SimStart => {
+                    if crate::pro::has(crate::pro::Entitlement::Simulation) {
+                        crate::ui::simulation_panel::action_start(
+                            &mut self.sim_client,
+                            &mut self.status,
+                        );
+                    } else {
+                        self.status = "Simulate requires TopicBench Pro".into();
+                    }
+                }
+                ShortcutAction::SimStop => {
+                    if crate::pro::has(crate::pro::Entitlement::Simulation) {
+                        crate::ui::simulation_panel::action_stop(
+                            &mut self.sim_client,
+                            &mut self.status,
+                        );
+                    } else {
+                        self.status = "Simulate requires TopicBench Pro".into();
+                    }
+                }
             }
         }
     }
