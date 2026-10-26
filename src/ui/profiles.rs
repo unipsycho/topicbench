@@ -477,7 +477,7 @@ pub fn draw(
             });
             ui.weak("Topic filters for this profile (`+` / `#` OK). Saved with the profile.");
 
-            // Topic filters as a Profiles-style list (row strip + red trash remove).
+            // Topic filters as a Profiles-style list (row strip + centered red trash).
             let mut remove_at: Option<usize> = None;
             let sub_row_bg = CHROME_ROW;
             if let Some(profile) = profiles.profiles.get(&id) {
@@ -485,9 +485,9 @@ pub fn draw(
                     ui.weak("No filters yet.");
                 } else {
                     for (i, sub) in profile.subscriptions.iter().enumerate() {
-                        // Match tiny hit cell (TINY_ICON + 2px pad each side) so the
-                        // trash glyph centers in the full row, not a vertically shrunk strip.
-                        let row_h = TINY_ICON + 4.0;
+                        // Full-height remove hit target; paint delete_red at its center
+                        // (nested layouts left the glyph sitting low in the strip).
+                        let row_h = TINY_ICON + 8.0;
                         let (rect, _response) = ui.allocate_exact_size(
                             egui::vec2(ui.available_width(), row_h),
                             egui::Sense::hover(),
@@ -510,19 +510,29 @@ pub fn draw(
                                 },
                             );
                         });
-                        ui.allocate_new_ui(egui::UiBuilder::new().max_rect(remove_rect), |ui| {
-                            ui.with_layout(
-                                egui::Layout::left_to_right(egui::Align::Center),
-                                |ui| {
-                                    if icons
-                                        .tiny(ui, "delete_red", false, "Remove filter")
-                                        .clicked()
-                                    {
-                                        remove_at = Some(i);
-                                    }
-                                },
-                            );
-                        });
+                        let rm_id = ui.id().with(("sub_rm", i));
+                        let rm_resp = hover_tip::attach(
+                            ui.interact(remove_rect, rm_id, Sense::click()),
+                            "Remove filter",
+                        );
+                        if rm_resp.hovered() {
+                            ui.painter().rect_filled(remove_rect, 2.0, CHROME_HOVER);
+                        }
+                        if let Some(tex) = icons.get("delete_red") {
+                            egui::Image::new(tex)
+                                .fit_to_exact_size(egui::vec2(TINY_ICON, TINY_ICON))
+                                .maintain_aspect_ratio(true)
+                                .paint_at(
+                                    ui,
+                                    egui::Rect::from_center_size(
+                                        remove_rect.center(),
+                                        egui::vec2(TINY_ICON, TINY_ICON),
+                                    ),
+                                );
+                        }
+                        if rm_resp.clicked() {
+                            remove_at = Some(i);
+                        }
                         ui.add_space(2.0);
                     }
                 }
