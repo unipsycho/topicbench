@@ -329,6 +329,11 @@ impl eframe::App for MqttMonitorApp {
                 max_pkt,
                 ctx,
                 &mut self.status,
+                &mut crate::pro::bridge::BridgeProState {
+                    bookmarks: &mut self.bookmarks,
+                    color_rules: &mut self.color_rules,
+                    pending_bookmark_jump: &mut self.pending_bookmark_jump,
+                },
             );
         }
         // Keep /sim warm for the status strip even when Simulation is closed.
