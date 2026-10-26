@@ -17,6 +17,8 @@ const GRIP_W: f32 = 14.0;
 const TRASH_W: f32 = 22.0;
 const JUMP_W: f32 = 22.0;
 const EDIT_W: f32 = 22.0;
+/// Fixed trailing strip: edit · jump · trash (+ gaps + right pad).
+const ACTIONS_W: f32 = EDIT_W + 2.0 + JUMP_W + 2.0 + TRASH_W + 2.0;
 
 /// Pending jump after popup click (applied once tree paints).
 #[derive(Clone, Debug)]
@@ -397,13 +399,15 @@ fn paint_bookmarks_body(
                     .color(CHROME_ACCENT_BORDER),
             );
             ui.add_space(2.0);
+            // Pin width once — body widgets must not widen the ScrollArea (icons drift right).
+            let row_w = ui.available_width();
             for id in ids {
                 let Some(b) = store.items.iter().find(|x| x.id == *id).cloned() else {
                     continue;
                 };
 
                 let (row_rect, drop_response) =
-                    ui.allocate_exact_size(egui::vec2(ui.available_width(), ROW_H), Sense::click());
+                    ui.allocate_exact_size(egui::vec2(row_w, ROW_H), Sense::click());
                 let is_selected = selected.as_ref().is_some_and(|s| s == id);
                 ui.painter().rect_filled(
                     row_rect,
@@ -428,9 +432,13 @@ fn paint_bookmarks_body(
                     egui::pos2(row_rect.left() + 2.0, row_rect.top()),
                     egui::vec2(GRIP_W, ROW_H),
                 );
-                // Right-justified: edit · jump · trash.
+                // Fixed trailing column — same X for every row (not driven by label length).
+                let actions_rect = egui::Rect::from_min_size(
+                    egui::pos2(row_rect.right() - ACTIONS_W, row_rect.top()),
+                    egui::vec2(ACTIONS_W, ROW_H),
+                );
                 let trash_rect = egui::Rect::from_min_size(
-                    egui::pos2(row_rect.right() - TRASH_W - 2.0, row_rect.top()),
+                    egui::pos2(actions_rect.right() - TRASH_W - 2.0, row_rect.top()),
                     egui::vec2(TRASH_W, ROW_H),
                 );
                 let jump_rect = egui::Rect::from_min_size(
@@ -443,7 +451,7 @@ fn paint_bookmarks_body(
                 );
                 let body_rect = egui::Rect::from_min_max(
                     egui::pos2(grip_rect.right() + 4.0, row_rect.top()),
-                    egui::pos2(edit_rect.left() - 4.0, row_rect.bottom()),
+                    egui::pos2(actions_rect.left() - 4.0, row_rect.bottom()),
                 );
 
                 icons::paint_drag_grip(ui, grip_rect);
@@ -534,11 +542,13 @@ fn paint_bookmarks_body(
                 };
                 let tip = format!("{} — click or Enter to jump", b.topic);
                 ui.allocate_new_ui(egui::UiBuilder::new().max_rect(body_rect), |ui| {
-                    ui.set_min_height(ROW_H);
+                    // Stay inside body_rect so ScrollArea content width cannot grow.
+                    ui.set_min_size(body_rect.size());
+                    ui.set_max_size(body_rect.size());
+                    ui.set_clip_rect(ui.clip_rect().intersect(body_rect));
                     ui.horizontal_centered(|ui| {
                         ui.spacing_mut().item_spacing.x = 8.0;
-                        let hover_pad = ui.available_rect_before_wrap();
-                        let hovering_body = ui.rect_contains_pointer(hover_pad);
+                        let hovering_body = ui.rect_contains_pointer(body_rect);
                         if hovering_body {
                             ui.painter().rect_filled(body_rect, 2.0, CHROME_HOVER);
                         }
@@ -547,30 +557,41 @@ fn paint_bookmarks_body(
                         } else {
                             CHROME_TEXT
                         };
-                        let name_resp = ui
-                            .add(
-                                egui::Label::new(RichText::new(&label).color(name_color))
-                                    .sense(Sense::click())
-                                    .selectable(false),
-                            )
-                            .on_hover_cursor(CursorIcon::PointingHand)
-                            .on_hover_text(&tip);
-                        if name_resp.hovered() {
-                            ui.painter().hline(
-                                name_resp.rect.x_range(),
-                                name_resp.rect.bottom() - 1.0,
-                                egui::Stroke::new(1.0_f32, CHROME_ACCENT_BORDER),
-                            );
-                        }
-                        if name_resp.clicked() {
-                            jump = Some(PendingBookmarkJump {
-                                profile_id: b.profile_id.clone(),
-                                topic: b.topic.clone(),
-                                expand_subtree: b.expand_subtree,
-                            });
-                            *close = true;
-                        }
+                        // Expand fixed on the right of body; label uses remaining left (truncated).
                         let mut exp = b.expand_subtree;
+                        let expand_w = 72.0_f32;
+                        let label_w = (ui.available_width() - expand_w - 8.0).max(24.0);
+                        ui.allocate_ui_with_layout(
+                            egui::vec2(label_w, ROW_H),
+                            egui::Layout::left_to_right(egui::Align::Center),
+                            |ui| {
+                                ui.set_max_width(label_w);
+                                let name_resp = ui
+                                    .add(
+                                        egui::Label::new(RichText::new(&label).color(name_color))
+                                            .sense(Sense::click())
+                                            .selectable(false)
+                                            .truncate(),
+                                    )
+                                    .on_hover_cursor(CursorIcon::PointingHand)
+                                    .on_hover_text(&tip);
+                                if name_resp.hovered() {
+                                    ui.painter().hline(
+                                        name_resp.rect.x_range(),
+                                        name_resp.rect.bottom() - 1.0,
+                                        egui::Stroke::new(1.0_f32, CHROME_ACCENT_BORDER),
+                                    );
+                                }
+                                if name_resp.clicked() {
+                                    jump = Some(PendingBookmarkJump {
+                                        profile_id: b.profile_id.clone(),
+                                        topic: b.topic.clone(),
+                                        expand_subtree: b.expand_subtree,
+                                    });
+                                    *close = true;
+                                }
+                            },
+                        );
                         if ui
                             .checkbox(&mut exp, "expand")
                             .on_hover_text("Expand subtree when jumping")
