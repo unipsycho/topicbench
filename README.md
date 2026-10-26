@@ -58,8 +58,7 @@ Paid extras for teams that outgrow the free explorer — same app, unlock Pro wh
 - **Topic bookmarks** — jump list into deep trees
 - **Custom color rules** — paint tree rows by topic / payload predicates
 - **Topic tree export & import** — JSON hierarchy out, republish onto a target broker
-- **Webhooks** — on topic match, POST JSON to n8n / Slack / alert pipelines
-- **CSV / Parquet export** — time-series dumps for Excel and Pandas
+- **CSV recording** — time-series dumps for Excel
 
 ### Combined graphs
 
