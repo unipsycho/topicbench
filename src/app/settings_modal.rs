@@ -130,7 +130,7 @@ impl MqttMonitorApp {
                 ui.set_min_width(480.0);
                 ui.set_max_width(560.0);
                 egui::ScrollArea::vertical()
-                    .max_height(520.0)
+                    .max_height(640.0)
                     .show(ui, |ui| {
                         shortcuts::draw_help(ui);
                     });
@@ -166,10 +166,11 @@ impl MqttMonitorApp {
             let checking = matches!(self.update_status, UpdateStatus::Checking);
             let status_snapshot = self.update_status.clone();
             let modal = egui::Modal::new(egui::Id::new("mqtt_master_settings")).show(ctx, |ui| {
-                ui.set_min_width(420.0);
-                ui.set_max_width(480.0);
+                // Wide enough for narrow Updates + Pro with one-line machine ID (~68 chars).
+                ui.set_min_width(760.0);
+                ui.set_max_width(860.0);
                 egui::ScrollArea::vertical()
-                    .max_height(520.0)
+                    .max_height(620.0)
                     .show(ui, |ui| {
                         if let Some(draft) = self.settings_draft.as_mut() {
                             settings_panel::draw(
@@ -244,7 +245,7 @@ impl MqttMonitorApp {
             return;
         };
         let installing = matches!(self.update_status, UpdateStatus::Installing);
-        let notes = update::truncate_notes(&info.body);
+        let notes = info.body.clone();
         let fallback = self.update_modal_fallback_note.clone();
         let mut update_clicked = false;
         let mut remind_clicked = false;
@@ -262,9 +263,10 @@ impl MqttMonitorApp {
                     .color(CHROME_TEXT),
             );
             ui.add_space(4.0);
+            // ASCII "->" — egui default fonts lack Unicode arrows (→ shows as a box).
             ui.label(
                 RichText::new(format!(
-                    "{} → {}",
+                    "{} -> {}",
                     update::current_version(),
                     info.tag
                 ))
@@ -284,7 +286,7 @@ impl MqttMonitorApp {
             egui::ScrollArea::vertical()
                 .max_height(220.0)
                 .show(ui, |ui| {
-                    ui.label(RichText::new(notes).color(CHROME_MUTED));
+                    update::notes_ui::draw_release_notes(ui, &notes);
                 });
 
             if let Some(note) = &fallback {

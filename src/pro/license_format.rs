@@ -1,8 +1,10 @@
-//! Signed license file verify (ed25519).
+//! Signed license file verify (ed25519) + machine-ID binding.
 //!
-//! Payload is all-or-nothing Pro: `licensed: true` (+ optional expires/licensee).
-//! Legacy files with an `entitlements` array still verify as full Pro.
+//! Payload is all-or-nothing Pro: `licensed: true` + required `machine_id`
+//! (+ optional expires/licensee). Legacy `entitlements` still mean full Pro.
+//! Unbound licenses (missing/empty `machine_id`) are rejected.
 
+use super::machine_id;
 use base64::Engine;
 use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 use serde::{Deserialize, Serialize};
@@ -17,6 +19,8 @@ pub const LICENSE_VERIFY_KEY: [u8; 32] = [
 
 pub const LICENSE_FILE_NAME: &str = "license.json";
 pub const LICENSE_FILE_ALT: &str = "license.lic";
+/// Unsigned customer request (same shape Pro CLI writes) — support / re-bind.
+pub const LICENSE_REQUEST_FILE_NAME: &str = "license-request.json";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LicenseFileV1 {
@@ -36,6 +40,9 @@ pub struct LicensePayload {
     /// Legacy per-feature list — presence of any entry means full Pro.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub entitlements: Vec<String>,
+    /// Required machine binding (`tb1:` + sha256 hex). Missing = reject.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub machine_id: Option<String>,
     /// Optional `YYYY-MM-DD` (UTC). Missing = no expiry.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expires: Option<String>,
@@ -59,6 +66,8 @@ pub enum LicenseError {
     BadKey,
     Expired,
     NotLicensed,
+    /// License `machine_id` missing or does not match this host.
+    MachineMismatch,
 }
 
 impl std::fmt::Display for LicenseError {
@@ -71,6 +80,7 @@ impl std::fmt::Display for LicenseError {
             Self::BadKey => write!(f, "bad verify/signing key"),
             Self::Expired => write!(f, "license expired"),
             Self::NotLicensed => write!(f, "payload does not grant Pro"),
+            Self::MachineMismatch => write!(f, "license not valid for this machine"),
         }
     }
 }
@@ -107,6 +117,17 @@ pub fn verify_license_bytes_with_key(
             return Err(LicenseError::Expired);
         }
     }
+    // Require machine binding — unbound (v1-without-id) licenses no longer unlock.
+    let Some(ref licensed_mid) = payload.machine_id else {
+        return Err(LicenseError::MachineMismatch);
+    };
+    if licensed_mid.trim().is_empty() {
+        return Err(LicenseError::MachineMismatch);
+    }
+    let this_mid = machine_id::current_machine_id().map_err(|_| LicenseError::MachineMismatch)?;
+    if licensed_mid.trim() != this_mid {
+        return Err(LicenseError::MachineMismatch);
+    }
     Ok(payload)
 }
 
@@ -117,6 +138,43 @@ pub fn load_license_path(path: &Path) -> Result<Option<LicensePayload>, LicenseE
     }
     let bytes = std::fs::read(path).map_err(|e| LicenseError::Io(e.to_string()))?;
     Ok(Some(verify_license_bytes(&bytes)?))
+}
+
+/// Unsigned license request (order-form paste is preferred; this is for support).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LicenseRequestV1 {
+    pub v: u32,
+    pub product: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub product_version: Option<String>,
+    pub machine_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub licensee: Option<String>,
+    pub requested_at: String,
+}
+
+impl LicenseRequestV1 {
+    /// Build a request for this host (no private key — safe in OSS).
+    pub fn for_this_machine(licensee: Option<String>) -> Result<Self, LicenseError> {
+        let mid = machine_id::current_machine_id().map_err(LicenseError::Io)?;
+        Ok(Self {
+            v: 1,
+            product: "topicbench-pro".into(),
+            product_version: Some(env!("CARGO_PKG_VERSION").into()),
+            machine_id: mid,
+            licensee,
+            requested_at: utc_rfc3339_now(),
+        })
+    }
+}
+
+/// Write pretty JSON request for support / re-bind (same shape as Pro CLI).
+pub fn write_license_request(path: &Path, req: &LicenseRequestV1) -> Result<(), LicenseError> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| LicenseError::Io(e.to_string()))?;
+    }
+    let json = serde_json::to_string_pretty(req).map_err(|e| LicenseError::Json(e.to_string()))?;
+    std::fs::write(path, format!("{json}\n")).map_err(|e| LicenseError::Io(e.to_string()))
 }
 
 /// Parse `YYYY-MM-DD`; true if today (UTC) is after that day.
@@ -159,6 +217,20 @@ fn utc_ymd_today() -> (i32, u32, u32) {
     (y, m, d)
 }
 
+fn utc_rfc3339_now() -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let secs = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+    let (y, m, d) = utc_ymd_today();
+    let day_secs = secs.rem_euclid(86_400) as u32;
+    let hh = day_secs / 3600;
+    let mm = (day_secs % 3600) / 60;
+    let ss = day_secs % 60;
+    format!("{y:04}-{m:02}-{d:02}T{hh:02}:{mm:02}:{ss:02}Z")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -182,6 +254,7 @@ mod tests {
         assert!(LicensePayload {
             licensed: true,
             entitlements: vec![],
+            machine_id: Some("tb1:deadbeef".into()),
             expires: None,
             licensee: None,
         }
@@ -189,6 +262,7 @@ mod tests {
         assert!(LicensePayload {
             licensed: false,
             entitlements: vec!["multi_graph".into()],
+            machine_id: None,
             expires: None,
             licensee: None,
         }
@@ -196,6 +270,7 @@ mod tests {
         assert!(!LicensePayload {
             licensed: false,
             entitlements: vec![],
+            machine_id: None,
             expires: None,
             licensee: None,
         }

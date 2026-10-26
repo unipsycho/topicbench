@@ -2,6 +2,7 @@
 //!
 //! Cmd/Ctrl chords are consumed globally; plain keys (Delete, arrows, `?`) only
 //! fire when a text field is not capturing keyboard input.
+//! Pro panel rows appear in the help sheet only when licensed.
 
 use eframe::egui::{self, Key, Modifiers};
 
@@ -17,7 +18,7 @@ pub fn tip(label: &str, keys: &str) -> String {
     format!("{label} ({keys})")
 }
 
-/// Final shipped bindings (keep in sync with `consume` + docs/keyboard-shortcuts.md).
+/// Free / always-available bindings (keep in sync with `consume`).
 pub const BINDINGS: &[Binding] = &[
     Binding {
         keys: "Ctrl+Shift+P",
@@ -100,16 +101,44 @@ pub const BINDINGS: &[Binding] = &[
         action: "Toggle sticky on last tree topic",
     },
     Binding {
-        keys: "Ctrl+Shift+B",
-        action: "Toggle bookmark on selected tree topic (Pro)",
+        keys: "Tab / Shift+Tab",
+        action: "Move focus through interactive controls",
+    },
+];
+
+/// Pro-only panel / topic actions — help rows shown only when licensed.
+pub const PRO_BINDINGS: &[Binding] = &[
+    Binding {
+        keys: "Ctrl+Shift+M",
+        action: "Toggle Simulate panel",
+    },
+    Binding {
+        keys: "Ctrl+Shift+G",
+        action: "Start all simulations / resume playback",
+    },
+    Binding {
+        keys: "Ctrl+Shift+H",
+        action: "Stop / pause simulations",
     },
     Binding {
         keys: "Ctrl+Shift+J",
-        action: "Open Bookmarks jump list (Pro)",
+        action: "Toggle Bookmarks panel",
     },
     Binding {
-        keys: "Tab / Shift+Tab",
-        action: "Move focus through interactive controls",
+        keys: "↑ / ↓",
+        action: "Select bookmark (Bookmarks panel)",
+    },
+    Binding {
+        keys: "Enter",
+        action: "Jump to selected bookmark (Bookmarks panel)",
+    },
+    Binding {
+        keys: "Ctrl+Shift+C",
+        action: "Toggle Color Rules panel",
+    },
+    Binding {
+        keys: "Ctrl+Shift+B",
+        action: "Toggle bookmark on selected tree topic",
     },
 ];
 
@@ -139,6 +168,10 @@ pub enum Action {
     ToggleStickySelectedTopic,
     ToggleBookmarkSelectedTopic,
     OpenBookmarks,
+    ToggleSimulation,
+    ToggleColorRules,
+    SimStart,
+    SimStop,
 }
 
 fn chord(i: &mut egui::InputState, mods: Modifiers, key: Key) -> bool {
@@ -180,6 +213,18 @@ pub fn consume(ctx: &egui::Context) -> Vec<Action> {
         }
         if chord(i, cmd_shift, Key::J) {
             out.push(Action::OpenBookmarks);
+        }
+        if chord(i, cmd_shift, Key::M) {
+            out.push(Action::ToggleSimulation);
+        }
+        if chord(i, cmd_shift, Key::C) {
+            out.push(Action::ToggleColorRules);
+        }
+        if chord(i, cmd_shift, Key::G) {
+            out.push(Action::SimStart);
+        }
+        if chord(i, cmd_shift, Key::H) {
+            out.push(Action::SimStop);
         }
 
         if chord(i, cmd, Key::Equals) || chord(i, cmd, Key::Plus) {
@@ -235,11 +280,21 @@ pub fn consume(ctx: &egui::Context) -> Vec<Action> {
     out
 }
 
+fn draw_binding_rows(ui: &mut egui::Ui, bindings: &[Binding]) {
+    for b in bindings {
+        ui.monospace(b.keys);
+        ui.label(b.action);
+        ui.end_row();
+    }
+}
+
 /// Draw the Shortcuts help table (popup / Settings).
+/// Pro panel rows appear only when TopicBench Pro is licensed.
 pub fn draw_help(ui: &mut egui::Ui) {
     ui.heading("Keyboard shortcuts");
     ui.add_space(6.0);
-    egui::ScrollArea::vertical().max_height(420.0).show(ui, |ui| {
+    // Tall enough for free rows + Pro section without nested scroll fighting.
+    egui::ScrollArea::vertical().max_height(560.0).show(ui, |ui| {
         egui::Grid::new("shortcuts_help_grid")
             .num_columns(2)
             .spacing([20.0, 5.0])
@@ -249,11 +304,14 @@ pub fn draw_help(ui: &mut egui::Ui) {
                 ui.strong("Keys");
                 ui.strong("Action");
                 ui.end_row();
-                for b in BINDINGS {
-                    ui.monospace(b.keys);
-                    ui.label(b.action);
+                // Pro panel toggles first when licensed (matches ribbon; stays above the fold).
+                if crate::pro::is_licensed() {
+                    ui.strong("Pro");
+                    ui.strong("");
                     ui.end_row();
+                    draw_binding_rows(ui, PRO_BINDINGS);
                 }
+                draw_binding_rows(ui, BINDINGS);
             });
     });
     ui.add_space(6.0);
