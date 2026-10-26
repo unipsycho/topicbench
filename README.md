@@ -8,14 +8,14 @@ Free, open-source MQTT explorer and monitor for builders and testers.
 
 ## Download
 
-Latest free release: **[v1.1.0](https://github.com/unipsycho/topicbench/releases/tag/v1.1.0)**
+Latest free release: **[v1.1.1](https://github.com/unipsycho/topicbench/releases/tag/v1.1.1)**
 
 | | |
 |:--|:--|
-| **Windows** portable (x64) | [TopicBench-windows-x64-portable.zip](https://github.com/unipsycho/topicbench/releases/download/v1.1.0/TopicBench-windows-x64-portable.zip) |
-| **Linux** AppImage (x64) | [TopicBench-x86_64.AppImage](https://github.com/unipsycho/topicbench/releases/download/v1.1.0/TopicBench-x86_64.AppImage) |
-| **Linux** binary (x64) | [topicbench-linux-x64](https://github.com/unipsycho/topicbench/releases/download/v1.1.0/topicbench-linux-x64) |
-| SHA-256 checksums | [SHA256SUMS](https://github.com/unipsycho/topicbench/releases/download/v1.1.0/SHA256SUMS) |
+| **Windows** portable (x64) | [TopicBench-windows-x64-portable.zip](https://github.com/unipsycho/topicbench/releases/download/v1.1.1/TopicBench-windows-x64-portable.zip) |
+| **Linux** AppImage (x64) | [TopicBench-x86_64.AppImage](https://github.com/unipsycho/topicbench/releases/download/v1.1.1/TopicBench-x86_64.AppImage) |
+| **Linux** binary (x64) | [topicbench-linux-x64](https://github.com/unipsycho/topicbench/releases/download/v1.1.1/topicbench-linux-x64) |
+| SHA-256 checksums | [SHA256SUMS](https://github.com/unipsycho/topicbench/releases/download/v1.1.1/SHA256SUMS) |
 
 Windows: unzip and run `TopicBench.exe`. The Release also keeps `topicbench-windows-x64.exe` for in-app updates.
 
