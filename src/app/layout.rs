@@ -5,7 +5,7 @@ use crate::mqtt::publish::PublishFromTree;
 use crate::mqtt::session::SessionState;
 use crate::ui::icons::{
     self, ribbon_compact_columns, CHROME_BG, CHROME_CAPTION, CHROME_MUTED, CHROME_SEP, CHROME_TEXT,
-    TINT_APP, TINT_PANELS, TINT_PRO, TINT_PROFILES,
+    RIBBON_ROW_H, TINT_APP, TINT_PANELS, TINT_PRO, TINT_PROFILES,
 };
 use crate::ui::ribbon_layout::{self, SectionMode};
 use crate::ui::shortcuts;
@@ -20,11 +20,11 @@ use image::RgbaImage;
 use std::collections::BTreeMap;
 use std::time::Instant;
 
-/// Authored `topicbench-logo-small` size (logical/UI px). Scaled down if taller than brand band.
+/// Authored `topicbench-logo-small` size (logical/UI px). Scaled to fit shared row.
 const RIBBON_LOGO_NATIVE_W: f32 = 164.0;
 const RIBBON_LOGO_NATIVE_H: f32 = 76.0;
-/// Brand/group band — matches ribbon group / separator height (CMD_H + pad).
-const RIBBON_BRAND_H: f32 = 70.0;
+/// Brand/group band — shared with Profiles/Panels/App via [`RIBBON_ROW_H`].
+const RIBBON_BRAND_H: f32 = RIBBON_ROW_H;
 /// Ribbon panel: brand band + vertical frame margins (4+4 from overlay).
 const RIBBON_PANEL_H: f32 = RIBBON_BRAND_H + 8.0;
 const STATUS_STRIP_H: f32 = 24.0;
@@ -435,19 +435,21 @@ impl MqttMonitorApp {
         // Left: brand → groups → Stats (Stats right-aligned inside left rect).
         ui.allocate_new_ui(egui::UiBuilder::new().max_rect(left_rect), |ui| {
             ui.set_clip_rect(left_rect);
-            // Top-align with groups (CMD_H band) — same as pre-logo-size ribbon.
-            ui.with_layout(egui::Layout::left_to_right(egui::Align::Min), |ui| {
+            // Center brand + groups in the shared RIBBON_ROW_H band (flush tops/bottoms).
+            ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                ui.set_height(brand_h);
                 ui.spacing_mut().item_spacing.x = 4.0;
 
                 ui.allocate_ui_with_layout(
                     egui::vec2(brand_w, brand_h),
                     egui::Layout::left_to_right(Align::Center),
                     |ui| {
+                        ui.set_height(brand_h);
                         ui.spacing_mut().item_spacing.x = 0.0;
                         let (logo_rect, _) = ui
                             .allocate_exact_size(egui::vec2(logo_w, brand_h), egui::Sense::hover());
                         if let Some(logo) = &self.logo {
-                            // Vertically center mark in the fixed brand band.
+                            // Center mark in shared row (may be shorter than row if scaled).
                             let logo_pos = egui::pos2(
                                 logo_rect.left(),
                                 logo_rect.center().y - logo_size.y * 0.5,
@@ -1032,13 +1034,15 @@ pub(super) fn load_logo(ctx: &egui::Context) -> Option<TextureHandle> {
     ))
 }
 
-/// Paint size in logical/UI px. Prefer authored 164×76; scale to fit [`RIBBON_BRAND_H`].
+/// Paint size in logical/UI px. Prefer authored 164×76; scale to fit command-cell height.
+/// Uses [`icons::CMD_H`] (not full row) so the mark aligns with icon cells inside groups
+/// (groups have 3px frame pad around CMD_H — logo gets the same visual air).
 fn ribbon_logo_paint_size() -> egui::Vec2 {
-    if RIBBON_LOGO_NATIVE_H <= RIBBON_BRAND_H {
+    let max_h = icons::CMD_H; // 64 — matches command cells; 3px air in RIBBON_ROW_H
+    if RIBBON_LOGO_NATIVE_H <= max_h {
         return egui::vec2(RIBBON_LOGO_NATIVE_W, RIBBON_LOGO_NATIVE_H);
     }
-    // 164×76 is taller than the restored 70px brand band — fit height, keep aspect.
-    let scale = RIBBON_BRAND_H / RIBBON_LOGO_NATIVE_H;
+    let scale = max_h / RIBBON_LOGO_NATIVE_H;
     egui::vec2(
         (RIBBON_LOGO_NATIVE_W * scale).round().max(1.0),
         (RIBBON_LOGO_NATIVE_H * scale).round().max(1.0),

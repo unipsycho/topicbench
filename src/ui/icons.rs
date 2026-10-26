@@ -56,6 +56,9 @@ pub const SECTION_ICON: f32 = 36.0;
 /// Slightly tighter horizontal; taller cell for caption bottom clearance.
 const CMD_W: f32 = 52.0;
 pub const CMD_H: f32 = 64.0;
+/// Shared ribbon row outer height: command cells + group frame pad (3+3).
+/// Brand, Profiles, Panels, App, Stats, and separators all use this exact height.
+pub const RIBBON_ROW_H: f32 = CMD_H + 6.0;
 /// Compact (collapsed ribbon) icon-only cell — two stack in [`CMD_H`].
 const COMPACT_ICON: f32 = 24.0; // trial: 72/3 — was 20
 pub const COMPACT_W: f32 = 32.0; // room for 24px glyph (+ was 28)
@@ -526,7 +529,8 @@ pub fn ribbon_compact_columns(ui: &mut egui::Ui, n: usize, mut add_btn: impl FnM
 }
 
 /// Content-sized ribbon group: tinted panel + 90° section label on the left rail.
-/// Shrink-wraps so later groups are not clipped to 0 width.
+/// Outer height is always [`RIBBON_ROW_H`] (CMD_H + 3+3 pad) — same as brand / separators.
+/// Shrink-wraps width so later groups are not clipped to 0.
 pub fn ribbon_group(
     ui: &mut egui::Ui,
     caption: &str,
@@ -538,14 +542,13 @@ pub fn ribbon_group(
         .corner_radius(3.0)
         .inner_margin(egui::Margin::symmetric(4, 3))
         .show(ui, |ui| {
-            // Pin shared body height so compact sections cannot shrink the tint.
+            // Exact body height — no drift from compact vs full content.
             ui.set_min_height(CMD_H);
             ui.set_max_height(CMD_H);
-            // Single LTR row of exact-size cells — no nested vertical expanders.
-            ui.horizontal(|ui| {
-                ui.set_min_height(CMD_H);
+            ui.set_height(CMD_H);
+            ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                ui.set_height(CMD_H);
                 ui.spacing_mut().item_spacing.x = 4.0;
-                // Left rail: rotated section name
                 let rail = Vec2::new(SECTION_RAIL_W, CMD_H);
                 let (rail_rect, _) = ui.allocate_exact_size(rail, Sense::hover());
                 paint_rotated_section_label(ui, rail_rect, caption);
@@ -576,10 +579,10 @@ fn paint_rotated_section_label(ui: &mut egui::Ui, rect: egui::Rect, caption: &st
     );
 }
 
-/// 1px vertical rule between groups (content-sized, not expanding).
+/// 1px vertical rule between groups — same outer height as [`ribbon_group`].
 pub fn ribbon_separator(ui: &mut egui::Ui) {
     ui.add_space(4.0);
-    let (rect, _) = ui.allocate_exact_size(Vec2::new(1.0, CMD_H + 6.0), Sense::hover());
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(1.0, RIBBON_ROW_H), Sense::hover());
     ui.painter().line_segment(
         [rect.center_top(), rect.center_bottom()],
         Stroke::new(1.0_f32, CHROME_SEP),
