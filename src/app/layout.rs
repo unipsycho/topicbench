@@ -1013,7 +1013,7 @@ pub(super) fn apply_font_zoom(ctx: &egui::Context, factor: f32) {
     ctx.style_mut(|s| s.text_styles = styles);
 }
 
-/// Ribbon brand: `assets/topicbench-logo-small.png` (164×76 authored).
+/// Ribbon brand: `assets/topicbench-logo-small.png` (logical 164×76; PNG may be 2×).
 /// Splash stays Agile. Nearest sampling; paint size may scale to fit brand band.
 pub(super) fn load_logo(ctx: &egui::Context) -> Option<TextureHandle> {
     let raw = image::load_from_memory(include_bytes!(
