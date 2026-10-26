@@ -20,8 +20,13 @@ use image::RgbaImage;
 use std::collections::BTreeMap;
 use std::time::Instant;
 
-/// Fallback ribbon panel height when logo is unavailable (70 brand + 4+4 margins).
-const RIBBON_PANEL_H_MIN: f32 = 78.0;
+/// Ribbon brand logo paint size (logical/UI px) — matches `topicbench-logo-small`.
+const RIBBON_LOGO_W: f32 = 164.0;
+const RIBBON_LOGO_H: f32 = 76.0;
+/// Brand/group band height — fits logo; groups center inside (CMD_H + pad ≈ 70).
+const RIBBON_BRAND_H: f32 = RIBBON_LOGO_H;
+/// Ribbon panel: brand band + vertical frame margins (4+4 from overlay).
+const RIBBON_PANEL_H: f32 = RIBBON_BRAND_H + 8.0;
 const STATUS_STRIP_H: f32 = 24.0;
 
 /// Rects reserved by top chrome panels (real UI paints later on Middle overlays).
@@ -337,10 +342,9 @@ impl MqttMonitorApp {
     /// Reserve top chrome space only — real ribbon/status paint after CentralPanel
     /// on Middle overlays so sticky/tree scroll cannot draw over the navbar.
     pub(super) fn reserve_top_chrome(&mut self, ctx: &egui::Context) -> TopChromeRects {
-        let ribbon_h = ribbon_panel_height(self.logo.as_ref(), ctx.pixels_per_point());
         let ribbon = egui::TopBottomPanel::top("ribbon")
             .resizable(false)
-            .exact_height(ribbon_h)
+            .exact_height(RIBBON_PANEL_H)
             .show_separator_line(false)
             .frame(
                 egui::Frame::NONE
@@ -384,11 +388,10 @@ impl MqttMonitorApp {
         ui.visuals_mut().override_text_color = Some(CHROME_TEXT);
         ui.spacing_mut().item_spacing.y = 0.0;
 
-        // Native 1:1 logo (1 source px = 1 device px); brand band grows to fit.
-        let ppp = ctx.pixels_per_point().max(0.5);
-        let logo_size = ribbon_logo_paint_size(self.logo.as_ref(), ppp);
+        // Logo: exact 164×76 — ribbon height stays fixed (not driven by asset).
+        let logo_size = ribbon_logo_paint_size();
         let logo_w = logo_size.x;
-        let brand_h = logo_size.y.max(70.0);
+        let brand_h = RIBBON_BRAND_H;
         let gap = 6.0;
         // Absolute right strip — never culled by LTR overflow / leftover width.
         let zoom_strip_w = icons::ZOOM_STACK_W;
@@ -432,7 +435,8 @@ impl MqttMonitorApp {
         // Left: brand → groups → Stats (Stats right-aligned inside left rect).
         ui.allocate_new_ui(egui::UiBuilder::new().max_rect(left_rect), |ui| {
             ui.set_clip_rect(left_rect);
-            ui.with_layout(egui::Layout::left_to_right(egui::Align::Min), |ui| {
+            // Center groups in the brand band so a 76px logo does not leave a bottom gap.
+            ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
                 ui.spacing_mut().item_spacing.x = 4.0;
 
                 ui.allocate_ui_with_layout(
@@ -443,7 +447,7 @@ impl MqttMonitorApp {
                         let (logo_rect, _) = ui
                             .allocate_exact_size(egui::vec2(logo_w, brand_h), egui::Sense::hover());
                         if let Some(logo) = &self.logo {
-                            // Vertically center in brand band; leave a hair of air top/bottom.
+                            // Vertically center exact 164×76 mark in the brand band.
                             let logo_pos = egui::pos2(
                                 logo_rect.left(),
                                 logo_rect.center().y - logo_size.y * 0.5,
@@ -452,7 +456,7 @@ impl MqttMonitorApp {
                                 egui::Rect::from_min_size(logo_pos, logo_size),
                                 egui::Image::new(logo)
                                     .fit_to_exact_size(logo_size)
-                                    .maintain_aspect_ratio(true)
+                                    .maintain_aspect_ratio(false)
                                     .sense(egui::Sense::hover()),
                             );
                         }
@@ -1007,8 +1011,8 @@ pub(super) fn apply_font_zoom(ctx: &egui::Context, factor: f32) {
     ctx.style_mut(|s| s.text_styles = styles);
 }
 
-/// Ribbon brand: `assets/topicbench-logo-small.png` at **native 1:1** (no resize).
-/// Splash stays Agile. Point/Nearest sampling only.
+/// Ribbon brand: `assets/topicbench-logo-small.png` painted at exact 164×76.
+/// Splash stays Agile. Nearest sampling (1:1 with authored asset).
 pub(super) fn load_logo(ctx: &egui::Context) -> Option<TextureHandle> {
     let raw = image::load_from_memory(include_bytes!(
         "../../assets/topicbench-logo-small.png"
@@ -1028,19 +1032,9 @@ pub(super) fn load_logo(ctx: &egui::Context) -> Option<TextureHandle> {
     ))
 }
 
-/// Paint size in points: 1 source pixel = 1 device pixel (`texels / ppp`).
-fn ribbon_logo_paint_size(logo: Option<&TextureHandle>, ppp: f32) -> egui::Vec2 {
-    let ppp = ppp.max(0.5);
-    logo.map(|l| {
-        let s = l.size_vec2();
-        egui::vec2((s.x / ppp).round().max(1.0), (s.y / ppp).round().max(1.0))
-    })
-    .unwrap_or(egui::vec2(194.0, 90.0))
-}
-
-fn ribbon_panel_height(logo: Option<&TextureHandle>, ppp: f32) -> f32 {
-    let brand = ribbon_logo_paint_size(logo, ppp).y.max(70.0);
-    (brand + 8.0).max(RIBBON_PANEL_H_MIN)
+/// Fixed paint size in logical/UI px — always 164×76.
+fn ribbon_logo_paint_size() -> egui::Vec2 {
+    egui::vec2(RIBBON_LOGO_W, RIBBON_LOGO_H)
 }
 
 /// Larger AA mark for the startup splash (~half-window paint).
