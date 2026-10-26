@@ -280,13 +280,14 @@ pub fn draw_help(ui: &mut egui::Ui) {
                 ui.strong("Keys");
                 ui.strong("Action");
                 ui.end_row();
-                draw_binding_rows(ui, BINDINGS);
+                // Pro panel toggles first when licensed (matches ribbon; stays above the fold).
                 if crate::pro::is_licensed() {
                     ui.strong("Pro");
                     ui.strong("");
                     ui.end_row();
                     draw_binding_rows(ui, PRO_BINDINGS);
                 }
+                draw_binding_rows(ui, BINDINGS);
             });
     });
     ui.add_space(6.0);
