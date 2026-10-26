@@ -33,7 +33,7 @@ TopicBench Pro is the paid companion — a standalone download for licensed cust
 - **Payload inspect** — clear views for JSON and plain text
 - **Stickies & graphs** — pin important topics and watch values over time
 - **Search** — find topics and payloads without leaving the desktop UI
-- **Free & open source** — use it, fork it, ship it
+- **Free & open source** — use it, report issues, contribute.
 - **Updates via GitHub Releases** — in-app check when releases are published
 
 ## Features
