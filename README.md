@@ -17,7 +17,7 @@ Latest free release: **[v1.1.1](https://github.com/unipsycho/topicbench/releases
 | **Arch / Omarchy** (AUR) | [`topicbench-bin`](packaging/aur/topicbench-bin) — `yay -S topicbench-bin` |
 | SHA-256 checksums | [SHA256SUMS](https://github.com/unipsycho/topicbench/releases/download/v1.1.1/SHA256SUMS) |
 
-Windows: unzip and run `TopicBench.exe`. The Release also keeps `topicbench-windows-x64.exe` for in-app updates.
+Windows: unzip and run `TopicBench.exe`.
 
 Arch: AUR package installs the Release binary + desktop entry (OSS only). PKGBUILD lives in-tree; publish steps in [`packaging/aur/README.md`](packaging/aur/README.md).
 
