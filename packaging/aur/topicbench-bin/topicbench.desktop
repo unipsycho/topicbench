@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=TopicBench
+Comment=Multi-broker MQTT explorer and monitor
+Exec=topicbench
+Icon=topicbench
+Terminal=false
+Categories=Network;
+StartupWMClass=com.agileautomation.mqtt-master
+Keywords=MQTT;IoT;broker;topics;
