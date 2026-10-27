@@ -1,0 +1,55 @@
+# Maintainer: Mike / Agile Automation <mike@agileautomation.ca>
+# Binary package of TopicBench (OSS) from GitHub Releases.
+# Prefer this over packaging the AppImage: installs a normal ELF to /usr/bin
+# with .desktop + icon, and uses system libxcb / libxkbcommon / Vulkan|GL.
+
+pkgname=topicbench-bin
+pkgver=1.1.1
+pkgrel=1
+pkgdesc='Multi-broker MQTT explorer and monitor (prebuilt binary)'
+arch=('x86_64')
+url='https://github.com/unipsycho/topicbench'
+license=('MIT' 'Apache-2.0')
+depends=(
+  'libxcb'
+  'libxkbcommon'
+  'libxkbcommon-x11'
+  'wayland'
+  'vulkan-icd-loader'
+  'dbus'
+)
+optdepends=(
+  'mesa: OpenGL / Vulkan ICD for GPU rendering'
+  'libsecret: store MQTT credentials in the OS keyring'
+)
+provides=('topicbench')
+conflicts=('topicbench')
+options=('!strip' '!debug')
+source=(
+  "topicbench-linux-x64-${pkgver}::https://github.com/unipsycho/topicbench/releases/download/v${pkgver}/topicbench-linux-x64"
+  'topicbench.desktop'
+  'topicbench.png'
+  'LICENSE-MIT'
+  'LICENSE-APACHE'
+)
+sha256sums=(
+  '049c2ce16801225a8cc6be2fbb3bae3e9f99d05aff201e5c1fd0f9ef41cf5154'
+  'd75afb405b488da17ba67d315e55907d5076f478af208dc51f6a5b1c57e176f0'
+  '5ebf960ed0a7c9125cd6875ebfdc93b0758dbe5ad5ad61a3166e9f2d1099c01b'
+  'cfd9aa40af9d85ca63ef620485aeda7afa16b8ef75ece0b784ccb45bf4490eb3'
+  'cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30'
+)
+
+package() {
+  install -Dm755 "topicbench-linux-x64-${pkgver}" "${pkgdir}/usr/bin/topicbench"
+  install -Dm644 topicbench.desktop \
+    "${pkgdir}/usr/share/applications/topicbench.desktop"
+  install -Dm644 topicbench.png \
+    "${pkgdir}/usr/share/icons/hicolor/256x256/apps/topicbench.png"
+  install -Dm644 topicbench.png \
+    "${pkgdir}/usr/share/pixmaps/topicbench.png"
+  install -Dm644 LICENSE-MIT \
+    "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE-MIT"
+  install -Dm644 LICENSE-APACHE \
+    "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE-APACHE"
+}
