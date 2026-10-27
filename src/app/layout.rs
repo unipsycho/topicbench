@@ -868,17 +868,8 @@ impl MqttMonitorApp {
             );
         }
 
-        // Apply pending jump before drawing so expand state is ready for this frame's tree.
-        if let Some(jump) = self.pending_bookmark_jump.take() {
-            crate::ui::bookmarks_panel::apply_jump(
-                ctx,
-                &self.sessions,
-                &mut self.pins,
-                &jump,
-                &mut self.scroll_tree_to,
-                &mut self.status,
-            );
-        }
+        // Bookmark jumps are applied in update() before draw_panels so the tree
+        // can expand + scroll_to on the same paint as scroll_tree_to is set.
 
         if crate::pro::has(crate::pro::Entitlement::TopicBookmarks) {
             let profile_names: Vec<(String, String)> = self
