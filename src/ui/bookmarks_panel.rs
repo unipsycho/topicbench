@@ -672,6 +672,8 @@ fn paint_bookmarks_body(
     }
     if let Some(j) = jump {
         *pending_jump = Some(j);
+        // Next frame applies expand/scroll before the topic tree paints.
+        ui.ctx().request_repaint();
     }
 }
 
@@ -710,6 +712,8 @@ pub fn apply_jump(
     ));
     *scroll_to = Some((jump.profile_id.clone(), jump.topic.clone()));
     *status = format!("Jumped to {}", jump.topic);
+    // Tree may paint next frame (jump often set after this frame's tree draw).
+    ctx.request_repaint();
 }
 
 fn open_ancestors(ctx: &egui::Context, profile_id: &str, topic: &str) {
@@ -730,6 +734,8 @@ fn set_path_open(ctx: &egui::Context, profile_id: &str, path: &str, open: bool) 
         egui::collapsing_header::CollapsingState::load_with_default_open(ctx, id, open);
     state.set_open(open);
     state.store(ctx);
+    // Snap openness so the target row lays out this frame (no 10px expand stub).
+    let _ = ctx.animate_bool_with_time(id, open, 0.0);
 }
 
 fn set_subtree_open_pub(
