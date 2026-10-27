@@ -8,9 +8,9 @@ Arch / Omarchy package for **TopicBench** free OSS — never TopicBench Pro.
 |----------|--------|--------|
 | **`topicbench-bin`** | Prebuilt binary from GitHub Releases | Preferred. Installs `topicbench-linux-x64` → `/usr/bin/topicbench`, plus `.desktop` + icon. |
 
-**Why `-bin`, not AppImage or source?** AppImage is already a download-and-run asset on Releases; pacman users expect a normal ELF under `/usr/bin` with desktop integration and system GUI deps (`libxcb`, `libxkbcommon`, Wayland, Vulkan/GL). A source package (`topicbench`) is fine later; `-bin` ships today without a Rust toolchain on the user machine. Name `topicbench` is reserved via `provides`/`conflicts` for a future source PKGBUILD.
+**Why `-bin`, not source?** Pacman users expect a normal ELF under `/usr/bin` with desktop integration and system GUI deps (`libxcb`, `libxkbcommon`, Wayland, Vulkan/GL). The Release ships `topicbench-linux-x64` for download and the in-app updater; `-bin` wraps that same asset. A source package (`topicbench`) is fine later; `-bin` ships today without a Rust toolchain on the user machine. Name `topicbench` is reserved via `provides`/`conflicts` for a future source PKGBUILD.
 
-No AUR name collision as of package prep (RPC search empty for `topicbench`, `topicbench-bin`, `topicbench-git`, `topicbench-appimage`).
+No AUR name collision as of package prep (RPC search empty for `topicbench`, `topicbench-bin`, `topicbench-git`).
 
 ## Install (after AUR publish)
 
