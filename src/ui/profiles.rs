@@ -376,8 +376,18 @@ pub fn draw(
                 }
                 ui.horizontal(|ui| {
                     ui.label("Client ID");
-                    ui.text_edit_singleline(&mut profile.client_id);
+                    // Static ID kept when Unique is off; disabled while UUID overrides CONNECT.
+                    let edit = egui::TextEdit::singleline(&mut profile.client_id);
+                    if profile.unique_client_id {
+                        ui.add_enabled(false, edit);
+                    } else {
+                        ui.add(edit);
+                    }
                 });
+                hover_tip::attach(
+                    ui.checkbox(&mut profile.unique_client_id, "Unique client ID (UUID)"),
+                    "Use a fresh UUID as the MQTT client ID on each connect. Avoids \"client already connected\" when multiple TopicBench instances share this profile.",
+                );
                 ui.horizontal(|ui| {
                     ui.label("Username");
                     ui.text_edit_singleline(&mut profile.username);

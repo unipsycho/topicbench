@@ -30,6 +30,8 @@ sha2 = "0.10"
 # License file verify (ed25519 public key) + machine-ID binding.
 ed25519-dalek = "2"
 base64 = "0.22"
+# Fresh MQTT client IDs when a profile opts into Unique client ID (UUID).
+uuid = { version = "1", features = ["v4"] }
 
 # Windows MachineGuid for Pro license machine binding (Linux uses /etc/machine-id).
 [target.'cfg(windows)'.dependencies]

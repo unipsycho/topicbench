@@ -110,7 +110,9 @@ pub fn spawn(
     ui_focused: Arc<AtomicBool>,
 ) -> Result<LiveHandle, String> {
     // WebSocket: broker_addr is a full ws(s):// URL; rumqttc ignores the port arg then.
-    let mut opts = MqttOptions::new(&profile.client_id, &profile.broker_addr(), profile.port);
+    // Unique client ID (UUID) profiles get a fresh id per Connect; see ConnectionProfile::connect_client_id.
+    let client_id = profile.connect_client_id();
+    let mut opts = MqttOptions::new(&client_id, &profile.broker_addr(), profile.port);
     opts.set_keep_alive(Duration::from_secs(30));
     opts.set_clean_session(true);
     opts.set_pending_throttle(Duration::from_secs(1));
