@@ -58,44 +58,29 @@ pub fn draw(
     recordings: &mut crate::pro::recording::RecordingStore,
     tree_export_open: &mut bool,
 ) {
+    // Hide Import/Export entirely when unlicensed (same rule as Pro ribbon).
     let export_ok = crate::pro::has(crate::pro::Entitlement::TreeExport);
     icons::section_header_bar(ui, |ui| {
         icons::section_icon(ui, icons, "topic_tree");
         icons::section_title(ui, "Topic tree");
-        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            ui.spacing_mut().item_spacing.x = 4.0;
-            let export_tip = if export_ok {
-                "Export topic tree JSON"
-            } else {
-                "Export — requires TopicBench Pro"
-            };
-            let import_tip = if export_ok {
-                "Import topic tree JSON (republish)"
-            } else {
-                "Import — requires TopicBench Pro"
-            };
-            // Far right: Import then Export (RTL → Export appears rightmost).
-            if icons
-                .tiny(ui, "export", false, export_tip)
-                .clicked()
-            {
-                if export_ok {
+        if export_ok {
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                ui.spacing_mut().item_spacing.x = 4.0;
+                // Far right: Import then Export (RTL → Export appears rightmost).
+                if icons
+                    .tiny(ui, "export", false, "Export topic tree JSON")
+                    .clicked()
+                {
                     *tree_export_open = true;
-                } else {
-                    *status = "Topic tree Export requires TopicBench Pro".into();
                 }
-            }
-            if icons
-                .tiny(ui, "import", false, import_tip)
-                .clicked()
-            {
-                if export_ok {
+                if icons
+                    .tiny(ui, "import", false, "Import topic tree JSON (republish)")
+                    .clicked()
+                {
                     run_tree_import(sessions, profiles, pins, status);
-                } else {
-                    *status = "Topic tree Import requires TopicBench Pro".into();
                 }
-            }
-        });
+            });
+        }
     });
     // Topic filter lives under the section header, above broker/tree rows.
     crate::ui::search_bar::draw(ui, filter, focus_search);
