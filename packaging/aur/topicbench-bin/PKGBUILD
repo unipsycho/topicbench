@@ -1,7 +1,7 @@
 # Maintainer: Mike / Agile Automation <mike@agileautomation.ca>
 # Binary package of TopicBench (OSS) from GitHub Releases.
-# Prefer this over packaging the AppImage: installs a normal ELF to /usr/bin
-# with .desktop + icon, and uses system libxcb / libxkbcommon / Vulkan|GL.
+# Installs the Release topicbench-linux-x64 ELF to /usr/bin with .desktop +
+# icon, using system libxcb / libxkbcommon / Vulkan|GL.
 
 pkgname=topicbench-bin
 pkgver=1.1.1
