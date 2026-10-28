@@ -1,5 +1,6 @@
 //! Browsable topic hierarchy built from live subscribed traffic.
 
+use crate::mqtt::publish::MqttMsgProps;
 use std::collections::{BTreeMap, VecDeque};
 use std::time::{Duration, Instant};
 
@@ -17,6 +18,8 @@ pub struct TopicNode {
     pub last_payload: Option<String>,
     /// MQTT RETAIN flag from the last message on this leaf.
     pub last_retain: bool,
+    /// MQTT 5 properties from the last message (empty when none / MQTT 3.1.1).
+    pub last_props: MqttMsgProps,
     pub message_count: u64,
     pub flash_until: Option<Instant>,
     /// Timed full payloads for Payload scrub (oldest → newest).
@@ -35,11 +38,19 @@ impl TopicNode {
 
     /// Insert/update `topic` with `payload` and MQTT `retain` flag.
     pub fn observe(&mut self, topic: &str, payload: &str, retain: bool, now: Instant) {
-        self.observe_n(topic, payload, retain, now, 1);
+        self.observe_n(topic, payload, retain, now, 1, None);
     }
 
     /// Like [`observe`], but bumps the leaf count by `n` (coalesced UI-frame batch).
-    pub fn observe_n(&mut self, topic: &str, payload: &str, retain: bool, now: Instant, n: u64) {
+    pub fn observe_n(
+        &mut self,
+        topic: &str,
+        payload: &str,
+        retain: bool,
+        now: Instant,
+        n: u64,
+        props: Option<&MqttMsgProps>,
+    ) {
         let flash = now + Duration::from_millis(FLASH_MS);
         let n = n.max(1);
         let parts: Vec<&str> = topic.split('/').collect();
@@ -49,6 +60,7 @@ impl TopicNode {
             if i + 1 == parts.len() {
                 node.last_payload = Some(payload.to_string());
                 node.last_retain = retain;
+                node.last_props = props.cloned().unwrap_or_default();
                 node.message_count = node.message_count.saturating_add(n);
                 node.flash_until = Some(flash);
             }
@@ -94,6 +106,7 @@ impl TopicNode {
             self.children.clear();
             self.last_payload = None;
             self.last_retain = false;
+            self.last_props = MqttMsgProps::default();
             self.message_count = 0;
             self.flash_until = None;
             self.payload_history.clear();
@@ -121,8 +134,16 @@ impl TopicTree {
         self.root.observe(topic, payload, retain, now);
     }
 
-    pub fn observe_n(&mut self, topic: &str, payload: &str, retain: bool, now: Instant, n: u64) {
-        self.root.observe_n(topic, payload, retain, now, n);
+    pub fn observe_n(
+        &mut self,
+        topic: &str,
+        payload: &str,
+        retain: bool,
+        now: Instant,
+        n: u64,
+        props: Option<&MqttMsgProps>,
+    ) {
+        self.root.observe_n(topic, payload, retain, now, n, props);
     }
 
     /// Drop a topic path and all descendants from the session display tree (not the broker).
@@ -160,11 +181,11 @@ mod tests {
     fn observe_n_keeps_latest_payload_and_count() {
         let mut tree = TopicTree::default();
         let now = Instant::now();
-        tree.observe_n("sensors/lab/temp", "21.5", false, now, 7);
+        tree.observe_n("sensors/lab/temp", "21.5", false, now, 7, None);
         let leaf = tree.root.node_at("sensors/lab/temp").unwrap();
         assert_eq!(leaf.last_payload.as_deref(), Some("21.5"));
         assert_eq!(leaf.message_count, 7);
-        tree.observe_n("sensors/lab/temp", "22.0", true, now, 3);
+        tree.observe_n("sensors/lab/temp", "22.0", true, now, 3, None);
         let leaf = tree.root.node_at("sensors/lab/temp").unwrap();
         assert_eq!(leaf.last_payload.as_deref(), Some("22.0"));
         assert!(leaf.last_retain);

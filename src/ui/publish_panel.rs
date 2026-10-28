@@ -1,6 +1,6 @@
 //! Publish panel: rumqttc publish + Recent history restore.
 
-use crate::mqtt::profile::ProfileStore;
+use crate::mqtt::profile::{MqttVersion, ProfileStore};
 use crate::mqtt::publish::{PublishDraft, PublishHistory, RecentPublish, Qos};
 use crate::mqtt::session::{SessionManager, SessionState};
 use crate::ui::hover_tip;
@@ -85,6 +85,56 @@ pub fn draw(
         ui.checkbox(&mut draft.retain, "Retain");
     });
 
+    // MQTT 5 publish fields when the selected connected profile speaks v5.
+    let draft_is_v5 = draft
+        .profile_id
+        .as_ref()
+        .and_then(|id| profiles.profiles.get(id))
+        .map(|p| p.mqtt_version == MqttVersion::V5)
+        .unwrap_or(false);
+    if draft_is_v5 {
+        ui.add_space(4.0);
+        ui.horizontal(|ui| {
+            ui.label("Content type");
+            ui.add(
+                egui::TextEdit::singleline(&mut draft.content_type)
+                    .desired_width(180.0)
+                    .hint_text("application/json"),
+            );
+            ui.label("Expiry (s)");
+            ui.add(
+                egui::TextEdit::singleline(&mut draft.message_expiry_secs)
+                    .desired_width(64.0)
+                    .hint_text("optional"),
+            );
+        });
+        ui.label("User properties");
+        let mut remove_idx: Option<usize> = None;
+        for (i, (k, v)) in draft.user_properties.iter_mut().enumerate() {
+            ui.horizontal(|ui| {
+                ui.add(
+                    egui::TextEdit::singleline(k)
+                        .desired_width(100.0)
+                        .hint_text("key"),
+                );
+                ui.add(
+                    egui::TextEdit::singleline(v)
+                        .desired_width(140.0)
+                        .hint_text("value"),
+                );
+                if ui.small_button("×").on_hover_text("Remove property").clicked() {
+                    remove_idx = Some(i);
+                }
+            });
+        }
+        if let Some(i) = remove_idx {
+            draft.user_properties.remove(i);
+        }
+        if ui.small_button("+ Add property").clicked() {
+            draft.user_properties.push((String::new(), String::new()));
+        }
+    }
+
     // Same chrome as Profiles Connect/Disconnect — icon + label.
     let publish_clicked = if let Some(tex) = icons.get("publish_message") {
         ui.add(
@@ -105,8 +155,19 @@ pub fn draw(
         } else {
             match draft.profile_id.as_deref() {
                 Some(id) => {
-                    match sessions.publish_live(id, &draft.topic, &draft.payload, draft.qos, draft.retain)
-                    {
+                    let props = if draft_is_v5 {
+                        draft.mqtt5_props()
+                    } else {
+                        None
+                    };
+                    match sessions.publish_live_props(
+                        id,
+                        &draft.topic,
+                        &draft.payload,
+                        draft.qos,
+                        draft.retain,
+                        props.as_ref(),
+                    ) {
                         Ok(()) => {
                             let broker = connected
                                 .iter()
@@ -200,8 +261,8 @@ pub fn draw(
     });
 }
 
-/// Leave room below the editor for QoS, Publish, separator, Recent header, and a usable list.
-const RESERVE_BELOW_PAYLOAD: f32 = 240.0;
+/// Leave room below the editor for QoS, MQTT5 props, Publish, separator, Recent header.
+const RESERVE_BELOW_PAYLOAD: f32 = 300.0;
 /// Floor so a short payload still shows ~8 monospace rows.
 const PAYLOAD_MIN_H: f32 = 120.0;
 

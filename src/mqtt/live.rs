@@ -2,13 +2,16 @@
 //!
 //! Intentional disconnect sets `stop` so the worker exits and does **not**
 //! auto-reconnect until the user Connects again.
+//!
+//! MQTT 3.1.1 and MQTT 5 use separate rumqttc client types; [`LiveClient`] wraps both.
 
 use crate::mqtt::certs;
-use crate::mqtt::profile::{ConnectionProfile, ProfileTransport};
+use crate::mqtt::profile::{ConnectionProfile, MqttVersion, ProfileTransport};
+use crate::mqtt::publish::{MqttMsgProps, Qos as AppQos};
 use crate::mqtt::session::SessionState;
 use crate::mqtt::settings::WIRE_MAX_PACKET;
 use eframe::egui::Context;
-use rumqttc::{Client, Event, MqttOptions, Packet, QoS, Transport};
+use rumqttc::{Client as ClientV311, Event as EventV311, MqttOptions as OptsV311, Packet as PacketV311, Transport};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Sender;
 use std::sync::Arc;
@@ -36,6 +39,8 @@ pub enum BrokerEvent {
         retain: bool,
         /// Raw publish payload length in bytes (before soft-limit placeholder).
         payload_bytes: usize,
+        /// MQTT 5 properties (empty for 3.1.1 / absent props).
+        props: MqttMsgProps,
     },
     /// Non-fatal note (e.g. skipped oversized payload) — does not change connection state.
     Notice {
@@ -45,56 +50,127 @@ pub enum BrokerEvent {
     },
 }
 
+/// Protocol-specific rumqttc client handle.
+pub enum LiveClient {
+    V311(ClientV311),
+    V5(rumqttc::v5::Client),
+}
+
+impl LiveClient {
+    pub fn disconnect(&self) {
+        match self {
+            Self::V311(c) => {
+                let _ = c.disconnect();
+            }
+            Self::V5(c) => {
+                let _ = c.disconnect();
+            }
+        }
+    }
+
+    pub fn subscribe(&self, filter: &str, qos: AppQos) -> Result<(), String> {
+        match self {
+            Self::V311(c) => c
+                .subscribe(filter, to_qos_v311(qos))
+                .map_err(|e| format!("subscribe: {e}")),
+            Self::V5(c) => c
+                .subscribe(filter, to_qos_v5(qos))
+                .map_err(|e| format!("subscribe: {e}")),
+        }
+    }
+
+    pub fn unsubscribe(&self, filter: &str) -> Result<(), String> {
+        match self {
+            Self::V311(c) => c
+                .unsubscribe(filter)
+                .map_err(|e| format!("unsubscribe: {e}")),
+            Self::V5(c) => c
+                .unsubscribe(filter)
+                .map_err(|e| format!("unsubscribe: {e}")),
+        }
+    }
+
+    pub fn publish(
+        &self,
+        topic: &str,
+        qos: AppQos,
+        retain: bool,
+        payload: &[u8],
+        props: Option<&MqttMsgProps>,
+    ) -> Result<(), String> {
+        match self {
+            Self::V311(c) => c
+                .publish(topic, to_qos_v311(qos), retain, payload)
+                .map_err(|e| format!("publish: {e}")),
+            Self::V5(c) => {
+                // rumqttc v5 Publish payload requires owned Bytes ('static).
+                let owned = payload.to_vec();
+                let cleaned = props.map(|p| p.cleaned()).filter(|p| !p.is_empty());
+                if let Some(p) = cleaned {
+                    let mut pp = rumqttc::v5::mqttbytes::v5::PublishProperties::default();
+                    pp.user_properties = p.user_properties;
+                    pp.content_type = p.content_type;
+                    pp.message_expiry_interval = p.message_expiry_interval;
+                    pp.payload_format_indicator = p.payload_format_indicator;
+                    c.publish_with_properties(topic, to_qos_v5(qos), retain, owned, pp)
+                        .map_err(|e| format!("publish: {e}"))
+                } else {
+                    c.publish(topic, to_qos_v5(qos), retain, owned)
+                        .map_err(|e| format!("publish: {e}"))
+                }
+            }
+        }
+    }
+
+    pub fn is_v5(&self) -> bool {
+        matches!(self, Self::V5(_))
+    }
+}
+
 /// Handle returned to the UI: client for pub/sub + stop flag for Disconnect.
 pub struct LiveHandle {
-    pub client: Client,
+    pub client: LiveClient,
     pub stop: Arc<AtomicBool>,
 }
 
 const MIN_BACKOFF: Duration = Duration::from_millis(500);
 const MAX_BACKOFF: Duration = Duration::from_secs(15);
+const STATUS_MIN_INTERVAL: Duration = Duration::from_millis(400);
 
-/// MQTT TCP / TLS, or WebSocket / WSS (same certs folder as TLS).
-fn apply_transport(profile: &ConnectionProfile, opts: &mut MqttOptions) -> Result<(), String> {
+/// Build TLS / WS / WSS transport shared by v3 and v5 options.
+fn build_transport(profile: &ConnectionProfile) -> Result<Transport, String> {
     let want_tls = profile.want_tls();
     match profile.transport {
         ProfileTransport::Mqtt => {
             if !want_tls {
-                return Ok(());
+                return Ok(Transport::Tcp);
             }
             match certs::discover_optional(&profile.certs_dir) {
                 Ok(Some(resolved)) => {
                     let (ca, client_cert, key) =
                         resolved.load_pem().map_err(|e| format!("TLS certs: {e}"))?;
-                    opts.set_transport(Transport::tls(ca, Some((client_cert, key)), None));
+                    Ok(Transport::tls(ca, Some((client_cert, key)), None))
                 }
-                Ok(None) => {
-                    opts.set_transport(Transport::tls_with_default_config());
-                }
-                Err(e) => return Err(format!("TLS certs: {e}")),
+                Ok(None) => Ok(Transport::tls_with_default_config()),
+                Err(e) => Err(format!("TLS certs: {e}")),
             }
         }
         ProfileTransport::WebSocket => {
             if !want_tls {
-                opts.set_transport(Transport::Ws);
-                return Ok(());
+                return Ok(Transport::Ws);
             }
             match certs::discover_optional(&profile.certs_dir) {
                 Ok(Some(resolved)) => {
                     let (ca, client_cert, key) =
                         resolved.load_pem().map_err(|e| format!("TLS certs: {e}"))?;
-                    opts.set_transport(Transport::wss(ca, Some((client_cert, key)), None));
+                    Ok(Transport::wss(ca, Some((client_cert, key)), None))
                 }
-                Ok(None) => {
-                    opts.set_transport(Transport::wss_with_default_config());
-                }
-                Err(e) => return Err(format!("TLS certs: {e}")),
+                Ok(None) => Ok(Transport::wss_with_default_config()),
+                Err(e) => Err(format!("TLS certs: {e}")),
             }
         }
     }
-    Ok(())
 }
-const STATUS_MIN_INTERVAL: Duration = Duration::from_millis(400);
 
 /// Build options + spawn event-loop thread.
 ///
@@ -109,22 +185,32 @@ pub fn spawn(
     ctx: Context,
     ui_focused: Arc<AtomicBool>,
 ) -> Result<LiveHandle, String> {
-    // WebSocket: broker_addr is a full ws(s):// URL; rumqttc ignores the port arg then.
-    // Unique client ID (UUID) profiles get a fresh id per Connect; see ConnectionProfile::connect_client_id.
+    match profile.mqtt_version {
+        MqttVersion::V311 => spawn_v311(profile, soft_max_bytes, generation, event_tx, ctx, ui_focused),
+        MqttVersion::V5 => spawn_v5(profile, soft_max_bytes, generation, event_tx, ctx, ui_focused),
+    }
+}
+
+fn spawn_v311(
+    profile: &ConnectionProfile,
+    soft_max_bytes: usize,
+    generation: u64,
+    event_tx: Sender<BrokerEvent>,
+    ctx: Context,
+    ui_focused: Arc<AtomicBool>,
+) -> Result<LiveHandle, String> {
     let client_id = profile.connect_client_id();
-    let mut opts = MqttOptions::new(&client_id, &profile.broker_addr(), profile.port);
+    let mut opts = OptsV311::new(&client_id, &profile.broker_addr(), profile.port);
     opts.set_keep_alive(Duration::from_secs(30));
     opts.set_clean_session(true);
     opts.set_pending_throttle(Duration::from_secs(1));
-    // Wire limit stays high — Settings soft limit is enforced after decode.
     opts.set_max_packet_size(WIRE_MAX_PACKET, WIRE_MAX_PACKET);
     if !profile.username.is_empty() {
         opts.set_credentials(&profile.username, &profile.password);
     }
-    apply_transport(profile, &mut opts)?;
+    opts.set_transport(build_transport(profile)?);
 
-    // Larger request channel — `#` floods + retained bursts shouldn't stall pub/sub requests.
-    let (client, mut connection) = Client::new(opts, 1024);
+    let (client, mut connection) = ClientV311::new(opts, 1024);
     let stop = Arc::new(AtomicBool::new(false));
     let stop_w = stop.clone();
     let profile_id = profile.id.clone();
@@ -133,20 +219,7 @@ pub fn spawn(
     let soft_kb = (soft_max / 1024).max(1);
     let tx = event_tx;
 
-    emit_state(
-        &tx,
-        &ctx,
-        &ui_focused,
-        &profile_id,
-        generation,
-        SessionState::Connecting,
-        format!("Connecting to {endpoint}…"),
-        &mut None,
-        &mut Instant::now()
-            .checked_sub(STATUS_MIN_INTERVAL)
-            .unwrap_or_else(Instant::now),
-        true,
-    );
+    emit_connecting(&tx, &ctx, &ui_focused, &profile_id, generation, &endpoint);
 
     thread::Builder::new()
         .name(format!("mqtt-{profile_id}"))
@@ -156,17 +229,15 @@ pub fn spawn(
             let mut last_emit = Instant::now()
                 .checked_sub(STATUS_MIN_INTERVAL)
                 .unwrap_or_else(Instant::now);
-            // Keep the real failure reason — generic "Session ended" must not overwrite it.
             let mut fatal_detail: Option<String> = None;
 
             for notification in connection.iter() {
-                // User Disconnect — leave the loop; do not reconnect.
                 if stop_w.load(Ordering::SeqCst) {
                     break;
                 }
 
                 match notification {
-                    Ok(Event::Incoming(Packet::ConnAck(ack))) => {
+                    Ok(EventV311::Incoming(PacketV311::ConnAck(ack))) => {
                         if stop_w.load(Ordering::SeqCst) {
                             break;
                         }
@@ -179,7 +250,7 @@ pub fn spawn(
                                 &profile_id,
                                 generation,
                                 SessionState::Connected,
-                                format!("Connected to {endpoint}"),
+                                format!("Connected to {endpoint} (MQTT 3.1.1)"),
                                 &mut last_key,
                                 &mut last_emit,
                                 true,
@@ -208,45 +279,23 @@ pub fn spawn(
                             backoff = (backoff.saturating_mul(2)).min(MAX_BACKOFF);
                         }
                     }
-                    Ok(Event::Incoming(Packet::Publish(p))) => {
+                    Ok(EventV311::Incoming(PacketV311::Publish(p))) => {
                         if stop_w.load(Ordering::SeqCst) {
                             break;
                         }
-                        let retain = p.retain;
-                        let raw_len = p.payload.len();
-                        let topic = p.topic;
-                        // Soft Settings limit: keep the session; show a placeholder in the tree.
-                        let (payload, skipped) = if raw_len > soft_max {
-                            let size_kb = (raw_len + 1023) / 1024;
-                            let placeholder = format!(
-                                "[skipped oversized payload: {size_kb} KB > {soft_kb} KB limit]"
-                            );
-                            (placeholder, true)
-                        } else {
-                            (String::from_utf8_lossy(&p.payload).into_owned(), false)
-                        };
-                        // Inbox applier coalesces + wakes egui only while focused.
-                        // Never request_repaint here — present-while-hidden misses Hyprland ANR pongs.
-                        let _ = tx.send(BrokerEvent::Message {
-                            profile_id: profile_id.clone(),
+                        handle_publish_bytes(
+                            &tx,
+                            &profile_id,
                             generation,
-                            topic: topic.clone(),
-                            payload,
-                            retain,
-                            payload_bytes: raw_len,
-                        });
-                        if skipped {
-                            let size_kb = (raw_len + 1023) / 1024;
-                            let _ = tx.send(BrokerEvent::Notice {
-                                profile_id: profile_id.clone(),
-                                generation,
-                                detail: format!(
-                                    "Skipped oversized topic {topic} ({size_kb} KB > {soft_kb} KB limit) — still connected"
-                                ),
-                            });
-                        }
+                            p.topic,
+                            p.payload.as_ref(),
+                            p.retain,
+                            soft_max,
+                            soft_kb,
+                            MqttMsgProps::default(),
+                        );
                     }
-                    Ok(Event::Incoming(Packet::Disconnect)) => {
+                    Ok(EventV311::Incoming(PacketV311::Disconnect)) => {
                         if stop_w.load(Ordering::SeqCst) {
                             break;
                         }
@@ -270,61 +319,387 @@ pub fn spawn(
                         if stop_w.load(Ordering::SeqCst) {
                             break;
                         }
-                        let err = e.to_string();
-                        // Even wire-limit / decode errors: reconnect, do not treat as fatal stop.
-                        // Soft oversize is handled above; this path is rare (e.g. > WIRE_MAX_PACKET).
+                        reconnect_backoff(
+                            &tx,
+                            &ctx,
+                            &ui_focused,
+                            &profile_id,
+                            generation,
+                            &e.to_string(),
+                            &mut backoff,
+                            &mut last_key,
+                            &mut last_emit,
+                            &stop_w,
+                        );
+                    }
+                }
+            }
+
+            emit_final(
+                &tx,
+                &ctx,
+                &ui_focused,
+                &profile_id,
+                generation,
+                &stop_w,
+                fatal_detail,
+                &mut last_key,
+                &mut last_emit,
+            );
+        })
+        .map_err(|e| format!("spawn worker: {e}"))?;
+
+    Ok(LiveHandle {
+        client: LiveClient::V311(client),
+        stop,
+    })
+}
+
+fn spawn_v5(
+    profile: &ConnectionProfile,
+    soft_max_bytes: usize,
+    generation: u64,
+    event_tx: Sender<BrokerEvent>,
+    ctx: Context,
+    ui_focused: Arc<AtomicBool>,
+) -> Result<LiveHandle, String> {
+    use rumqttc::v5::mqttbytes::v5::{ConnectProperties, Packet as PacketV5};
+    use rumqttc::v5::{Client as ClientV5, Event as EventV5, MqttOptions as OptsV5};
+
+    let client_id = profile.connect_client_id();
+    let mut opts = OptsV5::new(&client_id, &profile.broker_addr(), profile.port);
+    opts.set_keep_alive(Duration::from_secs(30));
+    opts.set_clean_start(true);
+    opts.set_pending_throttle(Duration::from_secs(1));
+    if !profile.username.is_empty() {
+        opts.set_credentials(&profile.username, &profile.password);
+    }
+    opts.set_transport(build_transport(profile)?);
+
+    // Wire soft-limit via CONNECT max_packet_size (also raises decode ceiling).
+    let mut conn_props = ConnectProperties::new();
+    conn_props.max_packet_size = Some(WIRE_MAX_PACKET as u32);
+    conn_props.session_expiry_interval = Some(profile.session_expiry_secs);
+    // Ask broker for reason strings on failures.
+    conn_props.request_problem_info = Some(1);
+    opts.set_connect_properties(conn_props);
+
+    let (client, mut connection) = ClientV5::new(opts, 1024);
+    let stop = Arc::new(AtomicBool::new(false));
+    let stop_w = stop.clone();
+    let profile_id = profile.id.clone();
+    let endpoint = profile.endpoint_label();
+    let soft_max = soft_max_bytes.max(1);
+    let soft_kb = (soft_max / 1024).max(1);
+    let tx = event_tx;
+
+    emit_connecting(&tx, &ctx, &ui_focused, &profile_id, generation, &endpoint);
+
+    thread::Builder::new()
+        .name(format!("mqtt5-{profile_id}"))
+        .spawn(move || {
+            let mut backoff = MIN_BACKOFF;
+            let mut last_key: Option<(SessionState, String)> = None;
+            let mut last_emit = Instant::now()
+                .checked_sub(STATUS_MIN_INTERVAL)
+                .unwrap_or_else(Instant::now);
+            let mut fatal_detail: Option<String> = None;
+
+            for notification in connection.iter() {
+                if stop_w.load(Ordering::SeqCst) {
+                    break;
+                }
+
+                match notification {
+                    Ok(EventV5::Incoming(PacketV5::ConnAck(ack))) => {
+                        if stop_w.load(Ordering::SeqCst) {
+                            break;
+                        }
+                        if ack.code == rumqttc::v5::mqttbytes::v5::ConnectReturnCode::Success {
+                            backoff = MIN_BACKOFF;
+                            emit_state(
+                                &tx,
+                                &ctx,
+                                &ui_focused,
+                                &profile_id,
+                                generation,
+                                SessionState::Connected,
+                                format!("Connected to {endpoint} (MQTT 5)"),
+                                &mut last_key,
+                                &mut last_emit,
+                                true,
+                            );
+                        } else {
+                            let reason = ack
+                                .properties
+                                .as_ref()
+                                .and_then(|p| p.reason_string.clone())
+                                .unwrap_or_default();
+                            let detail = if reason.is_empty() {
+                                format!(
+                                    "Connection refused: {:?} (retry in {}s)",
+                                    ack.code,
+                                    backoff.as_secs().max(1)
+                                )
+                            } else {
+                                format!(
+                                    "Connection refused: {:?} — {reason} (retry in {}s)",
+                                    ack.code,
+                                    backoff.as_secs().max(1)
+                                )
+                            };
+                            emit_state(
+                                &tx,
+                                &ctx,
+                                &ui_focused,
+                                &profile_id,
+                                generation,
+                                SessionState::Disconnected,
+                                detail,
+                                &mut last_key,
+                                &mut last_emit,
+                                true,
+                            );
+                            if stop_w.load(Ordering::SeqCst) {
+                                break;
+                            }
+                            thread::sleep(backoff);
+                            backoff = (backoff.saturating_mul(2)).min(MAX_BACKOFF);
+                        }
+                    }
+                    Ok(EventV5::Incoming(PacketV5::Publish(p))) => {
+                        if stop_w.load(Ordering::SeqCst) {
+                            break;
+                        }
+                        let topic = String::from_utf8_lossy(&p.topic).into_owned();
+                        let props = props_from_v5(p.properties.as_ref());
+                        handle_publish_bytes(
+                            &tx,
+                            &profile_id,
+                            generation,
+                            topic,
+                            p.payload.as_ref(),
+                            p.retain,
+                            soft_max,
+                            soft_kb,
+                            props,
+                        );
+                    }
+                    Ok(EventV5::Incoming(PacketV5::Disconnect(d))) => {
+                        if stop_w.load(Ordering::SeqCst) {
+                            break;
+                        }
+                        let reason = d
+                            .properties
+                            .as_ref()
+                            .and_then(|p| p.reason_string.clone())
+                            .unwrap_or_default();
+                        let detail = if reason.is_empty() {
+                            format!("Broker disconnect: {:?}", d.reason_code)
+                        } else {
+                            format!("Broker disconnect: {:?} — {reason}", d.reason_code)
+                        };
+                        fatal_detail = Some(detail.clone());
                         emit_state(
                             &tx,
                             &ctx,
                             &ui_focused,
                             &profile_id,
                             generation,
-                            SessionState::Connecting,
-                            format!("Reconnecting in {}s… ({err})", backoff.as_secs().max(1)),
+                            SessionState::Disconnected,
+                            detail,
                             &mut last_key,
                             &mut last_emit,
-                            false,
+                            true,
                         );
+                    }
+                    Ok(_) => {}
+                    Err(e) => {
                         if stop_w.load(Ordering::SeqCst) {
                             break;
                         }
-                        thread::sleep(backoff);
-                        backoff = (backoff.saturating_mul(2)).min(MAX_BACKOFF);
+                        reconnect_backoff(
+                            &tx,
+                            &ctx,
+                            &ui_focused,
+                            &profile_id,
+                            generation,
+                            &e.to_string(),
+                            &mut backoff,
+                            &mut last_key,
+                            &mut last_emit,
+                            &stop_w,
+                        );
                     }
                 }
             }
 
-            // Final stable status: intentional stop vs last fatal reason vs unexpected end.
-            let detail = if stop_w.load(Ordering::SeqCst) {
-                "Disconnected".to_string()
-            } else if let Some(fatal) = fatal_detail {
-                fatal
-            } else if let Some((_, last_detail)) = last_key.clone() {
-                // Keep the last meaningful status (e.g. reconnect error) instead of masking it.
-                if last_detail.starts_with("Connected") {
-                    "Session ended (connection closed)".to_string()
-                } else {
-                    last_detail
-                }
-            } else {
-                "Session ended (connection closed)".to_string()
-            };
-            emit_state(
+            emit_final(
                 &tx,
                 &ctx,
                 &ui_focused,
                 &profile_id,
                 generation,
-                SessionState::Disconnected,
-                detail,
+                &stop_w,
+                fatal_detail,
                 &mut last_key,
                 &mut last_emit,
-                true,
             );
         })
         .map_err(|e| format!("spawn worker: {e}"))?;
 
-    Ok(LiveHandle { client, stop })
+    Ok(LiveHandle {
+        client: LiveClient::V5(client),
+        stop,
+    })
+}
+
+fn props_from_v5(
+    p: Option<&rumqttc::v5::mqttbytes::v5::PublishProperties>,
+) -> MqttMsgProps {
+    let Some(p) = p else {
+        return MqttMsgProps::default();
+    };
+    MqttMsgProps {
+        user_properties: p.user_properties.clone(),
+        content_type: p.content_type.clone(),
+        message_expiry_interval: p.message_expiry_interval,
+        payload_format_indicator: p.payload_format_indicator,
+    }
+}
+
+fn handle_publish_bytes(
+    tx: &Sender<BrokerEvent>,
+    profile_id: &str,
+    generation: u64,
+    topic: String,
+    payload_bytes: &[u8],
+    retain: bool,
+    soft_max: usize,
+    soft_kb: usize,
+    props: MqttMsgProps,
+) {
+    let raw_len = payload_bytes.len();
+    let (payload, skipped) = if raw_len > soft_max {
+        let size_kb = (raw_len + 1023) / 1024;
+        let placeholder =
+            format!("[skipped oversized payload: {size_kb} KB > {soft_kb} KB limit]");
+        (placeholder, true)
+    } else {
+        (String::from_utf8_lossy(payload_bytes).into_owned(), false)
+    };
+    let _ = tx.send(BrokerEvent::Message {
+        profile_id: profile_id.to_string(),
+        generation,
+        topic: topic.clone(),
+        payload,
+        retain,
+        payload_bytes: raw_len,
+        props,
+    });
+    if skipped {
+        let size_kb = (raw_len + 1023) / 1024;
+        let _ = tx.send(BrokerEvent::Notice {
+            profile_id: profile_id.to_string(),
+            generation,
+            detail: format!(
+                "Skipped oversized topic {topic} ({size_kb} KB > {soft_kb} KB limit) — still connected"
+            ),
+        });
+    }
+}
+
+fn emit_connecting(
+    tx: &Sender<BrokerEvent>,
+    ctx: &Context,
+    ui_focused: &AtomicBool,
+    profile_id: &str,
+    generation: u64,
+    endpoint: &str,
+) {
+    emit_state(
+        tx,
+        ctx,
+        ui_focused,
+        profile_id,
+        generation,
+        SessionState::Connecting,
+        format!("Connecting to {endpoint}…"),
+        &mut None,
+        &mut Instant::now()
+            .checked_sub(STATUS_MIN_INTERVAL)
+            .unwrap_or_else(Instant::now),
+        true,
+    );
+}
+
+fn reconnect_backoff(
+    tx: &Sender<BrokerEvent>,
+    ctx: &Context,
+    ui_focused: &AtomicBool,
+    profile_id: &str,
+    generation: u64,
+    err: &str,
+    backoff: &mut Duration,
+    last_key: &mut Option<(SessionState, String)>,
+    last_emit: &mut Instant,
+    stop: &AtomicBool,
+) {
+    emit_state(
+        tx,
+        ctx,
+        ui_focused,
+        profile_id,
+        generation,
+        SessionState::Connecting,
+        format!("Reconnecting in {}s… ({err})", backoff.as_secs().max(1)),
+        last_key,
+        last_emit,
+        false,
+    );
+    if stop.load(Ordering::SeqCst) {
+        return;
+    }
+    thread::sleep(*backoff);
+    *backoff = (backoff.saturating_mul(2)).min(MAX_BACKOFF);
+}
+
+fn emit_final(
+    tx: &Sender<BrokerEvent>,
+    ctx: &Context,
+    ui_focused: &AtomicBool,
+    profile_id: &str,
+    generation: u64,
+    stop: &AtomicBool,
+    fatal_detail: Option<String>,
+    last_key: &mut Option<(SessionState, String)>,
+    last_emit: &mut Instant,
+) {
+    let detail = if stop.load(Ordering::SeqCst) {
+        "Disconnected".to_string()
+    } else if let Some(fatal) = fatal_detail {
+        fatal
+    } else if let Some((_, last_detail)) = last_key.clone() {
+        if last_detail.starts_with("Connected") {
+            "Session ended (connection closed)".to_string()
+        } else {
+            last_detail
+        }
+    } else {
+        "Session ended (connection closed)".to_string()
+    };
+    emit_state(
+        tx,
+        ctx,
+        ui_focused,
+        profile_id,
+        generation,
+        SessionState::Disconnected,
+        detail,
+        last_key,
+        last_emit,
+        true,
+    );
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -359,18 +734,30 @@ fn emit_state(
         state,
         detail,
     });
-    // Inbox applier also wakes while focused; skip present storms when unfocused.
     if ui_focused.load(Ordering::Relaxed) {
         ctx.request_repaint();
     }
 }
 
-pub fn to_qos(q: crate::mqtt::publish::Qos) -> QoS {
+pub fn to_qos_v311(q: AppQos) -> rumqttc::QoS {
     match q {
-        crate::mqtt::publish::Qos::AtMostOnce => QoS::AtMostOnce,
-        crate::mqtt::publish::Qos::AtLeastOnce => QoS::AtLeastOnce,
-        crate::mqtt::publish::Qos::ExactlyOnce => QoS::ExactlyOnce,
+        AppQos::AtMostOnce => rumqttc::QoS::AtMostOnce,
+        AppQos::AtLeastOnce => rumqttc::QoS::AtLeastOnce,
+        AppQos::ExactlyOnce => rumqttc::QoS::ExactlyOnce,
     }
+}
+
+fn to_qos_v5(q: AppQos) -> rumqttc::v5::mqttbytes::QoS {
+    match q {
+        AppQos::AtMostOnce => rumqttc::v5::mqttbytes::QoS::AtMostOnce,
+        AppQos::AtLeastOnce => rumqttc::v5::mqttbytes::QoS::AtLeastOnce,
+        AppQos::ExactlyOnce => rumqttc::v5::mqttbytes::QoS::ExactlyOnce,
+    }
+}
+
+/// Back-compat alias used by older call sites.
+pub fn to_qos(q: AppQos) -> rumqttc::QoS {
+    to_qos_v311(q)
 }
 
 #[cfg(test)]
@@ -449,9 +836,8 @@ mod tests {
             "expected Connected from {MOSQUITTO_HOST}"
         );
 
-        // Intentional stop — worker must emit Disconnected and not keep reconnecting.
         handle.stop.store(true, Ordering::SeqCst);
-        let _ = handle.client.disconnect();
+        handle.client.disconnect();
 
         assert!(
             wait_state(
@@ -463,7 +849,6 @@ mod tests {
             "expected Disconnected after stop"
         );
 
-        // No further Connected chatter after intentional stop.
         let quiet_until = Instant::now() + Duration::from_secs(2);
         while Instant::now() < quiet_until {
             match rx.recv_timeout(Duration::from_millis(100)) {
@@ -499,17 +884,22 @@ mod tests {
             "expected Connected"
         );
 
-        // Subscribe at root `#` — public broker traffic (or our own publish) should pile in.
         handle
             .client
-            .subscribe("#", QoS::AtMostOnce)
+            .subscribe("#", AppQos::AtMostOnce)
             .expect("subscribe #");
 
         let topic = format!("mqtt-master/test/{}", unique_id("ping"));
         let payload = format!("hello-{}", unique_id("p"));
         handle
             .client
-            .publish(&topic, QoS::AtLeastOnce, false, payload.as_bytes())
+            .publish(
+                &topic,
+                AppQos::AtLeastOnce,
+                false,
+                payload.as_bytes(),
+                None,
+            )
             .expect("publish");
 
         let deadline = Instant::now() + Duration::from_secs(15);
@@ -535,7 +925,7 @@ mod tests {
         }
 
         handle.stop.store(true, Ordering::SeqCst);
-        let _ = handle.client.disconnect();
+        handle.client.disconnect();
 
         assert!(
             saw_own || any_msg > 0,

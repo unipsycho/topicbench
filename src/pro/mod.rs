@@ -14,6 +14,7 @@ pub mod bridge_pro_tools;
 pub mod color_rules;
 pub mod history_client;
 pub mod recording;
+pub mod sidecar_launch;
 pub mod sim_client;
 pub mod topic_tree_io;
 

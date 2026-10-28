@@ -3,6 +3,7 @@
 
 use crate::mqtt::pins::{DetectedValue, PinBoard};
 use crate::mqtt::profile::{ProfileStore, StickyViewMode};
+use crate::mqtt::publish::MqttMsgProps;
 use crate::mqtt::session::SessionManager;
 use crate::mqtt::value_path;
 use crate::mqtt::topic_tree::FLASH_MS;
@@ -365,6 +366,7 @@ fn draw_topic_body(
         Some(n) if n.last_payload.as_deref().is_some_and(|p| !p.is_empty()) => {
             let live_payload = n.last_payload.as_deref().unwrap_or("").to_string();
             let message_count = n.message_count;
+            let mqtt5_props = n.last_props.clone();
             // Merge short ring + Pro deep samples for scrub (oldest → newest).
             let history = merge_payload_history(
                 profile_id,
@@ -408,6 +410,11 @@ fn draw_topic_body(
             } else {
                 change_flash_bg(search.change_flash_until, now)
             };
+            // MQTT 5 inbound metadata (user props / content type / expiry).
+            if !mqtt5_props.is_empty() {
+                draw_mqtt5_props(ui, &mqtt5_props);
+                ui.add_space(4.0);
+            }
             draw_search_bar(ui, icons, search, &display);
             ui.add_space(4.0);
             draw_searchable_body(
@@ -435,6 +442,36 @@ fn draw_topic_body(
         _ => {
             ui.weak("No payload yet for this topic.");
         }
+    }
+}
+
+/// Read-only MQTT 5 properties for the selected live tip.
+fn draw_mqtt5_props(ui: &mut egui::Ui, props: &MqttMsgProps) {
+    ui.weak("MQTT 5 properties");
+    if let Some(ct) = props.content_type.as_ref().filter(|s| !s.is_empty()) {
+        ui.horizontal(|ui| {
+            ui.weak("Content-Type");
+            ui.monospace(ct);
+        });
+    }
+    if let Some(exp) = props.message_expiry_interval {
+        ui.horizontal(|ui| {
+            ui.weak("Message expiry");
+            ui.monospace(format!("{exp}s"));
+        });
+    }
+    if let Some(fmt) = props.payload_format_indicator {
+        ui.horizontal(|ui| {
+            ui.weak("Payload format");
+            ui.monospace(if fmt == 1 { "UTF-8" } else { "unspecified" });
+        });
+    }
+    for (k, v) in &props.user_properties {
+        ui.horizontal(|ui| {
+            ui.monospace(k);
+            ui.weak("=");
+            ui.monospace(v);
+        });
     }
 }
 

@@ -1,13 +1,13 @@
 //! Multi-profile live sessions backed by rumqttc workers.
 
-use crate::mqtt::live::{self, BrokerEvent};
+use crate::mqtt::live::{self, BrokerEvent, LiveClient};
 use crate::mqtt::pins::PinBoard;
 use crate::mqtt::profile::ConnectionProfile;
+use crate::mqtt::publish::MqttMsgProps;
 use crate::mqtt::subscribe;
 use crate::mqtt::topic_tree::TopicTree;
 use crate::mqtt::traffic_stats::TrafficStats;
 use eframe::egui::Context;
-use rumqttc::{Client, QoS};
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
@@ -88,7 +88,7 @@ pub struct Session {
     pub state: SessionState,
     pub detail: String,
     pub subscriptions: Vec<String>,
-    pub client: Option<Client>,
+    pub client: Option<LiveClient>,
     /// Set on intentional Disconnect — worker must not reconnect.
     pub stop: Option<Arc<AtomicBool>>,
     pub user_stopped: bool,
@@ -107,6 +107,7 @@ struct CoalescedMsg {
     generation: u64,
     payload: String,
     retain: bool,
+    props: MqttMsgProps,
     count: u64,
     bytes: u64,
     /// Timed payloads retained for sticky/Combined history while UI apply lags.
@@ -161,6 +162,7 @@ impl InboxData {
                     }
                     entry.payload = msg.payload;
                     entry.retain = msg.retain;
+                    entry.props = msg.props;
                     entry.count = entry.count.saturating_add(msg.count);
                     entry.bytes = entry.bytes.saturating_add(msg.bytes);
                     entry.samples.extend(msg.samples);
@@ -235,6 +237,7 @@ impl SharedInbox {
                 payload,
                 retain,
                 payload_bytes,
+                props,
             } => {
                 let key = (profile_id, topic);
                 if let Some(entry) = g.messages.get(&key) {
@@ -253,6 +256,7 @@ impl SharedInbox {
                     generation,
                     payload: String::new(),
                     retain: false,
+                    props: MqttMsgProps::default(),
                     count: 0,
                     bytes: 0,
                     samples: VecDeque::new(),
@@ -280,6 +284,7 @@ impl SharedInbox {
                 }
                 entry.payload = payload;
                 entry.retain = retain;
+                entry.props = props;
                 entry.count = entry.count.saturating_add(1);
                 entry.bytes = entry.bytes.saturating_add(payload_bytes as u64);
             }
@@ -523,9 +528,7 @@ impl SessionManager {
         }
         for f in &filters {
             if !old.iter().any(|o| o == f) {
-                client
-                    .subscribe(f, QoS::AtLeastOnce)
-                    .map_err(|e| format!("subscribe: {e}"))?;
+                client.subscribe(f, crate::mqtt::publish::Qos::AtLeastOnce)?;
             }
         }
         Ok(())
@@ -540,7 +543,7 @@ impl SessionManager {
                 stop.store(true, Ordering::SeqCst);
             }
             if let Some(client) = session.client.take() {
-                let _ = client.disconnect();
+                client.disconnect();
             }
             session.state = SessionState::Disconnected;
             session.detail = "Disconnected".into();
@@ -583,6 +586,19 @@ impl SessionManager {
         qos: crate::mqtt::publish::Qos,
         retain: bool,
     ) -> Result<(), String> {
+        self.publish_live_props(profile_id, topic, payload, qos, retain, None)
+    }
+
+    /// Publish with optional MQTT 5 properties (ignored on 3.1.1 sessions).
+    pub fn publish_live_props(
+        &mut self,
+        profile_id: &str,
+        topic: &str,
+        payload: &str,
+        qos: crate::mqtt::publish::Qos,
+        retain: bool,
+        props: Option<&MqttMsgProps>,
+    ) -> Result<(), String> {
         let bytes = payload.as_bytes();
         let n = bytes.len() as u64;
         {
@@ -597,9 +613,9 @@ impl SessionManager {
                 .client
                 .as_ref()
                 .ok_or_else(|| "No MQTT client".to_string())?;
-            client
-                .publish(topic, live::to_qos(qos), retain, bytes)
-                .map_err(|e| format!("publish: {e}"))?;
+            // Only send props on MQTT 5 sessions.
+            let send_props = if client.is_v5() { props } else { None };
+            client.publish(topic, qos, retain, bytes, send_props)?;
         }
         // Count after a successful enqueue (session borrow released).
         self.traffic_stats.record_sent(n);
@@ -677,9 +693,14 @@ impl SessionManager {
                 // Traffic bytes/msgs already counted in fold atomics — do not double-add.
                 session.message_count = session.message_count.saturating_add(msg.count);
                 session.flash_until = Some(flash);
-                session
-                    .topic_tree
-                    .observe_n(&topic, &msg.payload, msg.retain, now, msg.count);
+                session.topic_tree.observe_n(
+                    &topic,
+                    &msg.payload,
+                    msg.retain,
+                    now,
+                    msg.count,
+                    Some(&msg.props),
+                );
                 session.traffic.push_front(TrafficLine {
                     topic: topic.clone(),
                     payload: msg.payload.clone(),
@@ -719,7 +740,7 @@ impl SessionManager {
                 }
                 if let Some(client) = session.client.as_ref() {
                     for filter in &filters {
-                        let _ = client.subscribe(filter, QoS::AtLeastOnce);
+                        let _ = client.subscribe(filter, crate::mqtt::publish::Qos::AtLeastOnce);
                     }
                 }
             }
