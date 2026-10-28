@@ -38,6 +38,28 @@ impl ProfileTransport {
     }
 }
 
+/// MQTT protocol version for CONNECT (legacy profiles default to 3.1.1).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum MqttVersion {
+    #[default]
+    V311,
+    V5,
+}
+
+impl MqttVersion {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::V311 => "3.1.1",
+            Self::V5 => "5",
+        }
+    }
+
+    pub fn is_v5(self) -> bool {
+        matches!(self, Self::V5)
+    }
+}
+
 /// How a sticky topic renders (persisted per sticky on the profile).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
@@ -148,6 +170,12 @@ pub struct ConnectionProfile {
     /// Accent RGB for profile name in tree headings / sticky labels.
     #[serde(default = "default_profile_color")]
     pub color_rgb: [u8; 3],
+    /// MQTT 3.1.1 (default) or MQTT 5 — missing field on disk ⇒ 3.1.1.
+    #[serde(default)]
+    pub mqtt_version: MqttVersion,
+    /// MQTT 5 session expiry interval in seconds (0 = expire on disconnect). Ignored for 3.1.1.
+    #[serde(default)]
+    pub session_expiry_secs: u32,
 }
 
 impl ConnectionProfile {
@@ -220,6 +248,8 @@ impl ConnectionProfile {
             subscriptions: Vec::new(),
             stickies: Vec::new(),
             color_rgb: default_profile_color(),
+            mqtt_version: MqttVersion::V311,
+            session_expiry_secs: 0,
         }
     }
 
@@ -240,6 +270,8 @@ impl ConnectionProfile {
             subscriptions: vec!["sensors/#".into()],
             stickies: Vec::new(),
             color_rgb: [90, 190, 120],
+            mqtt_version: MqttVersion::V311,
+            session_expiry_secs: 0,
         }
     }
 
@@ -260,6 +292,8 @@ impl ConnectionProfile {
             subscriptions: vec!["devices/+/telemetry".into()],
             stickies: Vec::new(),
             color_rgb: [200, 140, 80],
+            mqtt_version: MqttVersion::V311,
+            session_expiry_secs: 0,
         }
     }
 
@@ -783,6 +817,8 @@ mod tests {
         assert_eq!(p.broker_addr(), "h");
         assert_eq!(p.endpoint_label(), "h:1883");
         assert_eq!(p.protocol_badge(), "MQTT");
+        assert_eq!(p.mqtt_version, MqttVersion::V311);
+        assert_eq!(p.session_expiry_secs, 0);
     }
 
     #[test]

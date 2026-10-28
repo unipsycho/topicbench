@@ -108,6 +108,8 @@ pub struct MqttMonitorApp {
     /// Pro MCP localhost Unix-socket bridge (None when not entitled / failed to bind).
     /// Settings → MCP will start/stop this later; v1 auto-starts when `mcp_server` is licensed.
     pro_bridge: Option<crate::pro::bridge::BridgeHandle>,
+    /// Auto-spawned `topicbench-pro` (None when unlicensed / not started). Drop kills child.
+    pro_sidecar: Option<crate::pro::sidecar_launch::SidecarLauncher>,
     /// Pro Simulation panel (ribbon → Pro → Simulation).
     simulation_open: bool,
     /// True = floating Window; false = docked in the main middle column.
@@ -227,6 +229,8 @@ impl MqttMonitorApp {
             update_auto_check_done: false,
             update_modal_fallback_note: None,
             pro_bridge,
+            // Licensed + binary beside GUI → spawn Pro on a worker; free installs skip.
+            pro_sidecar: crate::pro::sidecar_launch::SidecarLauncher::start_if_licensed(),
             simulation_open,
             simulation_floating,
             sim_client: crate::pro::sim_client::SimClientState::new(),
@@ -337,11 +341,16 @@ impl eframe::App for MqttMonitorApp {
             );
         }
         // Keep /sim warm for the status strip even when Simulation is closed.
+        // poll_if_due only enqueues — never blocks the UI (Windows down-sidecar safe).
         if crate::pro::has(crate::pro::Entitlement::Simulation) {
+            self.sim_client.bind_egui_ctx(ctx);
             self.sim_client.poll_if_due(false);
             if self.sim_client.status_strip_label().is_some() {
                 ctx.request_repaint_after(std::time::Duration::from_millis(750));
             }
+        }
+        if let Some(fwd) = self.history_fwd.as_ref() {
+            fwd.bind_egui_ctx(ctx);
         }
         // Stats ribbon labels: rebuild frozen snapshot at most once per second.
         let _ = self.sessions.traffic_stats.refresh_display_if_due();

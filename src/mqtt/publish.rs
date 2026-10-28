@@ -20,6 +20,49 @@ impl Qos {
     }
 }
 
+/// MQTT 5 publish / inbound message properties (empty = absent).
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MqttMsgProps {
+    #[serde(default)]
+    pub user_properties: Vec<(String, String)>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub content_type: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message_expiry_interval: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub payload_format_indicator: Option<u8>,
+}
+
+impl MqttMsgProps {
+    pub fn is_empty(&self) -> bool {
+        self.user_properties.is_empty()
+            && self.content_type.as_ref().map(|s| s.is_empty()).unwrap_or(true)
+            && self.message_expiry_interval.is_none()
+            && self.payload_format_indicator.is_none()
+    }
+
+    /// Drop blank user-prop keys and empty content type.
+    pub fn cleaned(&self) -> Self {
+        let user_properties = self
+            .user_properties
+            .iter()
+            .filter(|(k, _)| !k.trim().is_empty())
+            .map(|(k, v)| (k.trim().to_string(), v.clone()))
+            .collect();
+        let content_type = self
+            .content_type
+            .as_ref()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty());
+        Self {
+            user_properties,
+            content_type,
+            message_expiry_interval: self.message_expiry_interval,
+            payload_format_indicator: self.payload_format_indicator,
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct PublishDraft {
     pub profile_id: Option<String>,
@@ -27,6 +70,11 @@ pub struct PublishDraft {
     pub payload: String,
     pub qos: Qos,
     pub retain: bool,
+    /// MQTT 5 user properties (shown only when selected profile is v5).
+    pub user_properties: Vec<(String, String)>,
+    pub content_type: String,
+    /// Empty = omit; otherwise seconds for message expiry.
+    pub message_expiry_secs: String,
 }
 
 impl Default for PublishDraft {
@@ -37,6 +85,9 @@ impl Default for PublishDraft {
             payload: "{\n  \"ok\": true\n}".into(),
             qos: Qos::AtMostOnce,
             retain: false,
+            user_properties: Vec::new(),
+            content_type: String::new(),
+            message_expiry_secs: String::new(),
         }
     }
 }
@@ -50,6 +101,12 @@ impl PublishDraft {
         self.payload = beautify_if_json(&entry.payload);
         self.qos = entry.qos;
         self.retain = entry.retain;
+        self.user_properties = entry.user_properties.clone();
+        self.content_type = entry.content_type.clone().unwrap_or_default();
+        self.message_expiry_secs = entry
+            .message_expiry_interval
+            .map(|n| n.to_string())
+            .unwrap_or_default();
     }
 
     /// Fill form from a topic-tree double-click (broker + topic + payload + retain).
@@ -58,6 +115,32 @@ impl PublishDraft {
         self.topic = fill.topic.clone();
         self.payload = beautify_if_json(&fill.payload);
         self.retain = fill.retain;
+    }
+
+    /// Build MQTT 5 props from the draft fields (None when nothing set).
+    pub fn mqtt5_props(&self) -> Option<MqttMsgProps> {
+        let expiry = self
+            .message_expiry_secs
+            .trim()
+            .parse::<u32>()
+            .ok()
+            .filter(|_| !self.message_expiry_secs.trim().is_empty());
+        let props = MqttMsgProps {
+            user_properties: self.user_properties.clone(),
+            content_type: if self.content_type.trim().is_empty() {
+                None
+            } else {
+                Some(self.content_type.trim().to_string())
+            },
+            message_expiry_interval: expiry,
+            payload_format_indicator: None,
+        }
+        .cleaned();
+        if props.is_empty() {
+            None
+        } else {
+            Some(props)
+        }
     }
 }
 
@@ -99,10 +182,17 @@ pub struct RecentPublish {
     pub payload: String,
     pub qos: Qos,
     pub retain: bool,
+    #[serde(default)]
+    pub user_properties: Vec<(String, String)>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub content_type: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message_expiry_interval: Option<u32>,
 }
 
 impl RecentPublish {
     pub fn from_draft(draft: &PublishDraft, profile_name: &str) -> Self {
+        let props = draft.mqtt5_props().unwrap_or_default();
         Self {
             profile_id: draft.profile_id.clone().unwrap_or_default(),
             profile_name: profile_name.to_string(),
@@ -110,6 +200,9 @@ impl RecentPublish {
             payload: draft.payload.clone(),
             qos: draft.qos,
             retain: draft.retain,
+            user_properties: props.user_properties,
+            content_type: props.content_type,
+            message_expiry_interval: props.message_expiry_interval,
         }
     }
 
@@ -213,6 +306,9 @@ mod tests {
             payload: payload.into(),
             qos,
             retain: false,
+            user_properties: Vec::new(),
+            content_type: None,
+            message_expiry_interval: None,
         }
     }
 
@@ -258,6 +354,9 @@ mod tests {
             payload: "old".into(),
             qos: Qos::AtMostOnce,
             retain: false,
+            user_properties: Vec::new(),
+            content_type: None,
+            message_expiry_interval: None,
         });
         h.push(entry("a", "sensors/x", Qos::ExactlyOnce, "new"));
         assert_eq!(h.recent.len(), 1);

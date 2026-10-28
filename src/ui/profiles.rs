@@ -2,7 +2,7 @@
 
 use crate::mqtt::certs;
 use crate::mqtt::pins::PinBoard;
-use crate::mqtt::profile::{ConnectionProfile, ProfileStore, ProfileTransport};
+use crate::mqtt::profile::{ConnectionProfile, MqttVersion, ProfileStore, ProfileTransport};
 use crate::mqtt::session::{SessionManager, SessionState};
 use crate::mqtt::settings::AppSettings;
 use crate::ui::hover_tip;
@@ -374,6 +374,31 @@ pub fn draw(
                         );
                     });
                 }
+                ui.horizontal(|ui| {
+                    ui.label("MQTT");
+                    egui::ComboBox::from_id_salt(("profile_mqtt_ver", id.as_str()))
+                        .selected_text(profile.mqtt_version.label())
+                        .width(72.0)
+                        .show_ui(ui, |ui| {
+                            ui.selectable_value(
+                                &mut profile.mqtt_version,
+                                MqttVersion::V311,
+                                "3.1.1",
+                            );
+                            ui.selectable_value(&mut profile.mqtt_version, MqttVersion::V5, "5");
+                        });
+                    if profile.mqtt_version.is_v5() {
+                        ui.label("Session expiry (s)");
+                        hover_tip::attach(
+                            ui.add(
+                                egui::DragValue::new(&mut profile.session_expiry_secs)
+                                    .range(0..=u32::MAX)
+                                    .speed(1.0),
+                            ),
+                            "MQTT 5 session expiry interval. 0 = expire on disconnect (like clean session).",
+                        );
+                    }
+                });
                 ui.horizontal(|ui| {
                     ui.label("Client ID");
                     // Static ID kept when Unique is off; disabled while UUID overrides CONNECT.
