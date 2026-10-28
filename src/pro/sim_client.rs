@@ -1,14 +1,26 @@
 //! Thin HTTP client for the Pro sidecar simulation API (`http://127.0.0.1:7853/sim`).
 //!
 //! No formula engine here — CRUD/start/stop only. Bearer token from `mcp-token`.
+//!
+//! **UI thread never calls ureq.** List refresh and mutations run on `tb-sim-poll`;
+//! the UI only enqueues work and reads a shared snapshot (critical on Windows where
+//! connect to a down sidecar blocks for `timeout_connect`).
 
+use eframe::egui::Context;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::fs;
 use std::path::PathBuf;
+use std::sync::mpsc::{self, Receiver, SyncSender};
+use std::sync::{Arc, Mutex};
+use std::thread;
 use std::time::{Duration, Instant};
 
 const DEFAULT_BASE: &str = "http://127.0.0.1:7853";
+const POLL_INTERVAL: Duration = Duration::from_millis(500);
+const BACKOFF_START: Duration = Duration::from_secs(2);
+const BACKOFF_MAX: Duration = Duration::from_secs(30);
+const CMD_CAP: usize = 8;
 
 /// One sim row as returned by the sidecar (subset mirrored for the panel).
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -111,8 +123,34 @@ impl Default for PendingPlayback {
     }
 }
 
-/// Cached list + last error for the Simulation panel.
-#[derive(Default)]
+/// Snapshot written by the worker; UI copies into [`SimClientState`] each poll.
+#[derive(Clone, Default)]
+struct SharedSnap {
+    rows: Vec<SimRow>,
+    statuses: Vec<SimStatus>,
+    playback: PlaybackStatus,
+    sidecar_up: bool,
+    last_error: Option<String>,
+    generation: u64,
+    /// When down, skip probes until this instant (unless force).
+    next_probe_at: Option<Instant>,
+    backoff: Duration,
+    egui_ctx: Option<Context>,
+}
+
+enum SimCmd {
+    /// Background list refresh. `force` bypasses down-backoff.
+    Refresh { force: bool },
+    /// Mutation / one-shot HTTP; reply on the oneshot (may wait on caller — clicks only).
+    Http {
+        method: String,
+        path: String,
+        body: Option<Vec<u8>>,
+        reply: SyncSender<Result<Value, String>>,
+    },
+}
+
+/// Cached list + last error for the Simulation panel (UI-facing).
 pub struct SimClientState {
     pub rows: Vec<SimRow>,
     pub statuses: Vec<SimStatus>,
@@ -123,8 +161,15 @@ pub struct SimClientState {
     pub sidecar_up: bool,
     pub selected: Option<String>,
     last_fetch: Option<Instant>,
-    token: Option<String>,
-    base: String,
+    last_gen: u64,
+    cmd_tx: SyncSender<SimCmd>,
+    shared: Arc<Mutex<SharedSnap>>,
+}
+
+impl Default for SimClientState {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl SimClientState {
@@ -133,9 +178,34 @@ impl SimClientState {
             .unwrap_or_else(|_| DEFAULT_BASE.to_string())
             .trim_end_matches('/')
             .to_string();
-        Self {
-            base,
+        let shared = Arc::new(Mutex::new(SharedSnap {
+            backoff: BACKOFF_START,
             ..Default::default()
+        }));
+        let (cmd_tx, cmd_rx) = mpsc::sync_channel(CMD_CAP);
+        let shared_t = Arc::clone(&shared);
+        let _ = thread::Builder::new()
+            .name("tb-sim-poll".into())
+            .spawn(move || worker_loop(cmd_rx, shared_t, base));
+        Self {
+            rows: Vec::new(),
+            statuses: Vec::new(),
+            playback: PlaybackStatus::default(),
+            pending_playback: None,
+            last_error: None,
+            sidecar_up: false,
+            selected: None,
+            last_fetch: None,
+            last_gen: 0,
+            cmd_tx,
+            shared,
+        }
+    }
+
+    /// So the worker can wake egui when a snapshot lands (Pro came up / list changed).
+    pub fn bind_egui_ctx(&self, ctx: &Context) {
+        if let Ok(mut g) = self.shared.lock() {
+            g.egui_ctx = Some(ctx.clone());
         }
     }
 
@@ -160,30 +230,32 @@ impl SimClientState {
         })
     }
 
-    /// Refresh list when panel is open (throttled).
+    /// Pull shared snapshot; enqueue a non-blocking refresh when due (never ureq here).
     pub fn poll_if_due(&mut self, force: bool) {
+        self.pull_shared();
+
         let due = force
             || self
                 .last_fetch
-                .map(|t| t.elapsed() >= Duration::from_millis(500))
+                .map(|t| t.elapsed() >= POLL_INTERVAL)
                 .unwrap_or(true);
         if !due {
             return;
         }
-        self.last_fetch = Some(Instant::now());
-        match self.fetch_list() {
-            Ok((rows, statuses, playback)) => {
-                self.rows = rows;
-                self.statuses = statuses;
-                self.playback = playback;
-                self.sidecar_up = true;
-                self.last_error = None;
-            }
-            Err(e) => {
-                self.sidecar_up = false;
-                self.last_error = Some(e);
+
+        // When sidecar is known down, skip enqueue until backoff elapses (unless forced).
+        if !force && !self.sidecar_up {
+            if let Ok(g) = self.shared.lock() {
+                if let Some(at) = g.next_probe_at {
+                    if Instant::now() < at {
+                        return;
+                    }
+                }
             }
         }
+
+        self.last_fetch = Some(Instant::now());
+        let _ = self.cmd_tx.try_send(SimCmd::Refresh { force });
     }
 
     pub fn status_for(&self, id: &str) -> Option<&SimStatus> {
@@ -378,106 +450,246 @@ impl SimClientState {
         }
     }
 
-    fn token(&mut self) -> Result<String, String> {
-        if let Some(t) = &self.token {
-            if !t.is_empty() {
-                return Ok(t.clone());
-            }
-        }
-        let path = token_path();
-        let t = fs::read_to_string(&path)
-            .map_err(|e| {
-                format!(
-                    "cannot read {} ({e}) — is TopicBench Pro running?",
-                    path.display()
-                )
-            })?
-            .trim()
-            .to_string();
-        if t.is_empty() {
-            return Err("mcp-token file is empty".into());
-        }
-        self.token = Some(t.clone());
-        Ok(t)
-    }
-
-    fn fetch_list(&mut self) -> Result<(Vec<SimRow>, Vec<SimStatus>, PlaybackStatus), String> {
-        let v = self.http("GET", "/sim", None)?;
-        let rows: Vec<SimRow> = serde_json::from_value(
-            v.get("simulations")
-                .cloned()
-                .unwrap_or(Value::Array(vec![])),
-        )
-        .map_err(|e| format!("simulations: {e}"))?;
-        let statuses: Vec<SimStatus> = serde_json::from_value(
-            v.get("statuses").cloned().unwrap_or(Value::Array(vec![])),
-        )
-        .map_err(|e| format!("statuses: {e}"))?;
-        let playback: PlaybackStatus = serde_json::from_value(
-            v.get("playback")
-                .cloned()
-                .unwrap_or(Value::Object(Default::default())),
-        )
-        .unwrap_or_default();
-        // Older sidecars only had `running` — treat as active when set.
-        let mut playback = playback;
-        if !playback.active && playback.running {
-            playback.active = true;
-        }
-        Ok((rows, statuses, playback))
-    }
-
-    fn http(&mut self, method: &str, path: &str, body: Option<Vec<u8>>) -> Result<Value, String> {
-        let token = self.token()?;
-        let url = format!("{}{path}", self.base);
-        let agent = ureq::AgentBuilder::new()
-            .timeout_connect(Duration::from_millis(400))
-            .timeout_read(Duration::from_secs(3))
-            .build();
-        let req = match method {
-            "GET" => agent.get(&url),
-            "PUT" => agent.put(&url),
-            "POST" => agent.post(&url),
-            "DELETE" => agent.request("DELETE", &url),
-            other => return Err(format!("unsupported method {other}")),
-        }
-        .set("Authorization", &format!("Bearer {token}"))
-        .set("Content-Type", "application/json");
-
-        let resp = match body {
-            Some(b) => req.send_bytes(&b),
-            None => {
-                if method == "GET" || method == "DELETE" {
-                    req.call()
-                } else {
-                    req.send_bytes(b"{}")
-                }
-            }
+    fn pull_shared(&mut self) {
+        let Ok(g) = self.shared.lock() else {
+            return;
         };
-        match resp {
-            Ok(r) => {
-                let text = r.into_string().map_err(|e| format!("read body: {e}"))?;
-                if text.trim().is_empty() {
-                    return Ok(Value::Null);
-                }
-                serde_json::from_str(&text).map_err(|e| format!("json: {e}"))
-            }
-            Err(ureq::Error::Status(code, resp)) => {
-                let text = resp.into_string().unwrap_or_default();
-                let msg = serde_json::from_str::<Value>(&text)
-                    .ok()
-                    .and_then(|v| {
-                        v.get("error")
-                            .and_then(|e| e.as_str())
-                            .map(|s| s.to_string())
-                    })
-                    .unwrap_or(text);
-                Err(format!("HTTP {code}: {msg}"))
-            }
-            Err(ureq::Error::Transport(t)) => Err(format!(
-                "TopicBench Pro unreachable ({t}) — is it running?"
-            )),
+        if g.generation == self.last_gen {
+            return;
         }
+        self.last_gen = g.generation;
+        self.rows = g.rows.clone();
+        self.statuses = g.statuses.clone();
+        self.playback = g.playback.clone();
+        self.sidecar_up = g.sidecar_up;
+        self.last_error = g.last_error.clone();
+    }
+
+    /// Mutation HTTP via worker (blocks the click path only; paint uses `poll_if_due`).
+    fn http(&self, method: &str, path: &str, body: Option<Vec<u8>>) -> Result<Value, String> {
+        let (reply_tx, reply_rx) = mpsc::sync_channel(1);
+        self.cmd_tx
+            .send(SimCmd::Http {
+                method: method.to_string(),
+                path: path.to_string(),
+                body,
+                reply: reply_tx,
+            })
+            .map_err(|_| "sim worker disconnected".to_string())?;
+        reply_rx
+            .recv()
+            .map_err(|_| "sim worker disconnected".to_string())?
+    }
+}
+
+fn worker_loop(rx: Receiver<SimCmd>, shared: Arc<Mutex<SharedSnap>>, base: String) {
+    let mut token: Option<String> = None;
+    while let Ok(cmd) = rx.recv() {
+        match cmd {
+            SimCmd::Refresh { force } => {
+                {
+                    let Ok(g) = shared.lock() else {
+                        continue;
+                    };
+                    if !force {
+                        if let Some(at) = g.next_probe_at {
+                            if Instant::now() < at {
+                                continue;
+                            }
+                        }
+                    }
+                }
+                // Drain coalesced Refresh cmds so we don't stack probes.
+                while let Ok(SimCmd::Refresh { .. }) = rx.try_recv() {}
+
+                match fetch_list(&base, &mut token) {
+                    Ok((rows, statuses, playback)) => {
+                        let ctx = {
+                            let Ok(mut g) = shared.lock() else {
+                                continue;
+                            };
+                            g.rows = rows;
+                            g.statuses = statuses;
+                            g.playback = playback;
+                            g.sidecar_up = true;
+                            g.last_error = None;
+                            g.backoff = BACKOFF_START;
+                            g.next_probe_at = None;
+                            g.generation = g.generation.wrapping_add(1);
+                            g.egui_ctx.clone()
+                        };
+                        if let Some(ctx) = ctx {
+                            ctx.request_repaint();
+                        }
+                    }
+                    Err(e) => {
+                        let ctx = {
+                            let Ok(mut g) = shared.lock() else {
+                                continue;
+                            };
+                            let was_up = g.sidecar_up;
+                            g.sidecar_up = false;
+                            g.last_error = Some(e);
+                            let next = g.backoff;
+                            g.next_probe_at = Some(Instant::now() + next);
+                            g.backoff = (g.backoff.saturating_mul(2)).min(BACKOFF_MAX);
+                            g.generation = g.generation.wrapping_add(1);
+                            // Wake once when we first discover Pro is down so UI clears status.
+                            if was_up {
+                                g.egui_ctx.clone()
+                            } else {
+                                None
+                            }
+                        };
+                        if let Some(ctx) = ctx {
+                            ctx.request_repaint();
+                        }
+                    }
+                }
+            }
+            SimCmd::Http {
+                method,
+                path,
+                body,
+                reply,
+            } => {
+                let result = http_call(&base, &mut token, &method, &path, body);
+                // Update up/down from mutation outcome (transport fail → backoff).
+                match &result {
+                    Ok(_) => {
+                        if let Ok(mut g) = shared.lock() {
+                            g.sidecar_up = true;
+                            g.last_error = None;
+                            g.backoff = BACKOFF_START;
+                            g.next_probe_at = None;
+                        }
+                    }
+                    Err(e) if e.contains("unreachable") || e.contains("cannot read") => {
+                        if let Ok(mut g) = shared.lock() {
+                            g.sidecar_up = false;
+                            g.last_error = Some(e.clone());
+                            let next = g.backoff;
+                            g.next_probe_at = Some(Instant::now() + next);
+                            g.backoff = (g.backoff.saturating_mul(2)).min(BACKOFF_MAX);
+                            g.generation = g.generation.wrapping_add(1);
+                        }
+                    }
+                    Err(_) => {}
+                }
+                let _ = reply.send(result);
+            }
+        }
+    }
+}
+
+fn fetch_list(
+    base: &str,
+    token: &mut Option<String>,
+) -> Result<(Vec<SimRow>, Vec<SimStatus>, PlaybackStatus), String> {
+    let v = http_call(base, token, "GET", "/sim", None)?;
+    let rows: Vec<SimRow> = serde_json::from_value(
+        v.get("simulations")
+            .cloned()
+            .unwrap_or(Value::Array(vec![])),
+    )
+    .map_err(|e| format!("simulations: {e}"))?;
+    let statuses: Vec<SimStatus> = serde_json::from_value(
+        v.get("statuses").cloned().unwrap_or(Value::Array(vec![])),
+    )
+    .map_err(|e| format!("statuses: {e}"))?;
+    let playback: PlaybackStatus = serde_json::from_value(
+        v.get("playback")
+            .cloned()
+            .unwrap_or(Value::Object(Default::default())),
+    )
+    .unwrap_or_default();
+    // Older sidecars only had `running` — treat as active when set.
+    let mut playback = playback;
+    if !playback.active && playback.running {
+        playback.active = true;
+    }
+    Ok((rows, statuses, playback))
+}
+
+fn read_token_cached(token: &mut Option<String>) -> Result<String, String> {
+    if let Some(t) = token.as_ref() {
+        if !t.is_empty() {
+            return Ok(t.clone());
+        }
+    }
+    let path = token_path();
+    let t = fs::read_to_string(&path)
+        .map_err(|e| {
+            format!(
+                "cannot read {} ({e}) — is TopicBench Pro running?",
+                path.display()
+            )
+        })?
+        .trim()
+        .to_string();
+    if t.is_empty() {
+        return Err("mcp-token file is empty".into());
+    }
+    *token = Some(t.clone());
+    Ok(t)
+}
+
+fn http_call(
+    base: &str,
+    token: &mut Option<String>,
+    method: &str,
+    path: &str,
+    body: Option<Vec<u8>>,
+) -> Result<Value, String> {
+    let tok = read_token_cached(token)?;
+    let url = format!("{base}{path}");
+    let agent = ureq::AgentBuilder::new()
+        .timeout_connect(Duration::from_millis(400))
+        .timeout_read(Duration::from_secs(3))
+        .build();
+    let req = match method {
+        "GET" => agent.get(&url),
+        "PUT" => agent.put(&url),
+        "POST" => agent.post(&url),
+        "DELETE" => agent.request("DELETE", &url),
+        other => return Err(format!("unsupported method {other}")),
+    }
+    .set("Authorization", &format!("Bearer {tok}"))
+    .set("Content-Type", "application/json");
+
+    let resp = match body {
+        Some(b) => req.send_bytes(&b),
+        None => {
+            if method == "GET" || method == "DELETE" {
+                req.call()
+            } else {
+                req.send_bytes(b"{}")
+            }
+        }
+    };
+    match resp {
+        Ok(r) => {
+            let text = r.into_string().map_err(|e| format!("read body: {e}"))?;
+            if text.trim().is_empty() {
+                return Ok(Value::Null);
+            }
+            serde_json::from_str(&text).map_err(|e| format!("json: {e}"))
+        }
+        Err(ureq::Error::Status(code, resp)) => {
+            let text = resp.into_string().unwrap_or_default();
+            let msg = serde_json::from_str::<Value>(&text)
+                .ok()
+                .and_then(|v| {
+                    v.get("error")
+                        .and_then(|e| e.as_str())
+                        .map(|s| s.to_string())
+                })
+                .unwrap_or(text);
+            Err(format!("HTTP {code}: {msg}"))
+        }
+        Err(ureq::Error::Transport(t)) => Err(format!(
+            "TopicBench Pro unreachable ({t}) — is it running?"
+        )),
     }
 }
 
