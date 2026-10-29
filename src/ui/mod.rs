@@ -7,6 +7,7 @@ pub mod flash;
 pub mod hover_tip;
 pub mod icons;
 pub mod json_view;
+pub mod native_dialog;
 pub mod payload_panel;
 pub mod pin_board;
 pub mod profiles;
