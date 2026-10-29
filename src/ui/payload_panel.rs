@@ -11,7 +11,7 @@ use crate::pro::history_client::{self, HistoryForwarder, PayloadScrub};
 use crate::pro::{self, Entitlement};
 use crate::ui::flash;
 use crate::ui::hover_tip;
-use crate::ui::icons::{self, IconSet};
+use crate::ui::icons::{self, IconSet, CHROME_MUTED, CHROME_ROW};
 use crate::ui::json_view;
 use eframe::egui::{
     self, Align, Color32, Key, RichText, Sense, Vec2, ViewportBuilder, ViewportClass,
@@ -28,6 +28,13 @@ fn match_line_fill() -> Color32 {
 }
 fn match_current_fill() -> Color32 {
     Color32::from_rgba_unmultiplied(140, 120, 40, 140)
+}
+/// Muted wash when Payload shows a scrubbed (non-Live) sample.
+fn historical_payload_fill() -> Color32 {
+    Color32::from_rgba_unmultiplied(CHROME_ROW.r(), CHROME_ROW.g(), CHROME_ROW.b(), 160)
+}
+fn historical_payload_stroke() -> egui::Stroke {
+    egui::Stroke::new(1.5, CHROME_MUTED)
 }
 
 /// One payload topic locked into a floating OS window.
@@ -468,6 +475,7 @@ fn draw_topic_body(
                 open_stickies,
                 status,
                 change_bg,
+                scrubbing,
                 payload_scrub,
                 &history,
                 sample_at,
@@ -759,6 +767,8 @@ fn draw_searchable_body(
     open_stickies: &mut bool,
     status: &mut String,
     change_bg: Color32,
+    // True when scrub is pinned off Live — mute the payload body.
+    scrubbing: bool,
     mut payload_scrub: Option<&mut PayloadScrub>,
     history: &[(Instant, String)],
     // Receive Instant for the viewed sample (live tip or scrubbed); None → hide clock.
@@ -852,9 +862,25 @@ fn draw_searchable_body(
         }
     }
 
+    // Historical (non-Live) scrub: gray wash + muted border so the body reads as past data.
+    let body_frame = if scrubbing {
+        egui::Frame::NONE
+            .fill(historical_payload_fill())
+            .stroke(historical_payload_stroke())
+            .inner_margin(egui::Margin::symmetric(4, 4))
+            .corner_radius(3.0)
+    } else {
+        egui::Frame::NONE
+    };
+    let scroll_h = if scrubbing {
+        (height - 8.0).max(72.0)
+    } else {
+        height
+    };
+    body_frame.show(ui, |ui| {
     egui::ScrollArea::vertical()
         .id_salt(id_salt)
-        .max_height(height)
+        .max_height(scroll_h)
         .auto_shrink([false, false])
         .show(ui, |ui| {
             ui.set_max_width(ui.available_width());
@@ -988,6 +1014,7 @@ fn draw_searchable_body(
                 }
             }
         });
+    });
 
     if do_scroll {
         search.scroll_to_current = false;
