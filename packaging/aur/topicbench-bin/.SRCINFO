@@ -1,6 +1,6 @@
 pkgbase = topicbench-bin
 	pkgdesc = Multi-broker MQTT explorer and monitor (prebuilt binary)
-	pkgver = 1.2.1
+	pkgver = 1.2.5
 	pkgrel = 1
 	url = https://github.com/unipsycho/topicbench
 	arch = x86_64
@@ -23,7 +23,7 @@ pkgbase = topicbench-bin
 	source = topicbench.png
 	source = LICENSE-MIT
 	source = LICENSE-APACHE
-	sha256sums = 418598970d2c27f668d2d9495525c655b19c83c0dd2628e8425e501a498de5b4
+	sha256sums = 7e905ee711b280eef8855a33e2260c19d80903f38772c4c86a88f833980c26e8
 	sha256sums = d75afb405b488da17ba67d315e55907d5076f478af208dc51f6a5b1c57e176f0
 	sha256sums = 5ebf960ed0a7c9125cd6875ebfdc93b0758dbe5ad5ad61a3166e9f2d1099c01b
 	sha256sums = cfd9aa40af9d85ca63ef620485aeda7afa16b8ef75ece0b784ccb45bf4490eb3
