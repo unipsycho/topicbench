@@ -565,12 +565,17 @@ pub fn t_ms_to_instant(t_ms: i64) -> Instant {
 }
 
 /// Payload-panel history scrub (session-only; one topic at a time).
+///
+/// While scrubbing we **pin to a sample Instant** so new live messages (tip growth)
+/// do not slide the viewed payload forward. `steps_back` is derived for the UI.
 #[derive(Clone, Debug, Default)]
 pub struct PayloadScrub {
     /// `(profile_id, topic)` currently scrubbing; cleared on topic switch → live.
     focus: Option<(String, String)>,
-    /// Steps back from the live tip (`0` / None = live).
+    /// Steps back from the live tip (`0` = live). Display / slider only when live-relative.
     steps_back: usize,
+    /// Pinned sample time while scrubbing (`None` = follow live tip).
+    pinned_at: Option<std::time::Instant>,
 }
 
 impl PayloadScrub {
@@ -579,33 +584,105 @@ impl PayloadScrub {
         let key = (profile_id.to_string(), topic.to_string());
         if self.focus.as_ref() != Some(&key) {
             self.focus = Some(key);
-            self.steps_back = 0;
+            self.resume_live();
         }
     }
 
     pub fn is_live(&self) -> bool {
-        self.steps_back == 0
+        self.pinned_at.is_none() && self.steps_back == 0
     }
 
     pub fn steps_back(&self) -> usize {
         self.steps_back
     }
 
-    pub fn set_steps_back(&mut self, n: usize) {
-        self.steps_back = n;
-    }
-
     pub fn resume_live(&mut self) {
         self.steps_back = 0;
+        self.pinned_at = None;
+    }
+
+    /// Move scrub to `idx` in `history` (oldest→newest). Tip index → live.
+    pub fn scrub_to_index(&mut self, history: &[(std::time::Instant, String)], idx: usize) {
+        if history.is_empty() {
+            self.resume_live();
+            return;
+        }
+        let tip = history.len() - 1;
+        let idx = idx.min(tip);
+        if idx >= tip {
+            self.resume_live();
+            return;
+        }
+        self.pinned_at = Some(history[idx].0);
+        self.steps_back = tip - idx;
+    }
+
+    /// Slider / relative: `n` steps behind the tip (`0` = live).
+    pub fn set_steps_back_in(
+        &mut self,
+        history: &[(std::time::Instant, String)],
+        n: usize,
+    ) {
+        if history.is_empty() || n == 0 {
+            self.resume_live();
+            return;
+        }
+        let tip = history.len() - 1;
+        let back = n.min(tip);
+        self.scrub_to_index(history, tip - back);
+    }
+
+    /// Step older (−1) or newer (+1). Crossing the tip resumes live.
+    pub fn step_by(&mut self, history: &[(std::time::Instant, String)], delta: i32) {
+        if history.is_empty() {
+            return;
+        }
+        let tip = history.len() - 1;
+        let cur = self.index_in(history).unwrap_or(tip);
+        let next = (cur as i32 + delta).clamp(0, tip as i32) as usize;
+        self.scrub_to_index(history, next);
     }
 
     /// Index into `history` (oldest→newest) for the current scrub position.
-    pub fn index_in(&self, len: usize) -> Option<usize> {
+    pub fn index_in(&self, history: &[(std::time::Instant, String)]) -> Option<usize> {
+        let len = history.len();
         if len == 0 {
             return None;
         }
         let tip = len - 1;
+        if let Some(pin) = self.pinned_at {
+            // Prefer exact Instant match; else nearest at-or-before pin; else oldest.
+            if let Some(i) = history.iter().position(|(t, _)| *t == pin) {
+                return Some(i);
+            }
+            let mut best = 0usize;
+            for (i, (t, _)) in history.iter().enumerate() {
+                if *t <= pin {
+                    best = i;
+                } else {
+                    break;
+                }
+            }
+            return Some(best);
+        }
         let back = self.steps_back.min(tip);
         Some(tip - back)
+    }
+
+    /// Refresh `steps_back` from pin vs tip (for −N label while history grows).
+    pub fn refresh_steps_back(&mut self, history: &[(std::time::Instant, String)]) {
+        let len = history.len();
+        if len == 0 {
+            self.steps_back = 0;
+            return;
+        }
+        let tip = len - 1;
+        if let Some(idx) = self.index_in(history) {
+            if idx >= tip {
+                self.resume_live();
+            } else {
+                self.steps_back = tip - idx;
+            }
+        }
     }
 }

@@ -191,6 +191,7 @@ pub fn draw(
 }
 
 /// Floating windows for each popped payload topic (close dismisses; no dock).
+#[allow(clippy::too_many_arguments)]
 pub fn draw_undocked_viewports(
     ctx: &egui::Context,
     sessions: &mut SessionManager,
@@ -200,27 +201,42 @@ pub fn draw_undocked_viewports(
     open_stickies: &mut bool,
     status: &mut String,
     popped: &mut Vec<PoppedPayload>,
+    builder_seeds: &mut std::collections::HashMap<String, crate::mqtt::window_geom::WinGeom>,
+    saved_geoms: &mut std::collections::BTreeMap<String, crate::mqtt::window_geom::WinGeom>,
+    geom_dirty: &mut bool,
 ) {
     let mut close_idxs: Vec<usize> = Vec::new();
     let n = popped.len();
+    const MIN: [f32; 2] = [280.0, 200.0];
+    const DEFAULT: [f32; 2] = [420.0, 520.0];
+    let live_keys: std::collections::HashSet<String> = popped
+        .iter()
+        .map(|p| crate::mqtt::window_geom::payload_key(&p.profile_id, &p.topic))
+        .collect();
+    builder_seeds.retain(|k, _| live_keys.contains(k));
     for i in 0..n {
         let profile_id = popped[i].profile_id.clone();
         let profile_name = popped[i].profile_name.clone();
         let topic = popped[i].topic.clone();
         let title = format!("Payload — {profile_name} · {topic}");
+        let key = crate::mqtt::window_geom::payload_key(&profile_id, &topic);
         let vp_id = egui::ViewportId::from_hash_of((
             "payload_pop",
             profile_id.as_str(),
             topic.as_str(),
         ));
         let mut close_me = false;
+        let seed = *builder_seeds.entry(key.clone()).or_insert_with(|| {
+            saved_geoms
+                .get(&key)
+                .copied()
+                .unwrap_or_else(|| crate::mqtt::window_geom::WinGeom::size(DEFAULT[0], DEFAULT[1]))
+        });
 
         ctx.show_viewport_immediate(
             vp_id,
-            ViewportBuilder::default()
-                .with_title(title.clone())
-                .with_inner_size([420.0, 520.0])
-                .with_min_inner_size([280.0, 200.0]),
+            seed.apply(ViewportBuilder::default().with_title(title.clone()), MIN)
+                .with_min_inner_size(MIN),
             |ctx, class| {
                 let mut body = |ui: &mut egui::Ui| {
                     draw_topic_body(
@@ -260,6 +276,15 @@ pub fn draw_undocked_viewports(
                 if ctx.input(|i| i.viewport().close_requested()) {
                     close_me = true;
                 }
+                if let Some(g) = crate::mqtt::window_geom::capture(ctx) {
+                    let mut slot = saved_geoms.get(&key).copied();
+                    if crate::mqtt::window_geom::sync_slot(&mut slot, g, MIN) {
+                        if let Some(g) = slot {
+                            saved_geoms.insert(key.clone(), g);
+                            *geom_dirty = true;
+                        }
+                    }
+                }
             },
         );
 
@@ -268,7 +293,8 @@ pub fn draw_undocked_viewports(
         }
     }
     for i in close_idxs.into_iter().rev() {
-        popped.remove(i);
+        let p = popped.remove(i);
+        builder_seeds.remove(&crate::mqtt::window_geom::payload_key(&p.profile_id, &p.topic));
     }
 }
 
@@ -378,11 +404,19 @@ fn draw_topic_body(
             {
                 if pro::has(Entitlement::HistoryScrubber) {
                     scrub.sync_topic(profile_id, topic);
-                    let idx = scrub.index_in(history.len());
+                    // Keep −N label honest as the tip grows while pinned.
+                    scrub.refresh_steps_back(&history);
                     let live = scrub.is_live();
-                    let (p, at) = idx
-                        .and_then(|i| history.get(i).map(|(t, s)| (s.clone(), Some(*t))))
-                        .unwrap_or_else(|| (live_payload.clone(), history.last().map(|(t, _)| *t)));
+                    let (p, at) = if live {
+                        (live_payload.clone(), history.last().map(|(t, _)| *t))
+                    } else {
+                        scrub
+                            .index_in(&history)
+                            .and_then(|i| history.get(i).map(|(t, s)| (s.clone(), Some(*t))))
+                            .unwrap_or_else(|| {
+                                (live_payload.clone(), history.last().map(|(t, _)| *t))
+                            })
+                    };
                     (p, !live, at)
                 } else {
                     (
@@ -435,7 +469,7 @@ fn draw_topic_body(
                 status,
                 change_bg,
                 payload_scrub,
-                history.len(),
+                &history,
                 sample_at,
             );
         }
@@ -525,9 +559,43 @@ fn instant_hhmmss(at: Instant) -> String {
     dt.format("%H:%M:%S").to_string()
 }
 
-/// Compact scrub beside `#count`: slide left for older payloads; tip = live.
-fn draw_payload_scrub(ui: &mut egui::Ui, scrub: &mut PayloadScrub, history_len: usize) {
+/// Compact scrub beside `#count`: step ←/→ + slider; tip = live.
+fn draw_payload_scrub(
+    ui: &mut egui::Ui,
+    scrub: &mut PayloadScrub,
+    history: &[(Instant, String)],
+) {
+    let history_len = history.len();
     let max_back = history_len.saturating_sub(1);
+    if max_back == 0 {
+        return;
+    }
+    // Left/Right when the find field does not own focus.
+    let find_focused = ui.memory(|m| {
+        m.has_focus(egui::Id::new("payload_find_edit"))
+            || m.has_focus(egui::Id::new("payload_find_edit_dock"))
+            || m.has_focus(egui::Id::new("payload_find_edit_float"))
+    });
+    if !find_focused {
+        // Consume so other panels don't also treat ←/→ as navigation.
+        if ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, Key::ArrowLeft)) {
+            scrub.step_by(history, -1);
+        }
+        if ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, Key::ArrowRight)) {
+            scrub.step_by(history, 1);
+        }
+    }
+
+    let older = ui
+        .add_enabled(
+            scrub.index_in(history).unwrap_or(0) > 0,
+            egui::Button::new("◀").small(),
+        )
+        .on_hover_text("Older sample (←)");
+    if older.clicked() {
+        scrub.step_by(history, -1);
+    }
+
     // Slider: 0 = oldest, max = live tip (invert steps_back for natural left=old).
     let mut pos = (max_back - scrub.steps_back().min(max_back)) as f32;
     let max_f = max_back as f32;
@@ -540,10 +608,21 @@ fn draw_payload_scrub(ui: &mut egui::Ui, scrub: &mut PayloadScrub, history_len: 
         );
         if resp.changed() || resp.dragged() {
             let idx = pos.round().clamp(0.0, max_f) as usize;
-            scrub.set_steps_back(max_back - idx);
+            scrub.scrub_to_index(history, idx);
         }
-        resp.on_hover_text("Scrub previous payloads · tip = live");
+        resp.on_hover_text("Scrub previous payloads · tip = live · ←/→ step one");
     });
+
+    let newer = ui
+        .add_enabled(
+            !scrub.is_live(),
+            egui::Button::new("▶").small(),
+        )
+        .on_hover_text("Newer sample (→) · tip resumes Live");
+    if newer.clicked() {
+        scrub.step_by(history, 1);
+    }
+
     if scrub.is_live() {
         ui.label(
             RichText::new("Live")
@@ -554,7 +633,7 @@ fn draw_payload_scrub(ui: &mut egui::Ui, scrub: &mut PayloadScrub, history_len: 
         .add(egui::Button::new(
             RichText::new(format!("−{}", scrub.steps_back())).small(),
         ))
-        .on_hover_text("Scrubbing history — click to resume live")
+        .on_hover_text("Paused on history — click to resume live")
         .clicked()
     {
         scrub.resume_live();
@@ -598,6 +677,7 @@ fn draw_search_bar(
         icons.tiny(ui, "clipboard_checklist", false, "Find in payload");
         let edit = ui.add(
             egui::TextEdit::singleline(&mut search.query)
+                .id(egui::Id::new("payload_find_edit"))
                 .desired_width(ui.available_width().min(180.0).max(80.0))
                 .hint_text("Find…")
                 .font(egui::TextStyle::Monospace),
@@ -664,10 +744,11 @@ fn draw_searchable_body(
     status: &mut String,
     change_bg: Color32,
     payload_scrub: Option<&mut PayloadScrub>,
-    history_len: usize,
+    history: &[(Instant, String)],
     // Receive Instant for the viewed sample (live tip or scrubbed); None → hide clock.
     sample_at: Option<Instant>,
 ) {
+    let history_len = history.len();
     let matches = find_matches(display, &search.query);
     let n = matches.len();
     if n > 0 {
@@ -694,7 +775,7 @@ fn draw_searchable_body(
         // Compact scrub beside #count — only when Pro HistoryScrubber is licensed.
         if let Some(scrub) = payload_scrub {
             if pro::has(Entitlement::HistoryScrubber) && history_len > 1 {
-                draw_payload_scrub(ui, scrub, history_len);
+                draw_payload_scrub(ui, scrub, history);
             }
         }
         if let Some(at) = sample_at {
