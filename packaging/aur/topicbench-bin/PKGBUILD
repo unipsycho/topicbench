@@ -4,7 +4,7 @@
 # icon, using system libxcb / libxkbcommon / Vulkan|GL.
 
 pkgname=topicbench-bin
-pkgver=1.2.1
+pkgver=1.2.5
 pkgrel=1
 pkgdesc='Multi-broker MQTT explorer and monitor (prebuilt binary)'
 arch=('x86_64')
