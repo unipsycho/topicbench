@@ -10,7 +10,8 @@ readme = "README.md"
 [dependencies]
 # ArtCraft Crafting Apps (PhotoCraft/DesignCraft/FilmCraft) use egui; eframe is the official shell.
 # 0.31.x matches Rust >= 1.80 (image has 1.83). Bump toward latest when rustup can update.
-eframe = { version = "0.31", default-features = true, features = ["wayland", "x11"] }
+# persistence → main window pos/size + egui memory (panel splitters) under config/eframe.
+eframe = { version = "0.31", default-features = true, features = ["wayland", "x11", "persistence"] }
 # Sync MQTT client: run EventLoop on a worker thread; feed UI via channels (fits egui).
 # websocket = MQTT over WS/WSS; use-rustls is rumqttc default (TLS + WSS).
 rumqttc = { version = "0.24", features = ["websocket", "use-rustls"] }
