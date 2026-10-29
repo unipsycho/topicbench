@@ -9,6 +9,7 @@ use crate::mqtt::profile::ProfileStore;
 use crate::mqtt::publish::{PublishDraft, PublishHistory};
 use crate::mqtt::session::SessionManager;
 use crate::mqtt::settings::AppSettings;
+use crate::mqtt::window_geom::WinGeom;
 use crate::ui::icons::{IconSet, CHROME_BG};
 use crate::ui::profiles::ProfileListFilter;
 use crate::ui::search_bar::SearchFilter;
@@ -17,7 +18,7 @@ use crate::ui::flash;
 use crate::ui::splash::SplashIntro;
 use crate::update::{self, ReleaseInfo, UpdateService, UpdateStatus};
 use eframe::egui::{self, TextureHandle};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 
@@ -134,8 +135,24 @@ pub struct MqttMonitorApp {
     recordings: crate::pro::recording::RecordingStore,
     /// Topic-tree Export scope modal open.
     tree_export_open: bool,
+    /// Topic-tree Import remap modal (Browse / Recent → sidecar).
+    tree_import: crate::ui::topic_tree_panel::TreeImportUi,
     /// Live traffic pause / frozen snapshot.
     traffic_view: crate::ui::traffic_panel::TrafficViewState,
+    /// Session-frozen ViewportBuilder seeds so patch does not fight live resize/move.
+    vp_seeds: ViewportSeeds,
+    /// Settings geom/splitter dirty — flushed periodically / on shutdown.
+    geometry_dirty: bool,
+}
+
+/// Frozen builder geoms for immediate viewports (one seed per open window this session).
+#[derive(Default)]
+struct ViewportSeeds {
+    simulation: Option<WinGeom>,
+    bookmarks: Option<WinGeom>,
+    color_rules: Option<WinGeom>,
+    topic_trees: HashMap<String, WinGeom>,
+    payload_pops: HashMap<String, WinGeom>,
 }
 
 impl MqttMonitorApp {
@@ -193,6 +210,30 @@ impl MqttMonitorApp {
             || std::env::var_os("TOPICBENCH_OPEN_BOOKMARKS").is_some();
         let color_rules_open = settings.show_color_rules
             || std::env::var_os("TOPICBENCH_OPEN_COLOR_RULES").is_some();
+        // Recreate pop-outs from last session (topic trees wait until brokers reconnect).
+        let topic_tree_undocked: HashSet<String> =
+            settings.topic_tree_undocked.iter().cloned().collect();
+        let payload_popped: Vec<PoppedPayload> = settings
+            .payload_popouts
+            .iter()
+            .map(|p| {
+                let name = if p.profile_name.is_empty() {
+                    profiles
+                        .profiles
+                        .get(&p.profile_id)
+                        .map(|pr| pr.name.clone())
+                        .unwrap_or_else(|| p.profile_id.clone())
+                } else {
+                    p.profile_name.clone()
+                };
+                PoppedPayload {
+                    profile_id: p.profile_id.clone(),
+                    profile_name: name,
+                    topic: p.topic.clone(),
+                    search: PayloadSearch::default(),
+                }
+            })
+            .collect();
         Self {
             profiles,
             sessions,
@@ -218,8 +259,8 @@ impl MqttMonitorApp {
             payload_search: PayloadSearch::default(),
             show_profile_password: false,
             settings_draft: None,
-            topic_tree_undocked: HashSet::new(),
-            payload_popped: Vec::new(),
+            topic_tree_undocked,
+            payload_popped,
             splash: Some(SplashIntro::new(splash_logo)),
             update_service: UpdateService::new(),
             update_status: UpdateStatus::Idle,
@@ -249,7 +290,10 @@ impl MqttMonitorApp {
             color_rules_open,
             recordings: crate::pro::recording::RecordingStore::default(),
             tree_export_open: false,
+            tree_import: crate::ui::topic_tree_panel::TreeImportUi::load_recent(),
             traffic_view: crate::ui::traffic_panel::TrafficViewState::default(),
+            vp_seeds: ViewportSeeds::default(),
+            geometry_dirty: false,
         }
     }
 }
@@ -478,6 +522,27 @@ impl eframe::App for MqttMonitorApp {
             self.status_snap = self.status.clone();
             self.status_changed_at = Instant::now();
         }
+
+        // Capture main-window geometry for settings.json (eframe also persists under eframe/).
+        if let Some(g) = crate::mqtt::window_geom::capture(ctx) {
+            if crate::mqtt::window_geom::sync_slot(
+                &mut self.settings.window_main,
+                g,
+                [400.0, 300.0],
+            ) {
+                self.geometry_dirty = true;
+            }
+        }
+    }
+
+    fn auto_save_interval(&self) -> std::time::Duration {
+        std::time::Duration::from_secs(2)
+    }
+
+    fn save(&mut self, _storage: &mut dyn eframe::Storage) {
+        // Flush panel / pop-out / geometry into settings.json on eframe autosave + quit.
+        self.geometry_dirty = false;
+        self.persist_panels();
     }
 }
 

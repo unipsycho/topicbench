@@ -9,7 +9,9 @@ use crate::mqtt::settings::TopicTreeExpandMode;
 use crate::mqtt::topic_tree::TopicNode;
 use crate::ui::flash;
 use crate::ui::hover_tip;
-use crate::ui::icons::{self, IconSet, CHROME_MUTED};
+use crate::ui::icons::{
+    self, IconSet, CHROME_ACCENT_BORDER, CHROME_ACCENT_SOFT, CHROME_MUTED, TINY_ICON,
+};
 use crate::ui::json_view;
 use crate::ui::search_bar::SearchFilter;
 use crate::ui::shortcuts;
@@ -57,6 +59,7 @@ pub fn draw(
     scroll_to: &mut Option<(String, String)>,
     recordings: &mut crate::pro::recording::RecordingStore,
     tree_export_open: &mut bool,
+    tree_import: &mut TreeImportUi,
 ) {
     // Hide Import/Export entirely when unlicensed (same rule as Pro ribbon).
     let export_ok = crate::pro::has(crate::pro::Entitlement::TreeExport);
@@ -77,7 +80,10 @@ pub fn draw(
                     .tiny(ui, "import", false, "Import topic tree JSON (republish)")
                     .clicked()
                 {
-                    run_tree_import(sessions, profiles, pins, status);
+                    tree_import.open = true;
+                    if tree_import.target_id.is_empty() {
+                        tree_import.target_id = default_import_target(sessions, profiles, pins);
+                    }
                 }
             });
         }
@@ -100,8 +106,8 @@ pub fn draw(
     // Only currently connected brokers — disconnected sessions are cleared on Disconnect.
     // Broker roots follow Profiles list order (profiles.json array / ProfileStore.order).
     let connected_ids: Vec<String> = connected_profile_ids(sessions, profiles);
-    // Drop undocked entries for brokers that are no longer connected.
-    undocked.retain(|id| connected_ids.iter().any(|c| c == id));
+    // Keep undocked flags across disconnect/reconnect (session restore); drop deleted profiles.
+    undocked.retain(|id| profiles.profiles.contains_key(id));
 
     if connected_ids.is_empty() {
         ui.weak("Connect a profile and subscribe to see topics.");
@@ -150,11 +156,23 @@ pub fn draw_undocked_viewports(
     color_rules: &crate::pro::color_rules::ColorRulesStore,
     scroll_to: &mut Option<(String, String)>,
     recordings: &mut crate::pro::recording::RecordingStore,
+    builder_seeds: &mut std::collections::HashMap<String, crate::mqtt::window_geom::WinGeom>,
+    saved_geoms: &mut std::collections::BTreeMap<String, crate::mqtt::window_geom::WinGeom>,
+    geom_dirty: &mut bool,
 ) {
     let connected = connected_profile_ids(sessions, profiles);
-    undocked.retain(|id| connected.iter().any(|c| c == id));
-    let ids: Vec<String> = undocked.iter().cloned().collect();
+    // Keep undocked across disconnect so quit+relaunch / reconnect restores pop-outs.
+    undocked.retain(|id| profiles.profiles.contains_key(id));
+    builder_seeds.retain(|id, _| undocked.contains(id));
+    // Only spawn OS windows for brokers that are connected right now.
+    let ids: Vec<String> = undocked
+        .iter()
+        .filter(|id| connected.iter().any(|c| c == *id))
+        .cloned()
+        .collect();
     let now = Instant::now();
+    const MIN: [f32; 2] = [140.0, 200.0];
+    const DEFAULT: [f32; 2] = [440.0, 560.0];
 
     for profile_id in ids {
         let profile_name = sessions
@@ -171,14 +189,18 @@ pub fn draw_undocked_viewports(
         let title = format!("Topic tree — {profile_name}");
         let vp_id = egui::ViewportId::from_hash_of(("topic_tree_pop", profile_id.as_str()));
         let mut dock_requested = false;
+        let seed = *builder_seeds.entry(profile_id.clone()).or_insert_with(|| {
+            saved_geoms
+                .get(&profile_id)
+                .copied()
+                .unwrap_or_else(|| crate::mqtt::window_geom::WinGeom::size(DEFAULT[0], DEFAULT[1]))
+        });
 
         ctx.show_viewport_immediate(
             vp_id,
-            ViewportBuilder::default()
-                .with_title(title.clone())
-                .with_inner_size([440.0, 560.0])
+            seed.apply(ViewportBuilder::default().with_title(title.clone()), MIN)
                 // Half of prior 280 — matches docked central column shrink goal.
-                .with_min_inner_size([140.0, 200.0]),
+                .with_min_inner_size(MIN),
             |ctx, class| {
                 let mut body = |ui: &mut egui::Ui| {
                     draw_broker_block(
@@ -228,11 +250,21 @@ pub fn draw_undocked_viewports(
                 if ctx.input(|i| i.viewport().close_requested()) {
                     dock_requested = true;
                 }
+                if let Some(g) = crate::mqtt::window_geom::capture(ctx) {
+                    let mut slot = saved_geoms.get(&profile_id).copied();
+                    if crate::mqtt::window_geom::sync_slot(&mut slot, g, MIN) {
+                        if let Some(g) = slot {
+                            saved_geoms.insert(profile_id.clone(), g);
+                            *geom_dirty = true;
+                        }
+                    }
+                }
             },
         );
 
         if dock_requested {
             undocked.remove(&profile_id);
+            builder_seeds.remove(&profile_id);
         }
     }
 }
@@ -328,32 +360,37 @@ fn draw_broker_block(
                     )
                 };
                 let rec_icon = if recording { "record_red" } else { "record" };
+                // Off-thread save dialog — cancel keeps recording running.
+                let rec_dlg = egui::Id::new("dlg_tree_record").with(profile_id);
                 if icons.tiny(ui, rec_icon, recording, &tip).clicked() {
                     if recording {
                         let name = crate::pro::recording::RecordingStore::default_filename(
                             profile_name.as_str(),
                         );
-                        if let Some(path) = rfd::FileDialog::new()
-                            .set_title("Save recording CSV")
-                            .set_file_name(&name)
-                            .add_filter("CSV", &["csv"])
-                            .save_file()
-                        {
-                            match recordings.stop_to_file(profile_id, &path) {
-                                Ok((_, n, _csv)) => {
-                                    *status = format!(
-                                        "Recording saved ({n} events) → {}",
-                                        path.display()
-                                    );
-                                }
-                                Err(e) => *status = format!("Recording save failed: {e}"),
-                            }
-                        } else {
-                            // Dialog cancelled — keep recording running.
-                        }
+                        crate::ui::native_dialog::begin_path(
+                            ui.ctx(),
+                            rec_dlg,
+                            crate::ui::native_dialog::PathOp::SaveFile,
+                            move |d| {
+                                d.set_title("Save recording CSV")
+                                    .set_file_name(&name)
+                                    .add_filter("CSV", &["csv"])
+                            },
+                        );
                     } else {
                         recordings.start(profile_id, profile_name.as_str());
                         *status = format!("Recording {profile_name}…");
+                    }
+                }
+                if let Some(Some(path)) = crate::ui::native_dialog::poll_path(ui.ctx(), rec_dlg) {
+                    match recordings.stop_to_file(profile_id, &path) {
+                        Ok((_, n, _csv)) => {
+                            *status = format!(
+                                "Recording saved ({n} events) → {}",
+                                path.display()
+                            );
+                        }
+                        Err(e) => *status = format!("Recording save failed: {e}"),
                     }
                 }
             }
@@ -1129,14 +1166,30 @@ fn scrollable_hover(
     }
 }
 
-/// Export scope modal (Settings-style floating chrome).
+/// Export scope modal (panel-style header + Settings-style action buttons).
 pub fn draw_export_modal(
     ctx: &egui::Context,
     open: &mut bool,
     sessions: &SessionManager,
     pins: &PinBoard,
+    icons: &IconSet,
     status: &mut String,
 ) {
+    // Drain off-thread save even after the scope modal closes.
+    let export_dlg = egui::Id::new("dlg_tree_export");
+    let export_text_key = egui::Id::new("dlg_tree_export_text");
+    if let Some(path_opt) = crate::ui::native_dialog::poll_path(ctx, export_dlg) {
+        if let Some(path) = path_opt {
+            if let Some(text) = ctx.data_mut(|d| d.remove_temp::<String>(export_text_key)) {
+                match std::fs::write(&path, format!("{text}\n")) {
+                    Ok(()) => *status = format!("Exported topic tree → {}", path.display()),
+                    Err(e) => *status = format!("Export write failed: {e}"),
+                }
+            }
+        } else {
+            let _ = ctx.data_mut(|d| d.remove_temp::<String>(export_text_key));
+        }
+    }
     if !*open {
         return;
     }
@@ -1144,9 +1197,20 @@ pub fn draw_export_modal(
     let mut do_export: Option<crate::pro::topic_tree_io::ExportScope> = None;
     let has_selection = pins.last_tree_focus.is_some();
     let modal = egui::Modal::new(egui::Id::new("topicbench_tree_export")).show(ctx, |ui| {
-        ui.set_width(360.0);
-        ui.heading("Export topic tree");
-        ui.add_space(8.0);
+        ui.set_min_width(380.0);
+        ui.set_max_width(420.0);
+
+        // Same section chrome as Topic tree / Settings panels.
+        icons::section_header_bar(ui, |ui| {
+            icons::section_icon(ui, icons, "export");
+            icons::section_title(ui, "Export topic tree");
+        });
+        ui.add_space(6.0);
+        let bar_w = ui.available_width();
+        let (bar, _) = ui.allocate_exact_size(egui::vec2(bar_w, 3.0), egui::Sense::hover());
+        ui.painter().rect_filled(bar, 1.5, CHROME_ACCENT_BORDER);
+        ui.add_space(12.0);
+
         let mut scope = ui
             .ctx()
             .data(|d| {
@@ -1159,6 +1223,9 @@ pub fn draw_export_modal(
             } else {
                 crate::pro::topic_tree_io::ExportScope::Full
             });
+
+        ui.label(RichText::new("Scope").strong());
+        ui.add_space(4.0);
         ui.radio_value(
             &mut scope,
             crate::pro::topic_tree_io::ExportScope::Selection,
@@ -1179,18 +1246,56 @@ pub fn draw_export_modal(
         ui.ctx().data_mut(|d| {
             d.insert_temp(egui::Id::new("tree_export_scope"), scope);
         });
-        ui.add_space(12.0);
+
+        ui.add_space(14.0);
+        ui.separator();
+        ui.add_space(8.0);
         ui.horizontal(|ui| {
-            let can_sel = has_selection || scope == crate::pro::topic_tree_io::ExportScope::Full;
-            if ui
-                .add_enabled(can_sel, egui::Button::new("Export…"))
-                .clicked()
-            {
-                do_export = Some(scope);
-            }
-            if ui.button("Cancel").clicked() {
-                close = true;
-            }
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                ui.spacing_mut().item_spacing.x = 8.0;
+                let can_sel =
+                    has_selection || scope == crate::pro::topic_tree_io::ExportScope::Full;
+                // Export — accent fill + icon (mirrors Settings Save).
+                let export_btn = if let Some(tex) = icons.get("export") {
+                    ui.add_enabled(
+                        can_sel,
+                        egui::Button::image_and_text(
+                            egui::Image::new(tex)
+                                .fit_to_exact_size(egui::vec2(TINY_ICON, TINY_ICON)),
+                            RichText::new("Export…").strong(),
+                        )
+                        .fill(CHROME_ACCENT_SOFT)
+                        .stroke(egui::Stroke::new(1.0_f32, CHROME_ACCENT_BORDER))
+                        .min_size(egui::vec2(120.0, 32.0)),
+                    )
+                } else {
+                    ui.add_enabled(
+                        can_sel,
+                        egui::Button::new(RichText::new("Export…").strong())
+                            .fill(CHROME_ACCENT_SOFT)
+                            .stroke(egui::Stroke::new(1.0_f32, CHROME_ACCENT_BORDER))
+                            .min_size(egui::vec2(120.0, 32.0)),
+                    )
+                };
+                if export_btn.clicked() {
+                    do_export = Some(scope);
+                }
+                let cancel_btn = if let Some(tex) = icons.get("close_red") {
+                    ui.add(
+                        egui::Button::image_and_text(
+                            egui::Image::new(tex)
+                                .fit_to_exact_size(egui::vec2(TINY_ICON, TINY_ICON)),
+                            "Cancel",
+                        )
+                        .min_size(egui::vec2(104.0, 32.0)),
+                    )
+                } else {
+                    ui.add(egui::Button::new("Cancel").min_size(egui::vec2(104.0, 32.0)))
+                };
+                if cancel_btn.clicked() {
+                    close = true;
+                }
+            });
         });
     });
     if modal.should_close() {
@@ -1202,26 +1307,24 @@ pub fn draw_export_modal(
             .as_ref()
             .map(|(pid, _, topic)| (pid.as_str(), topic.as_str()));
         match crate::pro::topic_tree_io::build_export(sessions, scope, selection) {
-            Ok(doc) => {
-                let name = crate::pro::topic_tree_io::default_export_filename();
-                if let Some(path) = rfd::FileDialog::new()
-                    .set_title("Export topic tree")
-                    .set_file_name(&name)
-                    .add_filter("JSON", &["json"])
-                    .save_file()
-                {
-                    match serde_json::to_string_pretty(&doc) {
-                        Ok(text) => match std::fs::write(&path, format!("{text}\n")) {
-                            Ok(()) => {
-                                *status = format!("Exported topic tree → {}", path.display());
-                                close = true;
-                            }
-                            Err(e) => *status = format!("Export write failed: {e}"),
+            Ok(doc) => match serde_json::to_string_pretty(&doc) {
+                Ok(text) => {
+                    let name = crate::pro::topic_tree_io::default_export_filename();
+                    ctx.data_mut(|d| d.insert_temp(export_text_key, text));
+                    crate::ui::native_dialog::begin_path(
+                        ctx,
+                        export_dlg,
+                        crate::ui::native_dialog::PathOp::SaveFile,
+                        move |d| {
+                            d.set_title("Export topic tree")
+                                .set_file_name(&name)
+                                .add_filter("JSON", &["json"])
                         },
-                        Err(e) => *status = format!("Export JSON failed: {e}"),
-                    }
+                    );
+                    close = true;
                 }
-            }
+                Err(e) => *status = format!("Export JSON failed: {e}"),
+            },
             Err(e) => *status = format!("Export failed: {e}"),
         }
     }
@@ -1230,53 +1333,460 @@ pub fn draw_export_modal(
     }
 }
 
-fn run_tree_import(
-    sessions: &mut SessionManager,
+/// Modal-first Import UI state (Browse / Recent → map → sidecar republish).
+pub struct TreeImportUi {
+    pub open: bool,
+    file_path: Option<std::path::PathBuf>,
+    file_label: String,
+    doc: Option<serde_json::Value>,
+    rows: Vec<crate::pro::tree_client::MapRow>,
+    pub target_id: String,
+    error: Option<String>,
+    recent: crate::pro::tree_client::ImportRecent,
+    /// Background Import — must not block the UI (bridge.sock needs UI poll).
+    import_rx: Option<std::sync::mpsc::Receiver<Result<(usize, String), String>>>,
+    /// Path to remember in Recent after a successful background import.
+    import_recent_path: Option<std::path::PathBuf>,
+}
+
+impl Default for TreeImportUi {
+    fn default() -> Self {
+        Self {
+            open: false,
+            file_path: None,
+            file_label: String::new(),
+            doc: None,
+            rows: Vec::new(),
+            target_id: String::new(),
+            error: None,
+            recent: crate::pro::tree_client::ImportRecent::default(),
+            import_rx: None,
+            import_recent_path: None,
+        }
+    }
+}
+
+impl TreeImportUi {
+    pub fn load_recent() -> Self {
+        Self {
+            recent: crate::pro::tree_client::ImportRecent::load(),
+            ..Self::default()
+        }
+    }
+
+    fn importing(&self) -> bool {
+        self.import_rx.is_some()
+    }
+
+    fn clear_file(&mut self) {
+        self.file_path = None;
+        self.file_label.clear();
+        self.doc = None;
+        self.rows.clear();
+    }
+
+    fn load_path(&mut self, path: std::path::PathBuf) {
+        self.error = None;
+        let raw = match std::fs::read_to_string(&path) {
+            Ok(t) => t,
+            Err(e) => {
+                self.clear_file();
+                self.error = Some(format!("Cannot read {}: {e}", path.display()));
+                return;
+            }
+        };
+        let doc: serde_json::Value = match serde_json::from_str(&raw) {
+            Ok(v) => v,
+            Err(e) => {
+                self.clear_file();
+                self.error = Some(format!("Invalid JSON: {e}"));
+                return;
+            }
+        };
+        match crate::pro::tree_client::preview(&doc) {
+            Ok(rows) => {
+                self.file_label = path
+                    .file_name()
+                    .map(|s| s.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| path.display().to_string());
+                self.file_path = Some(path);
+                self.doc = Some(doc);
+                self.rows = rows.into_iter().map(Into::into).collect();
+            }
+            Err(e) => {
+                self.clear_file();
+                self.error = Some(e);
+            }
+        }
+    }
+
+    fn start_import(&mut self) {
+        let Some(doc) = self.doc.clone() else {
+            return;
+        };
+        let target = self.target_id.clone();
+        let rows = self.rows.clone();
+        self.import_recent_path = self.file_path.clone();
+        let (tx, rx) = std::sync::mpsc::channel();
+        self.import_rx = Some(rx);
+        self.error = None;
+        let _ = std::thread::Builder::new()
+            .name("tb-tree-import".into())
+            .spawn(move || {
+                let result = crate::pro::tree_client::import_mapped(&doc, &target, &rows)
+                    .map(|n| (n, target));
+                let _ = tx.send(result);
+            });
+    }
+}
+
+fn tree_import_browse_dlg() -> egui::Id {
+    egui::Id::new("dlg_tree_import_browse")
+}
+
+fn default_import_target(
+    sessions: &SessionManager,
     profiles: &ProfileStore,
     pins: &PinBoard,
-    status: &mut String,
-) {
-    let Some(path) = rfd::FileDialog::new()
-        .set_title("Import topic tree")
-        .add_filter("JSON", &["json"])
-        .pick_file()
-    else {
-        return;
-    };
-    let Ok(raw) = std::fs::read_to_string(&path) else {
-        *status = format!("Import failed: cannot read {}", path.display());
-        return;
-    };
-    let Ok(doc) = serde_json::from_str::<serde_json::Value>(&raw) else {
-        *status = "Import failed: invalid JSON".into();
-        return;
-    };
+) -> String {
     let connected = connected_profile_ids(sessions, profiles);
-    if connected.is_empty() {
-        *status = "Import failed: connect a broker first".into();
-        return;
-    }
-    // Prefer focused profile when connected, else first connected.
-    let target = pins
-        .last_tree_focus
+    pins.last_tree_focus
         .as_ref()
         .map(|(pid, _, _)| pid.clone())
         .filter(|pid| connected.iter().any(|c| c == pid))
-        .unwrap_or_else(|| connected[0].clone());
-    let confirm = rfd::MessageDialog::new()
-        .set_level(rfd::MessageLevel::Warning)
-        .set_title("Import topic tree")
-        .set_description(format!(
-            "Republish all leaf values onto profile `{target}` with retain=true?\n\
-             This may overwrite existing retained topics on the broker."
-        ))
-        .set_buttons(rfd::MessageButtons::OkCancel)
-        .show();
-    if confirm != rfd::MessageDialogResult::Ok {
+        .or_else(|| connected.first().cloned())
+        .unwrap_or_default()
+}
+
+/// Import modal: Browse / Recent, then target broker + top-level remap (Option D).
+pub fn draw_import_modal(
+    ctx: &egui::Context,
+    state: &mut TreeImportUi,
+    sessions: &SessionManager,
+    profiles: &ProfileStore,
+    pins: &PinBoard,
+    icons: &IconSet,
+    status: &mut String,
+) {
+    // Drain Browse file picker even if modal closed mid-pick.
+    if let Some(path_opt) = crate::ui::native_dialog::poll_path(ctx, tree_import_browse_dlg()) {
+        if let Some(path) = path_opt {
+            state.load_path(path);
+        }
+    }
+    if !state.open {
         return;
     }
-    match crate::pro::topic_tree_io::import_republish(sessions, &target, &doc) {
-        Ok(n) => *status = format!("Imported {n} topics onto {target}"),
-        Err(e) => *status = format!("Import failed: {e}"),
+
+    let connected = connected_profile_ids(sessions, profiles);
+    if state.target_id.is_empty()
+        || !connected.iter().any(|c| c == &state.target_id)
+    {
+        state.target_id = default_import_target(sessions, profiles, pins);
+    }
+
+    let mut close = false;
+    let mut do_import = false;
+    let mut browse = false;
+    let mut pick_recent: Option<std::path::PathBuf> = None;
+
+    // Finish background import without blocking paint (keeps bridge.sock draining).
+    if let Some(rx) = state.import_rx.as_ref() {
+        match rx.try_recv() {
+            Ok(Ok((n, target))) => {
+                state.import_rx = None;
+                if let Some(path) = state.import_recent_path.take() {
+                    state.recent.push_and_save(&path);
+                }
+                *status = format!("Imported {n} topics onto {target}");
+                state.open = false;
+                state.error = None;
+                return;
+            }
+            Ok(Err(e)) => {
+                state.import_rx = None;
+                state.import_recent_path = None;
+                state.error = Some(e.clone());
+                *status = format!("Import failed: {e}");
+            }
+            Err(std::sync::mpsc::TryRecvError::Empty) => {
+                ctx.request_repaint();
+            }
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                state.import_rx = None;
+                state.error = Some("Import worker exited unexpectedly".into());
+            }
+        }
+    }
+
+    let any_included = state.rows.iter().any(|r| r.include);
+    let busy = state.importing();
+    let can_import = state.doc.is_some()
+        && any_included
+        && !state.target_id.is_empty()
+        && !connected.is_empty()
+        && !busy;
+
+    let modal = egui::Modal::new(egui::Id::new("topicbench_tree_import")).show(ctx, |ui| {
+        // Same readable Body size as Simulation / Profiles panels.
+        icons::apply_pro_panel_chrome(ui);
+        ui.set_min_width(460.0);
+        ui.set_max_width(540.0);
+        const CTRL_H: f32 = 32.0;
+
+        icons::section_header_bar(ui, |ui| {
+            icons::section_icon(ui, icons, "import");
+            icons::section_title(ui, "Import topic tree");
+        });
+        ui.add_space(6.0);
+        let bar_w = ui.available_width();
+        let (bar, _) = ui.allocate_exact_size(egui::vec2(bar_w, 3.0), egui::Sense::hover());
+        ui.painter().rect_filled(bar, 1.5, CHROME_ACCENT_BORDER);
+        ui.add_space(12.0);
+
+        ui.label(RichText::new("File").strong());
+        ui.add_space(4.0);
+        if !state.file_label.is_empty() {
+            ui.label(RichText::new(&state.file_label).color(CHROME_MUTED));
+            ui.add_space(4.0);
+        }
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 8.0;
+            let browse_btn = if let Some(tex) = icons.get("import") {
+                ui.add_enabled(
+                    !busy,
+                    egui::Button::image_and_text(
+                        egui::Image::new(tex).fit_to_exact_size(egui::vec2(TINY_ICON, TINY_ICON)),
+                        "Browse…",
+                    )
+                    .min_size(egui::vec2(110.0, CTRL_H)),
+                )
+            } else {
+                ui.add_enabled(
+                    !busy,
+                    egui::Button::new("Browse…").min_size(egui::vec2(110.0, CTRL_H)),
+                )
+            };
+            if browse_btn.clicked() {
+                browse = true;
+            }
+
+            let recent_empty = state.recent.paths.is_empty();
+            ui.add_enabled_ui(!busy, |ui| {
+                egui::ComboBox::from_id_salt("tree_import_recent")
+                    .selected_text(if recent_empty { "Recent" } else { "Recent" })
+                    .width(160.0)
+                    .height(CTRL_H)
+                    .show_ui(ui, |ui| {
+                        if recent_empty {
+                            ui.label(RichText::new("No recent imports").color(CHROME_MUTED));
+                        } else {
+                            for p in &state.recent.paths {
+                                let path = std::path::PathBuf::from(p);
+                                let exists = path.is_file();
+                                let label = path
+                                    .file_name()
+                                    .map(|s| s.to_string_lossy().into_owned())
+                                    .unwrap_or_else(|| p.clone());
+                                let text = if exists {
+                                    RichText::new(label)
+                                } else {
+                                    RichText::new(format!("{label} (missing)")).color(CHROME_MUTED)
+                                };
+                                if ui
+                                    .add_enabled(exists, egui::Button::new(text).frame(false))
+                                    .on_hover_text(p)
+                                    .clicked()
+                                {
+                                    pick_recent = Some(path);
+                                }
+                            }
+                        }
+                    });
+            });
+        });
+
+        if let Some(err) = &state.error {
+            ui.add_space(8.0);
+            ui.colored_label(Color32::from_rgb(220, 120, 100), err);
+        }
+        if busy {
+            ui.add_space(6.0);
+            ui.label(RichText::new("Importing… bridge publishing retained topics.").color(CHROME_MUTED));
+        }
+
+        if state.doc.is_none() {
+            ui.add_space(10.0);
+            ui.label(
+                RichText::new("Choose a topic-tree export JSON to map and republish.")
+                    .color(CHROME_MUTED),
+            );
+        } else {
+            ui.add_space(12.0);
+            ui.label(RichText::new("Target broker").strong());
+            ui.add_space(4.0);
+            if connected.is_empty() {
+                ui.label(
+                    RichText::new("Connect a broker first to import.").color(CHROME_MUTED),
+                );
+            } else {
+                let selected_name = profiles
+                    .profiles
+                    .get(&state.target_id)
+                    .map(|p| p.name.clone())
+                    .or_else(|| {
+                        sessions
+                            .open
+                            .get(&state.target_id)
+                            .map(|s| s.profile_name.clone())
+                    })
+                    .unwrap_or_else(|| state.target_id.clone());
+                ui.add_enabled_ui(!busy, |ui| {
+                    egui::ComboBox::from_id_salt("tree_import_target")
+                        .selected_text(selected_name)
+                        .width(ui.available_width().min(380.0))
+                        .height(CTRL_H)
+                        .show_ui(ui, |ui| {
+                            for id in &connected {
+                                let name = profiles
+                                    .profiles
+                                    .get(id)
+                                    .map(|p| p.name.clone())
+                                    .or_else(|| {
+                                        sessions.open.get(id).map(|s| s.profile_name.clone())
+                                    })
+                                    .unwrap_or_else(|| id.clone());
+                                if ui
+                                    .selectable_label(state.target_id == *id, name)
+                                    .clicked()
+                                {
+                                    state.target_id = id.clone();
+                                }
+                            }
+                        });
+                });
+            }
+
+            ui.add_space(12.0);
+            ui.label(RichText::new("Map top-level items").strong());
+            ui.add_space(4.0);
+            let multi_broker = {
+                let mut seen = std::collections::HashSet::new();
+                for r in &state.rows {
+                    seen.insert(r.broker_index);
+                }
+                seen.len() > 1
+            };
+            egui::ScrollArea::vertical()
+                .max_height(200.0)
+                .show(ui, |ui| {
+                    ui.add_enabled_ui(!busy, |ui| {
+                        for row in &mut state.rows {
+                            ui.horizontal(|ui| {
+                                ui.checkbox(&mut row.include, "");
+                                let label = if multi_broker {
+                                    format!("[{}] {}", row.source_broker_name, row.segment)
+                                } else {
+                                    row.segment.clone()
+                                };
+                                // Same Body size for segment, Under label, and path field.
+                                ui.label(RichText::new(label));
+                                ui.label(RichText::new("Under").color(CHROME_MUTED));
+                                ui.add(
+                                    egui::TextEdit::singleline(&mut row.under_path)
+                                        .desired_width(150.0)
+                                        .hint_text("optional prefix")
+                                        .font(egui::TextStyle::Body),
+                                );
+                            });
+                        }
+                    });
+                });
+
+            ui.add_space(10.0);
+            ui.label(
+                RichText::new("Leaves publish with retain (may overwrite on broker).")
+                    .color(CHROME_MUTED),
+            );
+        }
+
+        ui.add_space(14.0);
+        ui.separator();
+        ui.add_space(8.0);
+        ui.horizontal(|ui| {
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                ui.spacing_mut().item_spacing.x = 8.0;
+                let import_label = if busy { "Importing…" } else { "Import…" };
+                let import_btn = if let Some(tex) = icons.get("import") {
+                    ui.add_enabled(
+                        can_import,
+                        egui::Button::image_and_text(
+                            egui::Image::new(tex)
+                                .fit_to_exact_size(egui::vec2(TINY_ICON, TINY_ICON)),
+                            RichText::new(import_label).strong(),
+                        )
+                        .fill(CHROME_ACCENT_SOFT)
+                        .stroke(egui::Stroke::new(1.0_f32, CHROME_ACCENT_BORDER))
+                        .min_size(egui::vec2(128.0, CTRL_H)),
+                    )
+                } else {
+                    ui.add_enabled(
+                        can_import,
+                        egui::Button::new(RichText::new(import_label).strong())
+                            .fill(CHROME_ACCENT_SOFT)
+                            .stroke(egui::Stroke::new(1.0_f32, CHROME_ACCENT_BORDER))
+                            .min_size(egui::vec2(128.0, CTRL_H)),
+                    )
+                };
+                if import_btn.clicked() {
+                    do_import = true;
+                }
+                let cancel_btn = if let Some(tex) = icons.get("close_red") {
+                    ui.add_enabled(
+                        !busy,
+                        egui::Button::image_and_text(
+                            egui::Image::new(tex)
+                                .fit_to_exact_size(egui::vec2(TINY_ICON, TINY_ICON)),
+                            "Cancel",
+                        )
+                        .min_size(egui::vec2(110.0, CTRL_H)),
+                    )
+                } else {
+                    ui.add_enabled(
+                        !busy,
+                        egui::Button::new("Cancel").min_size(egui::vec2(110.0, CTRL_H)),
+                    )
+                };
+                if cancel_btn.clicked() {
+                    close = true;
+                }
+            });
+        });
+    });
+
+    if modal.should_close() && !busy {
+        close = true;
+    }
+    if browse {
+        crate::ui::native_dialog::begin_path(
+            ctx,
+            tree_import_browse_dlg(),
+            crate::ui::native_dialog::PathOp::PickFile,
+            |d| {
+                d.set_title("Import topic tree")
+                    .add_filter("JSON", &["json"])
+            },
+        );
+    }
+    if let Some(path) = pick_recent {
+        state.load_path(path);
+    }
+    if do_import {
+        state.start_import();
+        ctx.request_repaint();
+    }
+    if close && !busy {
+        state.open = false;
+        state.error = None;
     }
 }

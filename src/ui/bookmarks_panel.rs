@@ -37,6 +37,7 @@ struct BookmarkForm {
 #[derive(Clone)]
 struct BookmarkDnd(String);
 
+#[allow(clippy::too_many_arguments)]
 pub fn draw_popup(
     ctx: &egui::Context,
     open: &mut bool,
@@ -45,17 +46,20 @@ pub fn draw_popup(
     icons: &IconSet,
     status: &mut String,
     pending_jump: &mut Option<PendingBookmarkJump>,
+    builder_seed: crate::mqtt::window_geom::WinGeom,
+    saved_geom: &mut Option<crate::mqtt::window_geom::WinGeom>,
+    geom_dirty: &mut bool,
 ) {
     if !*open {
         return;
     }
     let mut close = false;
+    const MIN: [f32; 2] = [320.0, 200.0];
     ctx.show_viewport_immediate(
         egui::ViewportId::from_hash_of("topicbench_bookmarks_vp"),
-        ViewportBuilder::default()
-            .with_title("Bookmarks")
-            .with_inner_size([420.0, 320.0])
-            .with_min_inner_size([320.0, 200.0]),
+        builder_seed
+            .apply(ViewportBuilder::default().with_title("Bookmarks"), MIN)
+            .with_min_inner_size(MIN),
         |ctx, class| {
             let mut paint = |ui: &mut egui::Ui| {
                 paint_bookmarks_body(
@@ -93,6 +97,11 @@ pub fn draw_popup(
             if ctx.input(|i| i.viewport().close_requested()) {
                 close = true;
             }
+            if let Some(g) = crate::mqtt::window_geom::capture(ctx) {
+                if crate::mqtt::window_geom::sync_slot(saved_geom, g, MIN) {
+                    *geom_dirty = true;
+                }
+            }
         },
     );
     if close {
@@ -122,20 +131,30 @@ fn paint_bookmarks_body(
             {
                 *close = true;
             }
+            // Off-thread native dialogs — avoid Linux Wayland "app hung" ANR.
+            let export_dlg = egui::Id::new("dlg_bm_export");
+            let import_dlg = egui::Id::new("dlg_bm_import");
+            let import_mode_dlg = egui::Id::new("dlg_bm_import_mode");
+            let import_path_key = egui::Id::new("dlg_bm_import_path");
             if icons
                 .tiny_header(ui, "export", false, "Export bookmarks")
                 .clicked()
             {
-                if let Some(path) = rfd::FileDialog::new()
-                    .set_title("Export bookmarks")
-                    .set_file_name("bookmarks.json")
-                    .add_filter("JSON", &["json"])
-                    .save_file()
-                {
-                    match store.export_to(&path) {
-                        Ok(()) => *status = format!("Exported bookmarks → {}", path.display()),
-                        Err(e) => *status = format!("Export failed: {e}"),
-                    }
+                crate::ui::native_dialog::begin_path(
+                    ui.ctx(),
+                    export_dlg,
+                    crate::ui::native_dialog::PathOp::SaveFile,
+                    |d| {
+                        d.set_title("Export bookmarks")
+                            .set_file_name("bookmarks.json")
+                            .add_filter("JSON", &["json"])
+                    },
+                );
+            }
+            if let Some(Some(path)) = crate::ui::native_dialog::poll_path(ui.ctx(), export_dlg) {
+                match store.export_to(&path) {
+                    Ok(()) => *status = format!("Exported bookmarks → {}", path.display()),
+                    Err(e) => *status = format!("Export failed: {e}"),
                 }
             }
             // Import beside Export (right-to-left → appears left of Export).
@@ -143,16 +162,26 @@ fn paint_bookmarks_body(
                 .tiny_header(ui, "import", false, "Import bookmarks")
                 .clicked()
             {
-                if let Some(path) = rfd::FileDialog::new()
-                    .set_title("Import bookmarks")
-                    .add_filter("JSON", &["json"])
-                    .pick_file()
-                {
-                    let mode = if store.items.is_empty() {
-                        Some("replace")
-                    } else {
-                        match rfd::MessageDialog::new()
-                            .set_level(rfd::MessageLevel::Info)
+                crate::ui::native_dialog::begin_path(
+                    ui.ctx(),
+                    import_dlg,
+                    crate::ui::native_dialog::PathOp::PickFile,
+                    |d| {
+                        d.set_title("Import bookmarks")
+                            .add_filter("JSON", &["json"])
+                    },
+                );
+            }
+            if let Some(Some(path)) = crate::ui::native_dialog::poll_path(ui.ctx(), import_dlg) {
+                if store.items.is_empty() {
+                    match store.import_from(&path, "replace") {
+                        Ok(n) => *status = format!("Imported {n} bookmarks (replace)"),
+                        Err(e) => *status = format!("Import failed: {e}"),
+                    }
+                } else {
+                    ui.ctx().data_mut(|d| d.insert_temp(import_path_key, path));
+                    crate::ui::native_dialog::begin_message(ui.ctx(), import_mode_dlg, |d| {
+                        d.set_level(rfd::MessageLevel::Info)
                             .set_title("Import bookmarks")
                             .set_description(
                                 "Replace the current list, or Merge matching ids/paths \
@@ -163,29 +192,26 @@ fn paint_bookmarks_body(
                                 "Merge".into(),
                                 "Cancel".into(),
                             ))
-                            .show()
-                        {
-                            rfd::MessageDialogResult::Yes => Some("replace"),
-                            rfd::MessageDialogResult::No => Some("merge"),
-                            rfd::MessageDialogResult::Custom(s)
-                                if s.eq_ignore_ascii_case("replace") =>
-                            {
-                                Some("replace")
-                            }
-                            rfd::MessageDialogResult::Custom(s)
-                                if s.eq_ignore_ascii_case("merge") =>
-                            {
-                                Some("merge")
-                            }
-                            _ => None,
-                        }
-                    };
-                    if let Some(mode) = mode {
+                    });
+                }
+            }
+            if let Some(result) =
+                crate::ui::native_dialog::poll_message(ui.ctx(), import_mode_dlg)
+            {
+                if let Some(mode) = crate::ui::native_dialog::replace_merge_mode(result) {
+                    if let Some(path) = ui
+                        .ctx()
+                        .data_mut(|d| d.remove_temp::<std::path::PathBuf>(import_path_key))
+                    {
                         match store.import_from(&path, mode) {
                             Ok(n) => *status = format!("Imported {n} bookmarks ({mode})"),
                             Err(e) => *status = format!("Import failed: {e}"),
                         }
                     }
+                } else {
+                    let _ = ui
+                        .ctx()
+                        .data_mut(|d| d.remove_temp::<std::path::PathBuf>(import_path_key));
                 }
             }
             if icons
