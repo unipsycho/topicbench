@@ -121,16 +121,20 @@ mod tests {
 }
 
 pub fn draw(ui: &mut egui::Ui, filter: &mut SearchFilter, request_focus: &mut bool) {
-    ui.horizontal(|ui| {
+    // Wrap into the available topic-tree width — no fixed 220px field that clips stickies.
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing.x = 8.0;
         hover_tip::attach(
             ui.label("Search"),
             shortcuts::tip("Focus search", "Ctrl+F"),
         );
+        // Shrink the field so scope + checkbox can share the row; otherwise wrap.
+        let field_w = (ui.available_width() - 168.0).clamp(72.0, 220.0);
         let resp = hover_tip::attach(
             ui.add(
                 egui::TextEdit::singleline(&mut filter.query)
                     .id_salt(SEARCH_QUERY_ID)
-                    .desired_width(220.0)
+                    .desired_width(field_w)
                     .hint_text("terms | separated…"),
             ),
             shortcuts::tip("Focus search", "Ctrl+F"),
@@ -141,6 +145,7 @@ pub fn draw(ui: &mut egui::Ui, filter: &mut SearchFilter, request_focus: &mut bo
         }
         egui::ComboBox::from_id_salt("search_scope")
             .selected_text(filter.scope.label())
+            .width(88.0)
             .show_ui(ui, |ui| {
                 ui.selectable_value(&mut filter.scope, SearchScope::All, "All");
                 ui.selectable_value(&mut filter.scope, SearchScope::Topics, "Topics");
@@ -150,7 +155,6 @@ pub fn draw(ui: &mut egui::Ui, filter: &mut SearchFilter, request_focus: &mut bo
             filter.query.clear();
         }
         // Separate from Clear — applies to the sticky board, not just the query field.
-        ui.add_space(16.0);
         ui.checkbox(&mut filter.apply_to_stickies, "Apply to stickies");
     });
 }

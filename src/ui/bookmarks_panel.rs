@@ -795,7 +795,7 @@ fn grouped_bookmark_ids(
 }
 
 /// Tiny bookmark toggle for a tree/payload row (Pro) — works for parents and leaves.
-/// `cluster`: half-pad icon for the topic-tree left icon group; false for payload header.
+/// `cluster`: font-sized icon for the topic-tree row; false keeps the fixed header icon.
 pub fn bookmark_toggle_icon(
     ui: &mut egui::Ui,
     icons: &IconSet,
@@ -814,7 +814,8 @@ pub fn bookmark_toggle_icon(
     // bookmarks icon (not topic_tags — that is copy-topic on the same row).
     let tip = shortcuts_tip(tip);
     let resp = if cluster {
-        icons.tiny_cluster(ui, "bookmarks", on, &tip)
+        // Tree rows: font-sized glyph. Payload header keeps the fixed tiny icon.
+        icons.tiny_tree(ui, "bookmarks", on, &tip)
     } else {
         icons.tiny(ui, "bookmarks", on, &tip)
     };

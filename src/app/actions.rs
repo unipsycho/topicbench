@@ -157,8 +157,20 @@ impl MqttMonitorApp {
                     self.action_save_profiles();
                 }
                 ShortcutAction::DeleteProfile => {
-                    // Delete only when Profiles panel is visible.
-                    if self.panels.profiles {
+                    // Prefer bulk-deleting selected sims when Simulation is open with a selection.
+                    if self.simulation_open && !self.sim_client.selected_ids.is_empty() {
+                        match self.sim_client.delete_selected() {
+                            Ok(n) => {
+                                self.status = if n == 1 {
+                                    "Deleted 1 simulation".into()
+                                } else {
+                                    format!("Deleted {n} simulations")
+                                };
+                            }
+                            Err(e) => self.status = e,
+                        }
+                    } else if self.panels.profiles {
+                        // Delete profile only when Profiles panel is visible.
                         if let Some(id) = self.profiles.delete_selected() {
                             self.sessions.close(&id);
                             self.status = format!("Deleted profile {id}");
@@ -178,10 +190,27 @@ impl MqttMonitorApp {
                     self.focus_profile_editor = true;
                 }
                 ShortcutAction::ProfileSelectPrev => {
-                    self.move_profile_selection(-1);
+                    // Prefer sim list when Simulate is open with a selection/focus.
+                    if self.simulation_open
+                        && (!self.sim_client.selected_ids.is_empty()
+                            || self.sim_client.selection_focus.is_some())
+                    {
+                        let extend = ctx.input(|i| i.modifiers.shift);
+                        self.sim_client.move_selection(-1, extend);
+                    } else {
+                        self.move_profile_selection(-1);
+                    }
                 }
                 ShortcutAction::ProfileSelectNext => {
-                    self.move_profile_selection(1);
+                    if self.simulation_open
+                        && (!self.sim_client.selected_ids.is_empty()
+                            || self.sim_client.selection_focus.is_some())
+                    {
+                        let extend = ctx.input(|i| i.modifiers.shift);
+                        self.sim_client.move_selection(1, extend);
+                    } else {
+                        self.move_profile_selection(1);
+                    }
                 }
                 ShortcutAction::ToggleStickySelectedTopic => {
                     self.shortcut_toggle_sticky();
