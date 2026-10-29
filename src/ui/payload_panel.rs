@@ -29,12 +29,63 @@ fn match_line_fill() -> Color32 {
 fn match_current_fill() -> Color32 {
     Color32::from_rgba_unmultiplied(140, 120, 40, 140)
 }
-/// Muted wash when Payload shows a scrubbed (non-Live) sample.
-fn historical_payload_fill() -> Color32 {
-    Color32::from_rgba_unmultiplied(CHROME_ROW.r(), CHROME_ROW.g(), CHROME_ROW.b(), 160)
+/// Top→bottom fade wash behind a scrubbed (non-Live) payload body.
+fn paint_historical_payload_wash(painter: &egui::Painter, rect: egui::Rect) {
+    const STEPS: i32 = 28;
+    let rgb = CHROME_ROW;
+    for i in 0..STEPS {
+        let t0 = i as f32 / STEPS as f32;
+        let t1 = (i + 1) as f32 / STEPS as f32;
+        // Stronger at top, transparent at bottom.
+        let a = ((1.0 - t0) * 150.0) as u8;
+        if a == 0 {
+            continue;
+        }
+        let y0 = egui::lerp(rect.top()..=rect.bottom(), t0);
+        let y1 = egui::lerp(rect.top()..=rect.bottom(), t1);
+        painter.rect_filled(
+            egui::Rect::from_min_max(
+                egui::pos2(rect.left(), y0),
+                egui::pos2(rect.right(), y1),
+            ),
+            0.0,
+            Color32::from_rgba_unmultiplied(rgb.r(), rgb.g(), rgb.b(), a),
+        );
+    }
 }
-fn historical_payload_stroke() -> egui::Stroke {
-    egui::Stroke::new(1.5, CHROME_MUTED)
+
+/// Dashed outline for historical payload (solid stroke reads too “live”).
+fn paint_dashed_rect_border(painter: &egui::Painter, rect: egui::Rect) {
+    let stroke = egui::Stroke::new(1.25_f32, CHROME_MUTED);
+    let dash = 5.0;
+    let gap = 4.0;
+    let r = rect.shrink(0.5);
+    dash_line_segment(painter, r.left_top(), r.right_top(), dash, gap, stroke);
+    dash_line_segment(painter, r.right_top(), r.right_bottom(), dash, gap, stroke);
+    dash_line_segment(painter, r.right_bottom(), r.left_bottom(), dash, gap, stroke);
+    dash_line_segment(painter, r.left_bottom(), r.left_top(), dash, gap, stroke);
+}
+
+fn dash_line_segment(
+    painter: &egui::Painter,
+    a: egui::Pos2,
+    b: egui::Pos2,
+    dash: f32,
+    gap: f32,
+    stroke: egui::Stroke,
+) {
+    let delta = b - a;
+    let len = delta.length();
+    if len <= 0.5 {
+        return;
+    }
+    let unit = delta / len;
+    let mut d = 0.0;
+    while d < len {
+        let d1 = (d + dash).min(len);
+        painter.line_segment([a + unit * d, a + unit * d1], stroke);
+        d = d1 + gap;
+    }
 }
 
 /// One payload topic locked into a floating OS window.
@@ -567,6 +618,43 @@ fn instant_hhmmss(at: Instant) -> String {
     dt.format("%H:%M:%S").to_string()
 }
 
+/// Human relative age for scrubbed samples (“5 seconds ago”, “1 minute ago”).
+fn instant_relative_ago(at: Instant) -> String {
+    let secs = Instant::now().saturating_duration_since(at).as_secs();
+    if secs < 2 {
+        return "just now".into();
+    }
+    if secs < 60 {
+        return if secs == 1 {
+            "1 second ago".into()
+        } else {
+            format!("{secs} seconds ago")
+        };
+    }
+    let mins = secs / 60;
+    if mins < 60 {
+        return if mins == 1 {
+            "1 minute ago".into()
+        } else {
+            format!("{mins} minutes ago")
+        };
+    }
+    let hours = mins / 60;
+    if hours < 48 {
+        return if hours == 1 {
+            "1 hour ago".into()
+        } else {
+            format!("{hours} hours ago")
+        };
+    }
+    let days = hours / 24;
+    if days == 1 {
+        "1 day ago".into()
+    } else {
+        format!("{days} days ago")
+    }
+}
+
 /// Slider only (sits on the JSON/#count row).
 fn draw_payload_scrub_slider(
     ui: &mut egui::Ui,
@@ -652,13 +740,22 @@ fn draw_payload_scrub_controls(
             scrub.resume_live();
         }
         if let Some(at) = sample_at {
+            let historical = !scrub.is_live();
             ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
+                // right_to_left: clock on the far right; relative age just left of it.
                 ui.label(
                     RichText::new(instant_hhmmss(at))
                         .small()
                         .monospace()
                         .weak(),
                 );
+                if historical {
+                    ui.label(
+                        RichText::new(instant_relative_ago(at))
+                            .small()
+                            .weak(),
+                    );
+                }
             });
         }
     });
@@ -862,11 +959,9 @@ fn draw_searchable_body(
         }
     }
 
-    // Historical (non-Live) scrub: gray wash + muted border so the body reads as past data.
+    // Historical (non-Live): top→bottom fade + dashed border (painted around the frame).
     let body_frame = if scrubbing {
         egui::Frame::NONE
-            .fill(historical_payload_fill())
-            .stroke(historical_payload_stroke())
             .inner_margin(egui::Margin::symmetric(4, 4))
             .corner_radius(3.0)
     } else {
@@ -877,7 +972,11 @@ fn draw_searchable_body(
     } else {
         height
     };
-    body_frame.show(ui, |ui| {
+    let body = body_frame.show(ui, |ui| {
+    // Paint wash first so JSON lines sit above it.
+    if scrubbing {
+        paint_historical_payload_wash(ui.painter(), ui.max_rect());
+    }
     egui::ScrollArea::vertical()
         .id_salt(id_salt)
         .max_height(scroll_h)
@@ -1015,6 +1114,9 @@ fn draw_searchable_body(
             }
         });
     });
+    if scrubbing {
+        paint_dashed_rect_border(ui.painter(), body.response.rect);
+    }
 
     if do_scroll {
         search.scroll_to_current = false;
