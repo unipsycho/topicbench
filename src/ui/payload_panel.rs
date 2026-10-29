@@ -559,48 +559,20 @@ fn instant_hhmmss(at: Instant) -> String {
     dt.format("%H:%M:%S").to_string()
 }
 
-/// Compact scrub beside `#count`: step ←/→ + slider; tip = live.
-fn draw_payload_scrub(
+/// Slider only (sits on the JSON/#count row).
+fn draw_payload_scrub_slider(
     ui: &mut egui::Ui,
     scrub: &mut PayloadScrub,
     history: &[(Instant, String)],
 ) {
-    let history_len = history.len();
-    let max_back = history_len.saturating_sub(1);
+    let max_back = history.len().saturating_sub(1);
     if max_back == 0 {
         return;
     }
-    // Left/Right when the find field does not own focus.
-    let find_focused = ui.memory(|m| {
-        m.has_focus(egui::Id::new("payload_find_edit"))
-            || m.has_focus(egui::Id::new("payload_find_edit_dock"))
-            || m.has_focus(egui::Id::new("payload_find_edit_float"))
-    });
-    if !find_focused {
-        // Consume so other panels don't also treat ←/→ as navigation.
-        if ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, Key::ArrowLeft)) {
-            scrub.step_by(history, -1);
-        }
-        if ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, Key::ArrowRight)) {
-            scrub.step_by(history, 1);
-        }
-    }
-
-    let older = ui
-        .add_enabled(
-            scrub.index_in(history).unwrap_or(0) > 0,
-            egui::Button::new("◀").small(),
-        )
-        .on_hover_text("Older sample (←)");
-    if older.clicked() {
-        scrub.step_by(history, -1);
-    }
-
-    // Slider: 0 = oldest, max = live tip (invert steps_back for natural left=old).
     let mut pos = (max_back - scrub.steps_back().min(max_back)) as f32;
     let max_f = max_back as f32;
     ui.scope(|ui| {
-        ui.set_max_width(120.0);
+        ui.set_max_width(160.0);
         let resp = ui.add(
             egui::Slider::new(&mut pos, 0.0..=max_f)
                 .show_value(false)
@@ -612,32 +584,76 @@ fn draw_payload_scrub(
         }
         resp.on_hover_text("Scrub previous payloads · tip = live · ←/→ step one");
     });
+}
 
-    let newer = ui
-        .add_enabled(
-            !scrub.is_live(),
-            egui::Button::new("▶").small(),
-        )
-        .on_hover_text("Newer sample (→) · tip resumes Live");
-    if newer.clicked() {
-        scrub.step_by(history, 1);
+/// Row under the slider: ◀/▶ + Live/−N, timestamp on the right.
+fn draw_payload_scrub_controls(
+    ui: &mut egui::Ui,
+    scrub: &mut PayloadScrub,
+    history: &[(Instant, String)],
+    sample_at: Option<Instant>,
+) {
+    if history.len() <= 1 {
+        return;
+    }
+    // Left/Right when the find field does not own focus.
+    let find_focused = ui.memory(|m| {
+        m.has_focus(egui::Id::new("payload_find_edit"))
+            || m.has_focus(egui::Id::new("payload_find_edit_dock"))
+            || m.has_focus(egui::Id::new("payload_find_edit_float"))
+    });
+    if !find_focused {
+        if ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, Key::ArrowLeft)) {
+            scrub.step_by(history, -1);
+        }
+        if ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, Key::ArrowRight)) {
+            scrub.step_by(history, 1);
+        }
     }
 
-    if scrub.is_live() {
-        ui.label(
-            RichText::new("Live")
-                .small()
-                .color(Color32::from_rgb(90, 180, 110)),
-        );
-    } else if ui
-        .add(egui::Button::new(
-            RichText::new(format!("−{}", scrub.steps_back())).small(),
-        ))
-        .on_hover_text("Paused on history — click to resume live")
-        .clicked()
-    {
-        scrub.resume_live();
-    }
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 6.0;
+        let older = ui
+            .add_enabled(
+                scrub.index_in(history).unwrap_or(0) > 0,
+                egui::Button::new("◀").small(),
+            )
+            .on_hover_text("Older sample (←)");
+        if older.clicked() {
+            scrub.step_by(history, -1);
+        }
+        let newer = ui
+            .add_enabled(!scrub.is_live(), egui::Button::new("▶").small())
+            .on_hover_text("Newer sample (→) · tip resumes Live");
+        if newer.clicked() {
+            scrub.step_by(history, 1);
+        }
+        if scrub.is_live() {
+            ui.label(
+                RichText::new("Live")
+                    .small()
+                    .color(Color32::from_rgb(90, 180, 110)),
+            );
+        } else if ui
+            .add(egui::Button::new(
+                RichText::new(format!("−{}", scrub.steps_back())).small(),
+            ))
+            .on_hover_text("Paused on history — click to resume live")
+            .clicked()
+        {
+            scrub.resume_live();
+        }
+        if let Some(at) = sample_at {
+            ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
+                ui.label(
+                    RichText::new(instant_hhmmss(at))
+                        .small()
+                        .monospace()
+                        .weak(),
+                );
+            });
+        }
+    });
 }
 
 /// Text shown in the Value body (pretty JSON when possible).
@@ -743,7 +759,7 @@ fn draw_searchable_body(
     open_stickies: &mut bool,
     status: &mut String,
     change_bg: Color32,
-    payload_scrub: Option<&mut PayloadScrub>,
+    mut payload_scrub: Option<&mut PayloadScrub>,
     history: &[(Instant, String)],
     // Receive Instant for the viewed sample (live tip or scrubbed); None → hide clock.
     sample_at: Option<Instant>,
@@ -757,7 +773,9 @@ fn draw_searchable_body(
     let current_line = matches.get(search.current).map(|m| m.line);
     let do_scroll = search.scroll_to_current && current_line.is_some();
 
-    // Kind label + #count + Pro scrub; receive time far-right on the same row.
+    // Row 1: kind + #count + scrub slider. Row 2: ◀/▶ + Live/−N + timestamp.
+    let scrub_ok =
+        pro::has(Entitlement::HistoryScrubber) && history_len > 1 && payload_scrub.is_some();
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 8.0;
         if is_json {
@@ -772,14 +790,19 @@ fn draw_searchable_body(
                     .weak(),
             );
         }
-        // Compact scrub beside #count — only when Pro HistoryScrubber is licensed.
-        if let Some(scrub) = payload_scrub {
-            if pro::has(Entitlement::HistoryScrubber) && history_len > 1 {
-                draw_payload_scrub(ui, scrub, history);
+        if scrub_ok {
+            if let Some(scrub) = payload_scrub.as_deref_mut() {
+                draw_payload_scrub_slider(ui, scrub, history);
             }
         }
-        if let Some(at) = sample_at {
-            if pro::has(Entitlement::HistoryScrubber) {
+    });
+    if scrub_ok {
+        if let Some(scrub) = payload_scrub {
+            draw_payload_scrub_controls(ui, scrub, history, sample_at);
+        }
+    } else if let Some(at) = sample_at {
+        if pro::has(Entitlement::HistoryScrubber) {
+            ui.horizontal(|ui| {
                 ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
                     ui.label(
                         RichText::new(instant_hhmmss(at))
@@ -788,9 +811,9 @@ fn draw_searchable_body(
                             .weak(),
                     );
                 });
-            }
+            });
         }
-    });
+    }
 
     let height = ui.available_height().max(80.0);
     let font_size = ui.text_style_height(&egui::TextStyle::Monospace);
