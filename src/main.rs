@@ -10,7 +10,7 @@ mod ui;
 mod update;
 
 use eframe::egui::{self, Color32, IconData, Visuals};
-use ui::icons::{CHROME_BG, STATUS_BG};
+use ui::icons::{self, CHROME_BG, STATUS_BG};
 
 fn main() -> eframe::Result<()> {
     let icon = load_window_icon();
@@ -79,5 +79,9 @@ fn apply_dark_chrome(ctx: &egui::Context) {
     // `.weak()` fades toward this — keep it mid-charcoal so muted labels stay readable
     // (default gray(27) made counts / chrome hints too dark on the panel).
     visuals.widgets.noninteractive.weak_bg_fill = Color32::from_rgb(88, 92, 104);
+    // ComboBox / selectors: cool charcoal wells (not egui gray(60)).
+    icons::apply_selector_widget_visuals(&mut visuals);
+    // Checkbox / slider: sunk well + brighter blue fill (readable on CHROME_ROW).
+    icons::apply_control_accent_visuals(&mut visuals);
     ctx.set_visuals(visuals);
 }

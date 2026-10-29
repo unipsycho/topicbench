@@ -4,7 +4,7 @@
 # icon, using system libxcb / libxkbcommon / Vulkan|GL.
 
 pkgname=topicbench-bin
-pkgver=1.2.0
+pkgver=1.2.1
 pkgrel=1
 pkgdesc='Multi-broker MQTT explorer and monitor (prebuilt binary)'
 arch=('x86_64')
@@ -33,7 +33,7 @@ source=(
   'LICENSE-APACHE'
 )
 sha256sums=(
-  'bcb714540dee97e0e99bf1a9d6162b73fa4334cdaa10757b03fdd5650624d8dc'
+  '418598970d2c27f668d2d9495525c655b19c83c0dd2628e8425e501a498de5b4'
   'd75afb405b488da17ba67d315e55907d5076f478af208dc51f6a5b1c57e176f0'
   '5ebf960ed0a7c9125cd6875ebfdc93b0758dbe5ad5ad61a3166e9f2d1099c01b'
   'cfd9aa40af9d85ca63ef620485aeda7afa16b8ef75ece0b784ccb45bf4490eb3'

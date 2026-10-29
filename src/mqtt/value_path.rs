@@ -1,6 +1,7 @@
 //! MQTT topic + JSON field path helpers for graphable Payload → sticky pins.
 //!
 //! Sticky identity: `topic` or `topic::dotted.path` (arrays use numeric segments).
+//! Field paths also used by Pro color rules — same dotted / `foo[0]` syntax.
 
 use serde_json::Value;
 
@@ -20,21 +21,73 @@ pub fn split_sticky_id(id: &str) -> (&str, Option<&str>) {
     }
 }
 
-/// Extract a scalar at `dotted.path` from a JSON payload (objects + array indices).
-pub fn extract_path_value(payload: &str, path: &str) -> Option<String> {
-    let root: Value = serde_json::from_str(payload).ok()?;
-    let mut cur = &root;
-    for seg in path.split('.').filter(|s| !s.is_empty()) {
+/// Normalize a field path: strip leading `$` / `$.`, turn `foo[0].bar` into `foo.0.bar`.
+pub fn normalize_field_path(path: &str) -> String {
+    let p = path.trim();
+    let p = p.strip_prefix("$.").unwrap_or(p);
+    let p = if p == "$" {
+        ""
+    } else {
+        p.strip_prefix('$').unwrap_or(p)
+    };
+    let mut out = String::with_capacity(p.len());
+    let mut chars = p.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '[' {
+            let mut idx = String::new();
+            while let Some(&d) = chars.peek() {
+                chars.next();
+                if d == ']' {
+                    break;
+                }
+                idx.push(d);
+            }
+            let idx = idx.trim();
+            if idx.is_empty() {
+                continue;
+            }
+            if !out.is_empty() && !out.ends_with('.') {
+                out.push('.');
+            }
+            out.push_str(idx);
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
+/// Walk `dotted.path` (objects + numeric array segments) on a JSON value.
+pub fn get_at_path<'a>(root: &'a Value, path: &str) -> Option<&'a Value> {
+    let norm = normalize_field_path(path);
+    if norm.is_empty() {
+        return Some(root);
+    }
+    let mut cur = root;
+    for seg in norm.split('.').filter(|s| !s.is_empty()) {
+        // Prefer array index; fall back to object key (e.g. Pro field_patch "0"/"1").
         cur = if let Ok(i) = seg.parse::<usize>() {
-            cur.get(i)?
+            cur.get(i).or_else(|| cur.get(seg))?
         } else {
             cur.get(seg)?
         };
     }
+    Some(cur)
+}
+
+/// Parse payload JSON and return the value at `path` (clone).
+pub fn value_at_path(payload: &str, path: &str) -> Option<Value> {
+    let root: Value = serde_json::from_str(payload.trim()).ok()?;
+    get_at_path(&root, path).cloned()
+}
+
+/// Extract a scalar at `dotted.path` from a JSON payload (objects + array indices).
+pub fn extract_path_value(payload: &str, path: &str) -> Option<String> {
+    let cur = value_at_path(payload, path)?;
     match cur {
         Value::Bool(b) => Some(b.to_string()),
         Value::Number(n) => Some(n.to_string()),
-        Value::String(s) => Some(s.clone()),
+        Value::String(s) => Some(s),
         Value::Null => Some("null".into()),
         _ => None,
     }
@@ -166,6 +219,44 @@ mod tests {
             Some("40")
         );
         assert_eq!(extract_path_value(j, "on").as_deref(), Some("true"));
+    }
+
+    #[test]
+    fn extracts_array_and_bracket_path() {
+        let j = r#"{"channels":[{"name":"ch-a"},{"name":"ch-b"}]}"#;
+        assert_eq!(
+            extract_path_value(j, "channels.1.name").as_deref(),
+            Some("ch-b")
+        );
+        assert_eq!(
+            extract_path_value(j, "channels[1].name").as_deref(),
+            Some("ch-b")
+        );
+        assert_eq!(
+            extract_path_value(j, "$.channels[0].name").as_deref(),
+            Some("ch-a")
+        );
+    }
+
+    #[test]
+    fn normalize_strips_jsonpath_prefix() {
+        assert_eq!(normalize_field_path("$.meta.channel"), "meta.channel");
+        assert_eq!(normalize_field_path("items[0].id"), "items.0.id");
+        assert_eq!(normalize_field_path("$"), "");
+    }
+
+    #[test]
+    fn object_index_keys_match_bracket_path() {
+        // Pro field_patch may emit numeric object keys instead of arrays.
+        let j = r#"{"channels":{"0":{"name":"CH-North"},"1":{"name":"CH-South"}}}"#;
+        assert_eq!(
+            extract_path_value(j, "channels[1].name").as_deref(),
+            Some("CH-South")
+        );
+        assert_eq!(
+            extract_path_value(j, "channels.0.name").as_deref(),
+            Some("CH-North")
+        );
     }
 
     #[test]

@@ -67,8 +67,15 @@ const COMPACT_H: f32 = 32.0; // was 30
 pub const ZOOM_STACK_W: f32 = 40.0;
 /// Icon size for stacked zoom — same weight as ribbon CMD / section icons.
 const ZOOM_ICON: f32 = 36.0;
-/// Dense inline action icons (Profiles body, tree copy/sticky, etc.).
+/// Dense inline action icons (Profiles, headers, payload, stickies). Fixed —
+/// topic-tree rows use [`tree_row_icon_px`] so they follow the font instead.
 pub const TINY_ICON: f32 = 24.0; // trial: 72/3 — was 18
+
+/// Topic-tree row glyphs. Body line height already includes font zoom, so the
+/// square grows and shrinks with the text and does not force leaf-row height.
+pub fn tree_row_icon_px(ui: &egui::Ui) -> f32 {
+    ui.text_style_height(&TextStyle::Body).max(8.0)
+}
 /// Uploaded texture edge: 2× [`CMD_ICON`] for sharp HiDPI + clean half-scale at 1×.
 const ICON_TEX_PX: u32 = 72;
 /// Left rail width for rotated section labels.
@@ -97,6 +104,8 @@ pub const CHROME_CAPTION: Color32 = Color32::from_rgb(190, 196, 208);
 pub const CHROME_MUTED: Color32 = Color32::from_rgb(175, 182, 196);
 pub const CHROME_TEXT: Color32 = Color32::from_rgb(230, 232, 238);
 pub const STATUS_BG: Color32 = Color32::from_rgb(26, 28, 34);
+/// ComboBox / egui button well fill — same cool charcoal as TextEdit (`STATUS_BG`).
+pub const CHROME_COMBO_BG: Color32 = STATUS_BG;
 /// Subtle per-section ribbon tints (solid, slightly lifted from chrome bg).
 pub const TINT_PROFILES: Color32 = Color32::from_rgb(48, 56, 70);
 pub const TINT_PANELS: Color32 = Color32::from_rgb(46, 60, 52);
@@ -105,6 +114,71 @@ pub const TINT_APP: Color32 = Color32::from_rgb(62, 52, 48);
 pub const TINT_PRO: Color32 = Color32::from_rgb(40, 58, 62);
 /// Cool steel tint for the Stats ribbon group (right edge).
 pub const TINT_STATS: Color32 = Color32::from_rgb(42, 54, 64);
+
+/// Retheme ComboBox / default egui button fills to TopicBench charcoal wells.
+/// Call once from `apply_dark_chrome` so every popup panel inherits the same selectors.
+pub fn apply_selector_widget_visuals(visuals: &mut egui::Visuals) {
+    let stroke = Stroke::new(1.0_f32, CHROME_SEP);
+    // Idle well matches TextEdit extreme_bg; hover/open lift to chrome hover/section.
+    visuals.widgets.inactive.weak_bg_fill = CHROME_COMBO_BG;
+    visuals.widgets.inactive.bg_stroke = stroke;
+    visuals.widgets.hovered.weak_bg_fill = CHROME_HOVER;
+    visuals.widgets.hovered.bg_stroke = Stroke::new(1.0_f32, CHROME_ACCENT_BORDER);
+    visuals.widgets.active.weak_bg_fill = CHROME_SECTION;
+    visuals.widgets.active.bg_stroke = Stroke::new(1.0_f32, CHROME_ACCENT_BORDER);
+    visuals.widgets.open.weak_bg_fill = CHROME_SECTION;
+    visuals.widgets.open.bg_stroke = Stroke::new(1.0_f32, CHROME_ACCENT_BORDER);
+}
+
+/// Checkbox / slider chrome that reads on dark panels and [`CHROME_ROW`] gray strips.
+/// Idle rail/box is a sunk charcoal well (darker than the row); filled track / check uses a
+/// brighter blue than [`CHROME_ACCENT_SOFT`] so it does not melt into the strip.
+pub fn apply_control_accent_visuals(visuals: &mut egui::Visuals) {
+    // egui paints checkbox box + slider rail with `bg_fill` (not weak_bg_fill).
+    let idle = STATUS_BG; // 26,28,34 — clearly below CHROME_ROW (46,50,58)
+    let hover = Color32::from_rgb(38, 48, 64);
+    let active = Color32::from_rgb(64, 118, 178); // brighter checked / trailing fill
+    let edge = Stroke::new(1.0_f32, Color32::from_rgb(118, 168, 220));
+    // Handle / checkmark outline — rail and handle share bg_fill when idle, so stroke must carry contrast.
+    let handle = Stroke::new(1.5_f32, Color32::from_rgb(186, 196, 212));
+    visuals.widgets.inactive.bg_fill = idle;
+    visuals.widgets.inactive.bg_stroke = Stroke::new(1.0_f32, CHROME_SEP);
+    visuals.widgets.inactive.fg_stroke = handle;
+    visuals.widgets.hovered.bg_fill = hover;
+    visuals.widgets.hovered.bg_stroke = edge;
+    visuals.widgets.hovered.fg_stroke = Stroke::new(1.5_f32, CHROME_ACCENT_BORDER);
+    visuals.widgets.active.bg_fill = active;
+    visuals.widgets.active.bg_stroke = edge;
+    visuals.widgets.active.fg_stroke = Stroke::new(2.0_f32, Color32::from_rgb(210, 225, 245));
+    visuals.widgets.open.bg_fill = active;
+    visuals.widgets.open.bg_stroke = edge;
+    // Filled checkbox + slider trailing segment.
+    visuals.selection.bg_fill = active;
+    visuals.selection.stroke = Stroke::new(1.0_f32, CHROME_ACCENT_BORDER);
+    visuals.slider_trailing_fill = true;
+}
+
+/// Body/Small sizes matching Profiles list painting (14 / 12 × font zoom).
+pub fn apply_profiles_panel_fonts(ui: &mut egui::Ui) {
+    let z = font_zoom_factor(ui);
+    let body = (14.0 * z).max(8.0);
+    let small = (12.0 * z).max(8.0);
+    let styles = &mut ui.style_mut().text_styles;
+    styles.insert(
+        egui::TextStyle::Body,
+        egui::FontId::proportional(body),
+    );
+    styles.insert(
+        egui::TextStyle::Small,
+        egui::FontId::proportional(small),
+    );
+}
+
+/// Color Rules / Simulation panel chrome: Profiles fonts + blue checkbox/slider accents.
+pub fn apply_pro_panel_chrome(ui: &mut egui::Ui) {
+    apply_profiles_panel_fonts(ui);
+    apply_control_accent_visuals(ui.visuals_mut());
+}
 
 pub struct IconSet {
     textures: HashMap<&'static str, TextureHandle>,
@@ -255,15 +329,16 @@ impl IconSet {
         self.tiny_with_pad(ui, name, selected, tip, 2.0, true)
     }
 
-    /// Left-cluster tree icons: same glyph, half pad so neighbors sit closer.
-    pub fn tiny_cluster(
+    /// Topic-tree row button. Glyph and hit target are [`tree_row_icon_px`]
+    /// (no extra pad) so the row stays as tall as the text.
+    pub fn tiny_tree(
         &self,
         ui: &mut egui::Ui,
         name: &str,
         selected: bool,
         tip: &str,
     ) -> egui::Response {
-        self.tiny_with_pad(ui, name, selected, tip, 0.5, false)
+        self.paint_tiny(ui, name, selected, tip, tree_row_icon_px(ui), 0.0, false)
     }
 
     fn tiny_with_pad(
@@ -275,7 +350,20 @@ impl IconSet {
         pad: f32,
         on_header: bool,
     ) -> egui::Response {
-        let size = Vec2::splat(TINY_ICON + pad * 2.0);
+        self.paint_tiny(ui, name, selected, tip, TINY_ICON, pad, on_header)
+    }
+
+    fn paint_tiny(
+        &self,
+        ui: &mut egui::Ui,
+        name: &str,
+        selected: bool,
+        tip: &str,
+        icon_px: f32,
+        pad: f32,
+        on_header: bool,
+    ) -> egui::Response {
+        let size = Vec2::splat(icon_px + pad * 2.0);
         let (rect, response) = ui.allocate_exact_size(size, Sense::click());
         let response = crate::ui::hover_tip::attach(response, tip);
         if selected {
@@ -295,9 +383,9 @@ impl IconSet {
         }
         if let Some(tex) = self.get(name) {
             let img = egui::Image::new(tex)
-                .fit_to_exact_size(Vec2::splat(TINY_ICON))
+                .fit_to_exact_size(Vec2::splat(icon_px))
                 .maintain_aspect_ratio(true);
-            img.paint_at(ui, egui::Rect::from_center_size(rect.center(), Vec2::splat(TINY_ICON)));
+            img.paint_at(ui, egui::Rect::from_center_size(rect.center(), Vec2::splat(icon_px)));
         }
         response
     }

@@ -9,6 +9,7 @@
 use eframe::egui::Context;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::collections::HashSet;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::mpsc::{self, Receiver, SyncSender};
@@ -159,7 +160,12 @@ pub struct SimClientState {
     pub pending_playback: Option<PendingPlayback>,
     pub last_error: Option<String>,
     pub sidecar_up: bool,
-    pub selected: Option<String>,
+    /// Multi-select set for bulk delete / keyboard ops.
+    pub selected_ids: HashSet<String>,
+    /// Anchor row for Shift-range selection.
+    pub selection_anchor: Option<String>,
+    /// Keyboard / click focus tip (Shift+Arrow extends from anchor through focus).
+    pub selection_focus: Option<String>,
     last_fetch: Option<Instant>,
     last_gen: u64,
     cmd_tx: SyncSender<SimCmd>,
@@ -194,11 +200,109 @@ impl SimClientState {
             pending_playback: None,
             last_error: None,
             sidecar_up: false,
-            selected: None,
+            selected_ids: HashSet::new(),
+            selection_anchor: None,
+            selection_focus: None,
             last_fetch: None,
             last_gen: 0,
             cmd_tx,
             shared,
+        }
+    }
+
+    pub fn is_selected(&self, id: &str) -> bool {
+        self.selected_ids.contains(id)
+    }
+
+    /// Replace selection with one row (click without modifiers).
+    pub fn select_only(&mut self, id: String) {
+        self.selected_ids.clear();
+        self.selected_ids.insert(id.clone());
+        self.selection_anchor = Some(id.clone());
+        self.selection_focus = Some(id);
+    }
+
+    /// Ctrl/Cmd click — toggle membership; updates anchor/focus.
+    pub fn toggle_select(&mut self, id: String) {
+        if !self.selected_ids.remove(&id) {
+            self.selected_ids.insert(id.clone());
+        }
+        self.selection_anchor = Some(id.clone());
+        self.selection_focus = Some(id);
+    }
+
+    /// Shift-click range from anchor through `target` (inclusive) over `ordered_ids`.
+    pub fn select_range(&mut self, ordered_ids: &[String], target: &str) {
+        let anchor = self
+            .selection_anchor
+            .clone()
+            .unwrap_or_else(|| target.to_string());
+        let Some(a) = ordered_ids.iter().position(|i| i == &anchor) else {
+            self.select_only(target.to_string());
+            return;
+        };
+        let Some(b) = ordered_ids.iter().position(|i| i == target) else {
+            return;
+        };
+        let (lo, hi) = if a <= b { (a, b) } else { (b, a) };
+        self.selected_ids.clear();
+        for id in &ordered_ids[lo..=hi] {
+            self.selected_ids.insert(id.clone());
+        }
+        self.selection_focus = Some(target.to_string());
+    }
+
+    pub fn clear_selection(&mut self) {
+        self.selected_ids.clear();
+        self.selection_anchor = None;
+        self.selection_focus = None;
+    }
+
+    /// Drop ids that no longer exist after a list refresh.
+    pub fn prune_selection(&mut self) {
+        let live: HashSet<&str> = self.rows.iter().map(|r| r.id.as_str()).collect();
+        self.selected_ids.retain(|id| live.contains(id.as_str()));
+        if self
+            .selection_anchor
+            .as_ref()
+            .is_some_and(|a| !live.contains(a.as_str()))
+        {
+            self.selection_anchor = self.selected_ids.iter().next().cloned();
+        }
+        if self
+            .selection_focus
+            .as_ref()
+            .is_some_and(|a| !live.contains(a.as_str()))
+        {
+            self.selection_focus = self.selection_anchor.clone();
+        }
+    }
+
+    /// Move focus by `delta` (−1 / +1); Shift extends from anchor through the new focus.
+    pub fn move_selection(&mut self, delta: i32, extend: bool) {
+        if self.rows.is_empty() {
+            return;
+        }
+        let ids: Vec<String> = self.rows.iter().map(|r| r.id.clone()).collect();
+        let cur = self
+            .selection_focus
+            .as_ref()
+            .and_then(|a| ids.iter().position(|i| i == a))
+            .or_else(|| {
+                self.selection_anchor
+                    .as_ref()
+                    .and_then(|a| ids.iter().position(|i| i == a))
+            })
+            .unwrap_or(0);
+        let next = (cur as i32 + delta).clamp(0, ids.len() as i32 - 1) as usize;
+        let id = ids[next].clone();
+        if extend {
+            if self.selection_anchor.is_none() {
+                self.selection_anchor = Some(ids[cur].clone());
+            }
+            self.select_range(&ids, &id);
+        } else {
+            self.select_only(id);
         }
     }
 
@@ -283,11 +387,55 @@ impl SimClientState {
 
     pub fn delete(&mut self, id: &str) -> Result<(), String> {
         let _ = self.http("DELETE", &format!("/sim/{id}"), None)?;
-        if self.selected.as_deref() == Some(id) {
-            self.selected = None;
+        self.rows.retain(|r| r.id != id);
+        self.statuses.retain(|s| s.id != id);
+        self.selected_ids.remove(id);
+        if self.selection_anchor.as_deref() == Some(id) {
+            self.selection_anchor = self.selected_ids.iter().next().cloned();
+        }
+        if self.selection_focus.as_deref() == Some(id) {
+            self.selection_focus = self.selection_anchor.clone();
         }
         self.poll_if_due(true);
         Ok(())
+    }
+
+    /// Delete many sims (bulk). Stops on first error after deleting prior ids.
+    pub fn delete_ids(&mut self, ids: &[String]) -> Result<usize, String> {
+        if ids.is_empty() {
+            return Ok(0);
+        }
+        let mut n = 0usize;
+        let mut last_err: Option<String> = None;
+        for id in ids {
+            match self.http("DELETE", &format!("/sim/{id}"), None) {
+                Ok(_) => {
+                    n += 1;
+                    self.rows.retain(|r| r.id != *id);
+                    self.statuses.retain(|s| s.id != *id);
+                    self.selected_ids.remove(id);
+                }
+                Err(e) => {
+                    last_err = Some(e);
+                    break;
+                }
+            }
+        }
+        self.prune_selection();
+        self.poll_if_due(true);
+        match last_err {
+            Some(e) if n == 0 => Err(e),
+            Some(e) => Err(format!("Deleted {n}, then: {e}")),
+            None => Ok(n),
+        }
+    }
+
+    /// Delete the current multi-selection.
+    pub fn delete_selected(&mut self) -> Result<usize, String> {
+        let ids: Vec<String> = self.selected_ids.iter().cloned().collect();
+        let n = self.delete_ids(&ids)?;
+        self.clear_selection();
+        Ok(n)
     }
 
     pub fn start(&mut self, id: &str) -> Result<(), String> {
@@ -463,6 +611,8 @@ impl SimClientState {
         self.playback = g.playback.clone();
         self.sidecar_up = g.sidecar_up;
         self.last_error = g.last_error.clone();
+        drop(g);
+        self.prune_selection();
     }
 
     /// Mutation HTTP via worker (blocks the click path only; paint uses `poll_if_due`).

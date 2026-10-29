@@ -1,7 +1,9 @@
 //! Custom color rules (Pro) — fixed predicates, first-match wins; no formula engine.
+//! Nested payload fields use the same dotted / `foo[0]` paths as sticky Value pins.
 
 use crate::mqtt::paths;
 use crate::mqtt::subscribe;
+use crate::mqtt::value_path;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::fs;
@@ -54,7 +56,10 @@ pub enum MatchPred {
     PayloadContains { value: String },
     /// Whole payload parsed as a number, then compared.
     PayloadNumber { op: String, value: f64 },
+    /// Nested field equals (dotted path / `foo[0].bar`, optional `$.` prefix).
     JsonPathEquals { path: String, value: Value },
+    /// Nested string/number field contains substring (case-insensitive).
+    JsonPathContains { path: String, value: String },
     JsonPathNumber { path: String, op: String, value: f64 },
     JsonPathTruthy { path: String },
 }
@@ -357,6 +362,16 @@ fn pred_matches(pred: &MatchPred, topic: &str, payload: &str) -> bool {
         MatchPred::JsonPathEquals { path, value } => {
             json_at(payload, path).is_some_and(|v| json_eq(&v, value))
         }
+        MatchPred::JsonPathContains { path, value } => {
+            if value.is_empty() || path.trim().is_empty() {
+                return false;
+            }
+            let Some(v) = json_at(payload, path) else {
+                return false;
+            };
+            let hay = json_as_text(&v);
+            !hay.is_empty() && hay.to_lowercase().contains(&value.to_lowercase())
+        }
         MatchPred::JsonPathNumber { path, op, value } => {
             let Some(n) = json_at(payload, path).and_then(json_as_f64) else {
                 return false;
@@ -446,15 +461,18 @@ fn glob_match_chars(text: &[char], pattern: &[char]) -> bool {
 }
 
 fn json_at(payload: &str, path: &str) -> Option<Value> {
-    let v: Value = serde_json::from_str(payload).ok()?;
-    if path.is_empty() {
-        return Some(v);
+    // Shared walker: nested objects, array indices, `$.` / `foo[0]` sugar.
+    value_path::value_at_path(payload, path)
+}
+
+fn json_as_text(v: &Value) -> String {
+    match v {
+        Value::String(s) => s.clone(),
+        Value::Number(n) => n.to_string(),
+        Value::Bool(b) => b.to_string(),
+        Value::Null => String::new(),
+        other => other.to_string(),
     }
-    let mut cur = &v;
-    for seg in path.split('.').filter(|s| !s.is_empty()) {
-        cur = cur.get(seg)?;
-    }
-    Some(cur.clone())
 }
 
 fn json_eq(a: &Value, b: &Value) -> bool {
@@ -567,4 +585,70 @@ fn new_id() -> String {
         .map(|d| d.as_nanos())
         .unwrap_or(0);
     format!("cr-{ns:x}")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn nested_channel_equals() {
+        let payload = r#"{"meta":{"channel":"Line-A"},"ok":true}"#;
+        assert!(pred_matches(
+            &MatchPred::JsonPathEquals {
+                path: "meta.channel".into(),
+                value: Value::String("Line-A".into()),
+            },
+            "plant/status",
+            payload,
+        ));
+        assert!(!pred_matches(
+            &MatchPred::JsonPathEquals {
+                path: "meta.channel".into(),
+                value: Value::String("Line-B".into()),
+            },
+            "plant/status",
+            payload,
+        ));
+    }
+
+    #[test]
+    fn nested_channel_contains_and_array() {
+        let payload = r#"{"channels":[{"name":"CH-North"},{"name":"CH-South"}]}"#;
+        assert!(pred_matches(
+            &MatchPred::JsonPathContains {
+                path: "channels[1].name".into(),
+                value: "south".into(),
+            },
+            "plant/io",
+            payload,
+        ));
+        assert!(pred_matches(
+            &MatchPred::JsonPathEquals {
+                path: "$.channels.0.name".into(),
+                value: Value::String("CH-North".into()),
+            },
+            "plant/io",
+            payload,
+        ));
+    }
+
+    #[test]
+    fn whole_payload_rules_still_work() {
+        assert!(pred_matches(
+            &MatchPred::PayloadContains {
+                value: "fault".into(),
+            },
+            "a/b",
+            "device fault code",
+        ));
+        assert!(pred_matches(
+            &MatchPred::PayloadNumber {
+                op: ">".into(),
+                value: 10.0,
+            },
+            "a/b",
+            "12.5",
+        ));
+    }
 }

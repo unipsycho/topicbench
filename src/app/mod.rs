@@ -22,7 +22,8 @@ use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 
 /// Profiles left panel: resize handle cannot drag narrower than this (no see-through gap).
-const PROFILES_PANEL_MIN_W: f32 = 240.0;
+/// Profiles side panel floor — half of the prior 240 so Topic tree can shrink further.
+const PROFILES_PANEL_MIN_W: f32 = 120.0;
 
 /// Which optional panels are visible (ribbon toggles).
 #[derive(Clone, Debug)]
