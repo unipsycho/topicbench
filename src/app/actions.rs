@@ -3,7 +3,7 @@
 use super::layout;
 use super::MqttMonitorApp;
 use crate::mqtt::settings::AppSettings;
-use crate::mqtt::subscribe;
+use crate::mqtt::window_geom::WinGeom;
 use crate::ui::shortcuts::{self, Action as ShortcutAction};
 use eframe::egui;
 
@@ -34,7 +34,30 @@ impl MqttMonitorApp {
             .set_simulation_panel(self.simulation_open, self.simulation_floating);
         self.settings
             .set_pro_windows(self.bookmarks_open, self.color_rules_open);
+        let payload_popouts = self
+            .payload_popped
+            .iter()
+            .map(|p| crate::mqtt::settings::PayloadPopoutPersist {
+                profile_id: p.profile_id.clone(),
+                topic: p.topic.clone(),
+                profile_name: p.profile_name.clone(),
+            })
+            .collect::<Vec<_>>();
+        self.settings
+            .set_popouts(self.topic_tree_undocked.iter().cloned(), payload_popouts);
         let _ = self.settings.save();
+    }
+
+    /// Ensure a frozen ViewportBuilder seed exists for this session (from settings or default).
+    pub(super) fn vp_seed(
+        seed_slot: &mut Option<WinGeom>,
+        saved: Option<WinGeom>,
+        default: WinGeom,
+    ) -> WinGeom {
+        if seed_slot.is_none() {
+            *seed_slot = Some(saved.unwrap_or(default));
+        }
+        seed_slot.unwrap_or(default)
     }
 
     /// New profile: auto-show Profiles if hidden; remember for Save auto-close.
@@ -74,13 +97,7 @@ impl MqttMonitorApp {
         let ids = self.settings.last_connected.clone();
         let mut n = 0;
         for id in ids {
-            if let Some(mut profile) = self.profiles.profiles.get(&id).cloned() {
-                if subscribe::prune_redundant(&mut profile.subscriptions) {
-                    if let Some(p) = self.profiles.profiles.get_mut(&id) {
-                        p.subscriptions = profile.subscriptions.clone();
-                    }
-                    let _ = self.profiles.save();
-                }
+            if let Some(profile) = self.profiles.profiles.get(&id).cloned() {
                 let max_pkt = AppSettings::clamp_max_packet(self.settings.max_packet_bytes);
                 if self.sessions.connect(&profile, max_pkt, ctx).is_ok() {
                     self.pins.restore_from_profile(&profile);
@@ -306,15 +323,6 @@ impl MqttMonitorApp {
             Ok(msg) => {
                 self.settings.remember_connected(&id, connecting);
                 if connecting {
-                    let pruned = self
-                        .profiles
-                        .profiles
-                        .get_mut(&id)
-                        .map(|p| subscribe::prune_redundant(&mut p.subscriptions))
-                        .unwrap_or(false);
-                    if pruned {
-                        let _ = self.profiles.save();
-                    }
                     if let Some(p) = self.profiles.profiles.get(&id) {
                         self.pins.restore_from_profile(p);
                     }

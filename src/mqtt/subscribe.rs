@@ -20,18 +20,16 @@ pub fn is_valid_filter(filter: &str) -> bool {
     true
 }
 
-/// Attach a subscription filter; drops filters made redundant by overlap.
+/// Attach a subscription filter. Exact duplicates are ignored; overlapping
+/// filters (e.g. `#` + `topic/#`) are allowed so users can add then delete in any order.
 pub fn add_subscription(subs: &mut Vec<String>, filter: &str) -> Result<(), String> {
     let filter = filter.trim();
     if !is_valid_filter(filter) {
         return Err(format!("invalid topic filter: {filter}"));
     }
-    // Already covered by a broader (or equal) filter — nothing to add.
-    if subs.iter().any(|s| filter_covers(s, filter)) {
+    if subs.iter().any(|s| s == filter) {
         return Ok(());
     }
-    // Drop narrower filters the new one covers.
-    subs.retain(|s| !filter_covers(filter, s));
     subs.push(filter.to_string());
     Ok(())
 }
@@ -46,8 +44,9 @@ pub fn remove_subscription(subs: &mut Vec<String>, filter: &str) -> bool {
 /// Drop filters that are fully covered by another filter in the list.
 /// Returns true if the list changed.
 ///
-/// Overlapping MQTT subscriptions (e.g. `#` + `sensors/#`) make brokers deliver
-/// the same publish once per matching filter — that doubles UI counts.
+/// Not used on add/connect — overlapping filters are kept so users can stage
+/// narrower filters beside `#` and remove `#` in any order. Call explicitly if
+/// collapsing overlap is desired (brokers may deliver once per matching filter).
 pub fn prune_redundant(subs: &mut Vec<String>) -> bool {
     let before = subs.clone();
     let mut keep: Vec<String> = Vec::new();
@@ -148,15 +147,18 @@ mod tests {
     }
 
     #[test]
-    fn add_prunes_overlap() {
+    fn add_allows_overlap() {
         let mut subs = Vec::new();
-        add_subscription(&mut subs, "sensors/#").unwrap();
         add_subscription(&mut subs, "#").unwrap();
-        assert_eq!(subs, vec!["#".to_string()]);
+        add_subscription(&mut subs, "topic/#").unwrap();
+        assert_eq!(subs, vec!["#".to_string(), "topic/#".to_string()]);
+        add_subscription(&mut subs, "#").unwrap();
+        assert_eq!(subs, vec!["#".to_string(), "topic/#".to_string()]);
     }
 
     #[test]
     fn prune_sensors_and_hash() {
+        // Helper still collapses overlap when called explicitly (not used on add/connect).
         let mut subs = vec!["sensors/#".into(), "#".into()];
         assert!(prune_redundant(&mut subs));
         assert_eq!(subs, vec!["#".to_string()]);

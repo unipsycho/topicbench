@@ -4,7 +4,6 @@ use crate::mqtt::live::{self, BrokerEvent, LiveClient};
 use crate::mqtt::pins::PinBoard;
 use crate::mqtt::profile::ConnectionProfile;
 use crate::mqtt::publish::MqttMsgProps;
-use crate::mqtt::subscribe;
 use crate::mqtt::topic_tree::TopicTree;
 use crate::mqtt::traffic_stats::TrafficStats;
 use eframe::egui::Context;
@@ -477,8 +476,6 @@ impl SessionManager {
         } else {
             profile.subscriptions.clone()
         };
-        // Avoid broker double-delivery from overlapping filters (e.g. `#` + `sensors/#`).
-        subscribe::prune_redundant(&mut subscriptions);
 
         self.open.insert(
             profile.id.clone(),
@@ -511,8 +508,7 @@ impl SessionManager {
             .get_mut(profile_id)
             .ok_or_else(|| "No open session".to_string())?;
         let old = session.subscriptions.clone();
-        let mut filters = filters.to_vec();
-        subscribe::prune_redundant(&mut filters);
+        let filters = filters.to_vec();
         session.subscriptions = filters.clone();
         if session.state != SessionState::Connected {
             return Ok(());
