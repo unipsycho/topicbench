@@ -11,7 +11,7 @@ use crate::pro::history_client::{self, HistoryForwarder, PayloadScrub};
 use crate::pro::{self, Entitlement};
 use crate::ui::flash;
 use crate::ui::hover_tip;
-use crate::ui::icons::{self, IconSet};
+use crate::ui::icons::{self, IconSet, CHROME_MUTED, CHROME_ROW};
 use crate::ui::json_view;
 use eframe::egui::{
     self, Align, Color32, Key, RichText, Sense, Vec2, ViewportBuilder, ViewportClass,
@@ -28,6 +28,64 @@ fn match_line_fill() -> Color32 {
 }
 fn match_current_fill() -> Color32 {
     Color32::from_rgba_unmultiplied(140, 120, 40, 140)
+}
+/// Top→bottom fade wash behind a scrubbed (non-Live) payload body.
+fn paint_historical_payload_wash(painter: &egui::Painter, rect: egui::Rect) {
+    const STEPS: i32 = 28;
+    let rgb = CHROME_ROW;
+    for i in 0..STEPS {
+        let t0 = i as f32 / STEPS as f32;
+        let t1 = (i + 1) as f32 / STEPS as f32;
+        // Stronger at top, transparent at bottom.
+        let a = ((1.0 - t0) * 150.0) as u8;
+        if a == 0 {
+            continue;
+        }
+        let y0 = egui::lerp(rect.top()..=rect.bottom(), t0);
+        let y1 = egui::lerp(rect.top()..=rect.bottom(), t1);
+        painter.rect_filled(
+            egui::Rect::from_min_max(
+                egui::pos2(rect.left(), y0),
+                egui::pos2(rect.right(), y1),
+            ),
+            0.0,
+            Color32::from_rgba_unmultiplied(rgb.r(), rgb.g(), rgb.b(), a),
+        );
+    }
+}
+
+/// Dashed outline for historical payload (solid stroke reads too “live”).
+fn paint_dashed_rect_border(painter: &egui::Painter, rect: egui::Rect) {
+    let stroke = egui::Stroke::new(1.25_f32, CHROME_MUTED);
+    let dash = 5.0;
+    let gap = 4.0;
+    let r = rect.shrink(0.5);
+    dash_line_segment(painter, r.left_top(), r.right_top(), dash, gap, stroke);
+    dash_line_segment(painter, r.right_top(), r.right_bottom(), dash, gap, stroke);
+    dash_line_segment(painter, r.right_bottom(), r.left_bottom(), dash, gap, stroke);
+    dash_line_segment(painter, r.left_bottom(), r.left_top(), dash, gap, stroke);
+}
+
+fn dash_line_segment(
+    painter: &egui::Painter,
+    a: egui::Pos2,
+    b: egui::Pos2,
+    dash: f32,
+    gap: f32,
+    stroke: egui::Stroke,
+) {
+    let delta = b - a;
+    let len = delta.length();
+    if len <= 0.5 {
+        return;
+    }
+    let unit = delta / len;
+    let mut d = 0.0;
+    while d < len {
+        let d1 = (d + dash).min(len);
+        painter.line_segment([a + unit * d, a + unit * d1], stroke);
+        d = d1 + gap;
+    }
 }
 
 /// One payload topic locked into a floating OS window.
@@ -191,6 +249,7 @@ pub fn draw(
 }
 
 /// Floating windows for each popped payload topic (close dismisses; no dock).
+#[allow(clippy::too_many_arguments)]
 pub fn draw_undocked_viewports(
     ctx: &egui::Context,
     sessions: &mut SessionManager,
@@ -200,27 +259,42 @@ pub fn draw_undocked_viewports(
     open_stickies: &mut bool,
     status: &mut String,
     popped: &mut Vec<PoppedPayload>,
+    builder_seeds: &mut std::collections::HashMap<String, crate::mqtt::window_geom::WinGeom>,
+    saved_geoms: &mut std::collections::BTreeMap<String, crate::mqtt::window_geom::WinGeom>,
+    geom_dirty: &mut bool,
 ) {
     let mut close_idxs: Vec<usize> = Vec::new();
     let n = popped.len();
+    const MIN: [f32; 2] = [280.0, 200.0];
+    const DEFAULT: [f32; 2] = [420.0, 520.0];
+    let live_keys: std::collections::HashSet<String> = popped
+        .iter()
+        .map(|p| crate::mqtt::window_geom::payload_key(&p.profile_id, &p.topic))
+        .collect();
+    builder_seeds.retain(|k, _| live_keys.contains(k));
     for i in 0..n {
         let profile_id = popped[i].profile_id.clone();
         let profile_name = popped[i].profile_name.clone();
         let topic = popped[i].topic.clone();
         let title = format!("Payload — {profile_name} · {topic}");
+        let key = crate::mqtt::window_geom::payload_key(&profile_id, &topic);
         let vp_id = egui::ViewportId::from_hash_of((
             "payload_pop",
             profile_id.as_str(),
             topic.as_str(),
         ));
         let mut close_me = false;
+        let seed = *builder_seeds.entry(key.clone()).or_insert_with(|| {
+            saved_geoms
+                .get(&key)
+                .copied()
+                .unwrap_or_else(|| crate::mqtt::window_geom::WinGeom::size(DEFAULT[0], DEFAULT[1]))
+        });
 
         ctx.show_viewport_immediate(
             vp_id,
-            ViewportBuilder::default()
-                .with_title(title.clone())
-                .with_inner_size([420.0, 520.0])
-                .with_min_inner_size([280.0, 200.0]),
+            seed.apply(ViewportBuilder::default().with_title(title.clone()), MIN)
+                .with_min_inner_size(MIN),
             |ctx, class| {
                 let mut body = |ui: &mut egui::Ui| {
                     draw_topic_body(
@@ -260,6 +334,15 @@ pub fn draw_undocked_viewports(
                 if ctx.input(|i| i.viewport().close_requested()) {
                     close_me = true;
                 }
+                if let Some(g) = crate::mqtt::window_geom::capture(ctx) {
+                    let mut slot = saved_geoms.get(&key).copied();
+                    if crate::mqtt::window_geom::sync_slot(&mut slot, g, MIN) {
+                        if let Some(g) = slot {
+                            saved_geoms.insert(key.clone(), g);
+                            *geom_dirty = true;
+                        }
+                    }
+                }
             },
         );
 
@@ -268,7 +351,8 @@ pub fn draw_undocked_viewports(
         }
     }
     for i in close_idxs.into_iter().rev() {
-        popped.remove(i);
+        let p = popped.remove(i);
+        builder_seeds.remove(&crate::mqtt::window_geom::payload_key(&p.profile_id, &p.topic));
     }
 }
 
@@ -378,11 +462,19 @@ fn draw_topic_body(
             {
                 if pro::has(Entitlement::HistoryScrubber) {
                     scrub.sync_topic(profile_id, topic);
-                    let idx = scrub.index_in(history.len());
+                    // Keep −N label honest as the tip grows while pinned.
+                    scrub.refresh_steps_back(&history);
                     let live = scrub.is_live();
-                    let (p, at) = idx
-                        .and_then(|i| history.get(i).map(|(t, s)| (s.clone(), Some(*t))))
-                        .unwrap_or_else(|| (live_payload.clone(), history.last().map(|(t, _)| *t)));
+                    let (p, at) = if live {
+                        (live_payload.clone(), history.last().map(|(t, _)| *t))
+                    } else {
+                        scrub
+                            .index_in(&history)
+                            .and_then(|i| history.get(i).map(|(t, s)| (s.clone(), Some(*t))))
+                            .unwrap_or_else(|| {
+                                (live_payload.clone(), history.last().map(|(t, _)| *t))
+                            })
+                    };
                     (p, !live, at)
                 } else {
                     (
@@ -434,8 +526,9 @@ fn draw_topic_body(
                 open_stickies,
                 status,
                 change_bg,
+                scrubbing,
                 payload_scrub,
-                history.len(),
+                &history,
                 sample_at,
             );
         }
@@ -525,14 +618,57 @@ fn instant_hhmmss(at: Instant) -> String {
     dt.format("%H:%M:%S").to_string()
 }
 
-/// Compact scrub beside `#count`: slide left for older payloads; tip = live.
-fn draw_payload_scrub(ui: &mut egui::Ui, scrub: &mut PayloadScrub, history_len: usize) {
-    let max_back = history_len.saturating_sub(1);
-    // Slider: 0 = oldest, max = live tip (invert steps_back for natural left=old).
+/// Human relative age for scrubbed samples (“5 seconds ago”, “1 minute ago”).
+fn instant_relative_ago(at: Instant) -> String {
+    let secs = Instant::now().saturating_duration_since(at).as_secs();
+    if secs < 2 {
+        return "just now".into();
+    }
+    if secs < 60 {
+        return if secs == 1 {
+            "1 second ago".into()
+        } else {
+            format!("{secs} seconds ago")
+        };
+    }
+    let mins = secs / 60;
+    if mins < 60 {
+        return if mins == 1 {
+            "1 minute ago".into()
+        } else {
+            format!("{mins} minutes ago")
+        };
+    }
+    let hours = mins / 60;
+    if hours < 48 {
+        return if hours == 1 {
+            "1 hour ago".into()
+        } else {
+            format!("{hours} hours ago")
+        };
+    }
+    let days = hours / 24;
+    if days == 1 {
+        "1 day ago".into()
+    } else {
+        format!("{days} days ago")
+    }
+}
+
+/// Slider only (sits on the JSON/#count row).
+fn draw_payload_scrub_slider(
+    ui: &mut egui::Ui,
+    scrub: &mut PayloadScrub,
+    history: &[(Instant, String)],
+) {
+    let max_back = history.len().saturating_sub(1);
+    if max_back == 0 {
+        return;
+    }
     let mut pos = (max_back - scrub.steps_back().min(max_back)) as f32;
     let max_f = max_back as f32;
     ui.scope(|ui| {
-        ui.set_max_width(120.0);
+        ui.set_max_width(160.0);
         let resp = ui.add(
             egui::Slider::new(&mut pos, 0.0..=max_f)
                 .show_value(false)
@@ -540,25 +676,102 @@ fn draw_payload_scrub(ui: &mut egui::Ui, scrub: &mut PayloadScrub, history_len: 
         );
         if resp.changed() || resp.dragged() {
             let idx = pos.round().clamp(0.0, max_f) as usize;
-            scrub.set_steps_back(max_back - idx);
+            scrub.scrub_to_index(history, idx);
         }
-        resp.on_hover_text("Scrub previous payloads · tip = live");
+        resp.on_hover_text("Scrub previous payloads · tip = live · ←/→ step one");
     });
-    if scrub.is_live() {
-        ui.label(
-            RichText::new("Live")
-                .small()
-                .color(Color32::from_rgb(90, 180, 110)),
-        );
-    } else if ui
-        .add(egui::Button::new(
-            RichText::new(format!("−{}", scrub.steps_back())).small(),
-        ))
-        .on_hover_text("Scrubbing history — click to resume live")
-        .clicked()
-    {
-        scrub.resume_live();
+}
+
+/// Row under the slider: ◀/▶ + Live/−N, timestamp on the right.
+fn draw_payload_scrub_controls(
+    ui: &mut egui::Ui,
+    scrub: &mut PayloadScrub,
+    history: &[(Instant, String)],
+    sample_at: Option<Instant>,
+) {
+    if history.len() <= 1 {
+        return;
     }
+    // Left/Right when the find field does not own focus.
+    let find_focused = ui.memory(|m| {
+        m.has_focus(egui::Id::new("payload_find_edit"))
+            || m.has_focus(egui::Id::new("payload_find_edit_dock"))
+            || m.has_focus(egui::Id::new("payload_find_edit_float"))
+    });
+    if !find_focused {
+        if ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, Key::ArrowLeft)) {
+            scrub.step_by(history, -1);
+        }
+        if ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, Key::ArrowRight)) {
+            scrub.step_by(history, 1);
+        }
+    }
+
+    let row_h = ui.spacing().interact_size.y.max(18.0);
+    // Inset 1px so ◀ stroke isn’t clipped by the side-panel edge.
+    ui.horizontal(|ui| {
+        ui.add_space(1.0);
+        ui.spacing_mut().item_spacing.x = 6.0;
+        let older = ui
+            .add_enabled(
+                scrub.index_in(history).unwrap_or(0) > 0,
+                egui::Button::new("◀").small(),
+            )
+            .on_hover_text("Older sample (←)");
+        if older.clicked() {
+            scrub.step_by(history, -1);
+        }
+        let newer = ui
+            .add_enabled(!scrub.is_live(), egui::Button::new("▶").small())
+            .on_hover_text("Newer sample (→) · tip resumes Live");
+        if newer.clicked() {
+            scrub.step_by(history, 1);
+        }
+        if scrub.is_live() {
+            ui.label(
+                RichText::new("Live")
+                    .small()
+                    .color(Color32::from_rgb(90, 180, 110)),
+            );
+        } else if ui
+            .add(egui::Button::new(
+                RichText::new(format!("−{}", scrub.steps_back())).small(),
+            ))
+            .on_hover_text("Paused on history — click to resume live")
+            .clicked()
+        {
+            scrub.resume_live();
+        }
+        // Remaining width: clock (+ relative) flush right; truncate as the panel shrinks.
+        if let Some(at) = sample_at {
+            let historical = !scrub.is_live();
+            let rest = ui.available_width();
+            ui.allocate_ui_with_layout(
+                egui::vec2(rest.max(0.0), row_h),
+                egui::Layout::right_to_left(Align::Center),
+                |ui| {
+                    ui.spacing_mut().item_spacing.x = 6.0;
+                    ui.add(
+                        egui::Label::new(
+                            RichText::new(instant_hhmmss(at))
+                                .small()
+                                .monospace()
+                                .weak(),
+                        )
+                        .truncate(),
+                    );
+                    if historical {
+                        ui.add(
+                            egui::Label::new(
+                                RichText::new(instant_relative_ago(at)).small().weak(),
+                            )
+                            .truncate(),
+                        );
+                    }
+                },
+            );
+        }
+    });
 }
 
 /// Text shown in the Value body (pretty JSON when possible).
@@ -593,12 +806,25 @@ fn draw_search_bar(
         search.current = 0;
     }
 
+    let label = if search.query.trim().is_empty() {
+        "—".to_string()
+    } else if n == 0 {
+        "0".into()
+    } else {
+        format!("{}/{}", search.current + 1, n)
+    };
+
+    // LTR: icon first (never clipped), Find fills, then count + ◀/▶.
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 4.0;
         icons.tiny(ui, "clipboard_checklist", false, "Find in payload");
+        // Reserve trailing: count + two small ◀/▶ + spacing (keep Find from eating them).
+        let trail_w = 78.0_f32;
+        let edit_w = (ui.available_width() - trail_w).max(40.0);
         let edit = ui.add(
             egui::TextEdit::singleline(&mut search.query)
-                .desired_width(ui.available_width().min(180.0).max(80.0))
+                .id(egui::Id::new("payload_find_edit"))
+                .desired_width(edit_w)
                 .hint_text("Find…")
                 .font(egui::TextStyle::Monospace),
         );
@@ -618,16 +844,9 @@ fn draw_search_bar(
                 }
             }
         }
-        let label = if search.query.trim().is_empty() {
-            "—".to_string()
-        } else if n == 0 {
-            "0".into()
-        } else {
-            format!("{}/{}", search.current + 1, n)
-        };
         ui.label(RichText::new(label).small().monospace().weak());
         if hover_tip::attach(
-            ui.add_enabled(n > 0, egui::Button::new("Prev").small()),
+            ui.add_enabled(n > 0, egui::Button::new("◀").small()),
             "Previous match (Shift+Enter)",
         )
         .clicked()
@@ -635,7 +854,7 @@ fn draw_search_bar(
             search.goto_prev(n);
         }
         if hover_tip::attach(
-            ui.add_enabled(n > 0, egui::Button::new("Next").small()),
+            ui.add_enabled(n > 0, egui::Button::new("▶").small()),
             "Next match (Enter)",
         )
         .clicked()
@@ -663,11 +882,14 @@ fn draw_searchable_body(
     open_stickies: &mut bool,
     status: &mut String,
     change_bg: Color32,
-    payload_scrub: Option<&mut PayloadScrub>,
-    history_len: usize,
+    // True when scrub is pinned off Live — mute the payload body.
+    scrubbing: bool,
+    mut payload_scrub: Option<&mut PayloadScrub>,
+    history: &[(Instant, String)],
     // Receive Instant for the viewed sample (live tip or scrubbed); None → hide clock.
     sample_at: Option<Instant>,
 ) {
+    let history_len = history.len();
     let matches = find_matches(display, &search.query);
     let n = matches.len();
     if n > 0 {
@@ -676,7 +898,9 @@ fn draw_searchable_body(
     let current_line = matches.get(search.current).map(|m| m.line);
     let do_scroll = search.scroll_to_current && current_line.is_some();
 
-    // Kind label + #count + Pro scrub; receive time far-right on the same row.
+    // Row 1: kind + #count + scrub slider. Row 2: ◀/▶ + Live/−N + timestamp.
+    let scrub_ok =
+        pro::has(Entitlement::HistoryScrubber) && history_len > 1 && payload_scrub.is_some();
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 8.0;
         if is_json {
@@ -691,25 +915,36 @@ fn draw_searchable_body(
                     .weak(),
             );
         }
-        // Compact scrub beside #count — only when Pro HistoryScrubber is licensed.
-        if let Some(scrub) = payload_scrub {
-            if pro::has(Entitlement::HistoryScrubber) && history_len > 1 {
-                draw_payload_scrub(ui, scrub, history_len);
-            }
-        }
-        if let Some(at) = sample_at {
-            if pro::has(Entitlement::HistoryScrubber) {
-                ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
-                    ui.label(
-                        RichText::new(instant_hhmmss(at))
-                            .small()
-                            .monospace()
-                            .weak(),
-                    );
-                });
+        if scrub_ok {
+            if let Some(scrub) = payload_scrub.as_deref_mut() {
+                draw_payload_scrub_slider(ui, scrub, history);
             }
         }
     });
+    if scrub_ok {
+        if let Some(scrub) = payload_scrub {
+            draw_payload_scrub_controls(ui, scrub, history, sample_at);
+        }
+    } else if let Some(at) = sample_at {
+        if pro::has(Entitlement::HistoryScrubber) {
+            let row_h = ui.spacing().interact_size.y.max(18.0);
+            ui.allocate_ui_with_layout(
+                egui::vec2(ui.available_width(), row_h),
+                egui::Layout::right_to_left(Align::Center),
+                |ui| {
+                    ui.add(
+                        egui::Label::new(
+                            RichText::new(instant_hhmmss(at))
+                                .small()
+                                .monospace()
+                                .weak(),
+                        )
+                        .truncate(),
+                    );
+                },
+            );
+        }
+    }
 
     let height = ui.available_height().max(80.0);
     let font_size = ui.text_style_height(&egui::TextStyle::Monospace);
@@ -748,9 +983,27 @@ fn draw_searchable_body(
         }
     }
 
+    // Always inset a hair so graph-pin strokes clear the panel clip; historical adds fade chrome.
+    let body_frame = if scrubbing {
+        egui::Frame::NONE
+            .inner_margin(egui::Margin::symmetric(4, 4))
+            .corner_radius(3.0)
+    } else {
+        egui::Frame::NONE.inner_margin(egui::Margin::symmetric(2, 0))
+    };
+    let scroll_h = if scrubbing {
+        (height - 8.0).max(72.0)
+    } else {
+        height
+    };
+    let body = body_frame.show(ui, |ui| {
+    // Paint wash first so JSON lines sit above it.
+    if scrubbing {
+        paint_historical_payload_wash(ui.painter(), ui.max_rect());
+    }
     egui::ScrollArea::vertical()
         .id_salt(id_salt)
-        .max_height(height)
+        .max_height(scroll_h)
         .auto_shrink([false, false])
         .show(ui, |ui| {
             ui.set_max_width(ui.available_width());
@@ -884,6 +1137,10 @@ fn draw_searchable_body(
                 }
             }
         });
+    });
+    if scrubbing {
+        paint_dashed_rect_border(ui.painter(), body.response.rect);
+    }
 
     if do_scroll {
         search.scroll_to_current = false;

@@ -17,11 +17,18 @@ fn main() -> eframe::Result<()> {
     // Linux: undecorated + transparent for the floating AA splash, then hand off to OS chrome.
     // Windows: start decorated/opaque — winit undecorated + later Decorations(true) leaves a
     // caption-height black strip and Y-offsets hit tests (WS_CAPTION client inset mismatch).
+    // One-shot migrate before reading settings for initial window size.
+    mqtt::paths::migrate_legacy_config_dir();
+    let settings = mqtt::settings::AppSettings::load();
     let mut viewport = egui::ViewportBuilder::default()
         .with_inner_size([1200.0, 760.0])
         .with_title("TopicBench")
         // Wayland app_id — keep stable so Hyprland rules keep matching.
         .with_app_id("com.agileautomation.mqtt-master");
+    // Prefer last session size from settings.json (eframe also restores when available).
+    if let Some(g) = settings.window_main {
+        viewport = g.apply(viewport, [400.0, 300.0]);
+    }
     #[cfg(windows)]
     {
         viewport = viewport.with_decorations(true).with_transparent(false);
@@ -34,11 +41,16 @@ fn main() -> eframe::Result<()> {
         viewport = viewport.with_icon(icon);
     }
 
+    // Durable eframe state beside settings.json (window + egui memory / splitters).
+    // Note: this path is the storage *file* (eframe creates/overwrites it).
+    let persistence_path = mqtt::paths::config_dir().join("eframe");
     let options = eframe::NativeOptions {
         viewport,
         // Vsync Wait + off-workspace frame callbacks = swap_buffers can stall the
         // event loop so Hyprland xdg_wm_base pings miss → ANR on desktop switch.
         vsync: false,
+        persist_window: true,
+        persistence_path: Some(persistence_path),
         ..Default::default()
     };
 

@@ -1,6 +1,8 @@
 //! Persisted application settings (beside profiles.json).
 
+use super::window_geom::{payload_key, WinGeom};
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::PathBuf;
 
@@ -173,6 +175,51 @@ pub struct AppSettings {
     /// Unix seconds until “Remind me later” expires (~24h).
     #[serde(default)]
     pub remind_later_until: Option<u64>,
+
+    // --- Session restore: panel splitters + pop-outs + OS window geometry ---
+
+    /// Profiles left side-panel width (px).
+    #[serde(default = "default_profiles_panel_width")]
+    pub profiles_panel_width: f32,
+    /// Publish right side-panel width (px).
+    #[serde(default = "default_publish_panel_width")]
+    pub publish_panel_width: f32,
+    /// Payload right side-panel width (px).
+    #[serde(default = "default_payload_panel_width")]
+    pub payload_panel_width: f32,
+    /// Topic-tree brokers currently popped to OS windows (profile ids).
+    #[serde(default)]
+    pub topic_tree_undocked: Vec<String>,
+    /// Payload topics locked into floating OS windows.
+    #[serde(default)]
+    pub payload_popouts: Vec<PayloadPopoutPersist>,
+    /// Main shell window geometry (also mirrored by eframe persistence when enabled).
+    #[serde(default)]
+    pub window_main: Option<WinGeom>,
+    /// Floating Simulation OS window geometry.
+    #[serde(default)]
+    pub window_simulation: Option<WinGeom>,
+    /// Bookmarks OS window geometry.
+    #[serde(default)]
+    pub window_bookmarks: Option<WinGeom>,
+    /// Color Rules OS window geometry.
+    #[serde(default)]
+    pub window_color_rules: Option<WinGeom>,
+    /// Per-broker Topic tree pop-out geometry (keyed by profile id).
+    #[serde(default)]
+    pub window_topic_trees: BTreeMap<String, WinGeom>,
+    /// Per-topic Payload pop-out geometry (keyed by `profile_id\\ntopic`).
+    #[serde(default)]
+    pub window_payload_popouts: BTreeMap<String, WinGeom>,
+}
+
+/// One payload topic that should re-open as a floating OS window on launch.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PayloadPopoutPersist {
+    pub profile_id: String,
+    pub topic: String,
+    #[serde(default)]
+    pub profile_name: String,
 }
 
 fn default_true() -> bool {
@@ -194,6 +241,26 @@ fn default_combined_graph_height() -> f32 {
 fn default_live_traffic_height() -> f32 {
     160.0
 }
+
+fn default_profiles_panel_width() -> f32 {
+    320.0
+}
+
+fn default_publish_panel_width() -> f32 {
+    280.0
+}
+
+fn default_payload_panel_width() -> f32 {
+    320.0
+}
+
+/// Side-panel width clamps (match layout.rs ranges).
+pub const PROFILES_W_MIN: f32 = 120.0;
+pub const PROFILES_W_MAX: f32 = 560.0;
+pub const PUBLISH_W_MIN: f32 = 100.0;
+pub const PUBLISH_W_MAX: f32 = 480.0;
+pub const PAYLOAD_W_MIN: f32 = 110.0;
+pub const PAYLOAD_W_MAX: f32 = 560.0;
 
 /// Combined graph plot height range (drag-resize).
 pub const COMBINED_GRAPH_H_MIN: f32 = 80.0;
@@ -228,6 +295,17 @@ impl Default for AppSettings {
             last_update_check: None,
             skipped_update_version: None,
             remind_later_until: None,
+            profiles_panel_width: default_profiles_panel_width(),
+            publish_panel_width: default_publish_panel_width(),
+            payload_panel_width: default_payload_panel_width(),
+            topic_tree_undocked: Vec::new(),
+            payload_popouts: Vec::new(),
+            window_main: None,
+            window_simulation: None,
+            window_bookmarks: None,
+            window_color_rules: None,
+            window_topic_trees: BTreeMap::new(),
+            window_payload_popouts: BTreeMap::new(),
         }
     }
 }
@@ -308,6 +386,9 @@ impl AppSettings {
         s.sticky_columns = Self::clamp_sticky_columns(s.sticky_columns);
         s.combined_graph_height = Self::clamp_combined_graph_height(s.combined_graph_height);
         s.font_zoom_step = Self::clamp_font_zoom(s.font_zoom_step);
+        s.profiles_panel_width = Self::clamp_profiles_width(s.profiles_panel_width);
+        s.publish_panel_width = Self::clamp_publish_width(s.publish_panel_width);
+        s.payload_panel_width = Self::clamp_payload_width(s.payload_panel_width);
         s
     }
 
@@ -316,6 +397,27 @@ impl AppSettings {
             return default_combined_graph_height();
         }
         h.clamp(COMBINED_GRAPH_H_MIN, COMBINED_GRAPH_H_MAX)
+    }
+
+    pub fn clamp_profiles_width(w: f32) -> f32 {
+        if !w.is_finite() {
+            return default_profiles_panel_width();
+        }
+        w.clamp(PROFILES_W_MIN, PROFILES_W_MAX)
+    }
+
+    pub fn clamp_publish_width(w: f32) -> f32 {
+        if !w.is_finite() {
+            return default_publish_panel_width();
+        }
+        w.clamp(PUBLISH_W_MIN, PUBLISH_W_MAX)
+    }
+
+    pub fn clamp_payload_width(w: f32) -> f32 {
+        if !w.is_finite() {
+            return default_payload_panel_width();
+        }
+        w.clamp(PAYLOAD_W_MIN, PAYLOAD_W_MAX)
     }
 
     pub fn save(&self) -> Result<(), String> {
@@ -328,6 +430,9 @@ impl AppSettings {
         clone.sticky_columns = Self::clamp_sticky_columns(clone.sticky_columns);
         clone.combined_graph_height = Self::clamp_combined_graph_height(clone.combined_graph_height);
         clone.font_zoom_step = Self::clamp_font_zoom(clone.font_zoom_step);
+        clone.profiles_panel_width = Self::clamp_profiles_width(clone.profiles_panel_width);
+        clone.publish_panel_width = Self::clamp_publish_width(clone.publish_panel_width);
+        clone.payload_panel_width = Self::clamp_payload_width(clone.payload_panel_width);
         let text = serde_json::to_string_pretty(&clone).map_err(|e| e.to_string())?;
         fs::write(&path, text).map_err(|e| format!("write {}: {e}", path.display()))
     }
@@ -360,6 +465,29 @@ impl AppSettings {
     pub fn set_pro_windows(&mut self, bookmarks: bool, color_rules: bool) {
         self.show_bookmarks = bookmarks;
         self.show_color_rules = color_rules;
+    }
+
+    /// Snapshot topic-tree undocked brokers + payload pop-outs.
+    pub fn set_popouts(
+        &mut self,
+        topic_tree_undocked: impl IntoIterator<Item = String>,
+        payload_popouts: impl IntoIterator<Item = PayloadPopoutPersist>,
+    ) {
+        let mut ids: Vec<String> = topic_tree_undocked.into_iter().collect();
+        ids.sort();
+        ids.dedup();
+        self.topic_tree_undocked = ids;
+        self.payload_popouts = payload_popouts.into_iter().collect();
+        // Drop geometry for pop-outs that are no longer open.
+        self.window_topic_trees
+            .retain(|id, _| self.topic_tree_undocked.iter().any(|u| u == id));
+        let live_keys: std::collections::HashSet<String> = self
+            .payload_popouts
+            .iter()
+            .map(|p| payload_key(&p.profile_id, &p.topic))
+            .collect();
+        self.window_payload_popouts
+            .retain(|k, _| live_keys.contains(k));
     }
 
     /// Snapshot search bar query + scope + stickies apply (call before save).

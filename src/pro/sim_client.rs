@@ -166,6 +166,8 @@ pub struct SimClientState {
     pub selection_anchor: Option<String>,
     /// Keyboard / click focus tip (Shift+Arrow extends from anchor through focus).
     pub selection_focus: Option<String>,
+    /// Ignore Open playback / Import / Export clicks until this instant (viewport restore).
+    pub toolbar_arm_at: Option<Instant>,
     last_fetch: Option<Instant>,
     last_gen: u64,
     cmd_tx: SyncSender<SimCmd>,
@@ -203,6 +205,7 @@ impl SimClientState {
             selected_ids: HashSet::new(),
             selection_anchor: None,
             selection_focus: None,
+            toolbar_arm_at: None,
             last_fetch: None,
             last_gen: 0,
             cmd_tx,
@@ -613,6 +616,26 @@ impl SimClientState {
         self.last_error = g.last_error.clone();
         drop(g);
         self.prune_selection();
+    }
+
+    /// Start (or keep) the post-open toolbar cool-down so restore doesn't fire Open playback.
+    pub fn arm_toolbar_after_open(&mut self) {
+        if self.toolbar_arm_at.is_none() {
+            self.toolbar_arm_at = Some(Instant::now() + Duration::from_millis(450));
+        }
+    }
+
+    /// Clear cool-down when the Simulation panel is closed.
+    pub fn disarm_toolbar(&mut self) {
+        self.toolbar_arm_at = None;
+    }
+
+    /// True once the cool-down elapsed (safe to begin native file dialogs).
+    pub fn toolbar_armed(&self) -> bool {
+        match self.toolbar_arm_at {
+            Some(t) => Instant::now() >= t,
+            None => false,
+        }
     }
 
     /// Mutation HTTP via worker (blocks the click path only; paint uses `poll_if_due`).

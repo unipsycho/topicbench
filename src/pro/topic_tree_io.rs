@@ -1,6 +1,5 @@
-//! Topic tree Export / Import (Pro) — snapshot JSON + republish onto a broker.
+//! Topic tree Export (Pro) — snapshot JSON. Import/republish is in the sidecar.
 
-use crate::mqtt::publish::Qos;
 use crate::mqtt::session::SessionManager;
 use crate::mqtt::topic_tree::TopicNode;
 use serde_json::{json, Map, Value};
@@ -163,75 +162,8 @@ pub fn default_export_filename() -> String {
     format!("topicbench-export-{y:04}{mo:02}{d:02}-{h:02}{m:02}{s:02}.json")
 }
 
-/// Republish every leaf `_value` onto `target_profile_id`.
-/// Defaults: qos 0, retain **true** (rebuild tree).
-pub fn import_republish(
-    sessions: &mut SessionManager,
-    target_profile_id: &str,
-    doc: &Value,
-) -> Result<usize, String> {
-    if sessions.open.get(target_profile_id).is_none() {
-        return Err("Target profile is not connected".into());
-    }
-    let format = doc.get("format").and_then(|v| v.as_str()).unwrap_or("");
-    if format != FORMAT && !format.is_empty() {
-        return Err(format!("unsupported format: {format}"));
-    }
-    let brokers = doc
-        .get("brokers")
-        .and_then(|v| v.as_array())
-        .ok_or("missing brokers[]")?;
-    let mut leaves: Vec<(String, String, Qos, bool)> = Vec::new();
-    for b in brokers {
-        let topics = b.get("topics").unwrap_or(&Value::Null);
-        collect_leaves("", topics, &mut leaves);
-    }
-    if leaves.is_empty() {
-        return Err("No topic values to import".into());
-    }
-    let mut published = 0usize;
-    for (topic, payload, qos, retain) in leaves {
-        sessions.publish_live(target_profile_id, &topic, &payload, qos, retain)?;
-        published += 1;
-    }
-    Ok(published)
-}
-
-fn collect_leaves(prefix: &str, node: &Value, out: &mut Vec<(String, String, Qos, bool)>) {
-    let Some(obj) = node.as_object() else {
-        return;
-    };
-    let value = obj.get("_value").and_then(|v| v.as_str());
-    let (qos, retain) = obj
-        .get("_meta")
-        .map(|m| {
-            let qos = match m.get("qos").and_then(|q| q.as_u64()).unwrap_or(0) {
-                1 => Qos::AtLeastOnce,
-                2 => Qos::ExactlyOnce,
-                _ => Qos::AtMostOnce,
-            };
-            // Default retain true for tree rebuild when meta omits it.
-            let retain = m.get("retain").and_then(|r| r.as_bool()).unwrap_or(true);
-            (qos, retain)
-        })
-        .unwrap_or((Qos::AtMostOnce, true));
-    if let Some(v) = value {
-        if !prefix.is_empty() {
-            out.push((prefix.to_string(), v.to_string(), qos, retain));
-        }
-    }
-    for (k, child) in obj {
-        if k.starts_with('_') {
-            continue;
-        }
-        let path = if prefix.is_empty() {
-            k.clone()
-        } else {
-            format!("{prefix}/{k}")
-        };
-        collect_leaves(&path, child, out);
-    }
-}
+// Import / remap / republish lives in the Pro sidecar (`/tree/preview`, `/tree/import`).
+// OSS UI talks through `crate::pro::tree_client` — do not reimplement expand here.
 
 /// Days since Unix epoch → (year, month, day) — Howard Hinnant algorithm.
 fn civil_from_days(z: i64) -> (i32, u32, u32) {
