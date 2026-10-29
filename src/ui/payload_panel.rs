@@ -707,58 +707,73 @@ fn draw_payload_scrub_controls(
         }
     }
 
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 6.0;
-        let older = ui
-            .add_enabled(
-                scrub.index_in(history).unwrap_or(0) > 0,
-                egui::Button::new("◀").small(),
-            )
-            .on_hover_text("Older sample (←)");
-        if older.clicked() {
-            scrub.step_by(history, -1);
-        }
-        let newer = ui
-            .add_enabled(!scrub.is_live(), egui::Button::new("▶").small())
-            .on_hover_text("Newer sample (→) · tip resumes Live");
-        if newer.clicked() {
-            scrub.step_by(history, 1);
-        }
-        if scrub.is_live() {
-            ui.label(
-                RichText::new("Live")
-                    .small()
-                    .color(Color32::from_rgb(90, 180, 110)),
-            );
-        } else if ui
-            .add(egui::Button::new(
-                RichText::new(format!("−{}", scrub.steps_back())).small(),
-            ))
-            .on_hover_text("Paused on history — click to resume live")
-            .clicked()
-        {
-            scrub.resume_live();
-        }
-        if let Some(at) = sample_at {
-            let historical = !scrub.is_live();
-            ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
-                // right_to_left: clock on the far right; relative age just left of it.
+    let row_h = ui.spacing().interact_size.y.max(18.0);
+    ui.allocate_ui_with_layout(
+        egui::vec2(ui.available_width(), row_h),
+        egui::Layout::left_to_right(Align::Center),
+        |ui| {
+            ui.spacing_mut().item_spacing.x = 6.0;
+            let older = ui
+                .add_enabled(
+                    scrub.index_in(history).unwrap_or(0) > 0,
+                    egui::Button::new("◀").small(),
+                )
+                .on_hover_text("Older sample (←)");
+            if older.clicked() {
+                scrub.step_by(history, -1);
+            }
+            let newer = ui
+                .add_enabled(!scrub.is_live(), egui::Button::new("▶").small())
+                .on_hover_text("Newer sample (→) · tip resumes Live");
+            if newer.clicked() {
+                scrub.step_by(history, 1);
+            }
+            if scrub.is_live() {
                 ui.label(
-                    RichText::new(instant_hhmmss(at))
+                    RichText::new("Live")
                         .small()
-                        .monospace()
-                        .weak(),
+                        .color(Color32::from_rgb(90, 180, 110)),
                 );
-                if historical {
-                    ui.label(
-                        RichText::new(instant_relative_ago(at))
-                            .small()
-                            .weak(),
-                    );
-                }
-            });
-        }
-    });
+            } else if ui
+                .add(egui::Button::new(
+                    RichText::new(format!("−{}", scrub.steps_back())).small(),
+                ))
+                .on_hover_text("Paused on history — click to resume live")
+                .clicked()
+            {
+                scrub.resume_live();
+            }
+            // Remaining width: clock (+ relative) flush right; truncate as the panel shrinks.
+            if let Some(at) = sample_at {
+                let historical = !scrub.is_live();
+                let rest = ui.available_width();
+                ui.allocate_ui_with_layout(
+                    egui::vec2(rest, row_h),
+                    egui::Layout::right_to_left(Align::Center),
+                    |ui| {
+                        ui.spacing_mut().item_spacing.x = 6.0;
+                        ui.add(
+                            egui::Label::new(
+                                RichText::new(instant_hhmmss(at))
+                                    .small()
+                                    .monospace()
+                                    .weak(),
+                            )
+                            .truncate(),
+                        );
+                        if historical {
+                            ui.add(
+                                egui::Label::new(
+                                    RichText::new(instant_relative_ago(at)).small().weak(),
+                                )
+                                .truncate(),
+                            );
+                        }
+                    },
+                );
+            }
+        },
+    );
 }
 
 /// Text shown in the Value body (pretty JSON when possible).
@@ -793,57 +808,67 @@ fn draw_search_bar(
         search.current = 0;
     }
 
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 4.0;
-        icons.tiny(ui, "clipboard_checklist", false, "Find in payload");
-        let edit = ui.add(
-            egui::TextEdit::singleline(&mut search.query)
-                .id(egui::Id::new("payload_find_edit"))
-                .desired_width(ui.available_width().min(180.0).max(80.0))
-                .hint_text("Find…")
-                .font(egui::TextStyle::Monospace),
-        );
-        if edit.changed() {
-            search.current = 0;
-            search.scroll_to_current = !search.query.trim().is_empty();
-        }
-        // Enter / Shift+Enter while the field has focus.
-        if edit.has_focus() {
-            let enter = ui.input(|i| i.key_pressed(Key::Enter));
-            let shift = ui.input(|i| i.modifiers.shift);
-            if enter {
-                if shift {
-                    search.goto_prev(n);
-                } else {
-                    search.goto_next(n);
+    let label = if search.query.trim().is_empty() {
+        "—".to_string()
+    } else if n == 0 {
+        "0".into()
+    } else {
+        format!("{}/{}", search.current + 1, n)
+    };
+
+    // RTL strip: ▶ ◀ count fill Find… icon — Find input expands with the panel.
+    let row_h = ui.spacing().interact_size.y.max(18.0);
+    let icon_reserve = 22.0;
+    ui.allocate_ui_with_layout(
+        egui::vec2(ui.available_width(), row_h),
+        egui::Layout::right_to_left(Align::Center),
+        |ui| {
+            ui.spacing_mut().item_spacing.x = 4.0;
+            if hover_tip::attach(
+                ui.add_enabled(n > 0, egui::Button::new("▶").small()),
+                "Next match (Enter)",
+            )
+            .clicked()
+            {
+                search.goto_next(n);
+            }
+            if hover_tip::attach(
+                ui.add_enabled(n > 0, egui::Button::new("◀").small()),
+                "Previous match (Shift+Enter)",
+            )
+            .clicked()
+            {
+                search.goto_prev(n);
+            }
+            ui.label(RichText::new(label).small().monospace().weak());
+
+            let edit_w = (ui.available_width() - icon_reserve).max(40.0);
+            let edit = ui.add(
+                egui::TextEdit::singleline(&mut search.query)
+                    .id(egui::Id::new("payload_find_edit"))
+                    .desired_width(edit_w)
+                    .hint_text("Find…")
+                    .font(egui::TextStyle::Monospace),
+            );
+            if edit.changed() {
+                search.current = 0;
+                search.scroll_to_current = !search.query.trim().is_empty();
+            }
+            // Enter / Shift+Enter while the field has focus.
+            if edit.has_focus() {
+                let enter = ui.input(|i| i.key_pressed(Key::Enter));
+                let shift = ui.input(|i| i.modifiers.shift);
+                if enter {
+                    if shift {
+                        search.goto_prev(n);
+                    } else {
+                        search.goto_next(n);
+                    }
                 }
             }
-        }
-        let label = if search.query.trim().is_empty() {
-            "—".to_string()
-        } else if n == 0 {
-            "0".into()
-        } else {
-            format!("{}/{}", search.current + 1, n)
-        };
-        ui.label(RichText::new(label).small().monospace().weak());
-        if hover_tip::attach(
-            ui.add_enabled(n > 0, egui::Button::new("Prev").small()),
-            "Previous match (Shift+Enter)",
-        )
-        .clicked()
-        {
-            search.goto_prev(n);
-        }
-        if hover_tip::attach(
-            ui.add_enabled(n > 0, egui::Button::new("Next").small()),
-            "Next match (Enter)",
-        )
-        .clicked()
-        {
-            search.goto_next(n);
-        }
-    });
+            icons.tiny(ui, "clipboard_checklist", false, "Find in payload");
+        },
+    );
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -909,16 +934,22 @@ fn draw_searchable_body(
         }
     } else if let Some(at) = sample_at {
         if pro::has(Entitlement::HistoryScrubber) {
-            ui.horizontal(|ui| {
-                ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
-                    ui.label(
-                        RichText::new(instant_hhmmss(at))
-                            .small()
-                            .monospace()
-                            .weak(),
+            let row_h = ui.spacing().interact_size.y.max(18.0);
+            ui.allocate_ui_with_layout(
+                egui::vec2(ui.available_width(), row_h),
+                egui::Layout::right_to_left(Align::Center),
+                |ui| {
+                    ui.add(
+                        egui::Label::new(
+                            RichText::new(instant_hhmmss(at))
+                                .small()
+                                .monospace()
+                                .weak(),
+                        )
+                        .truncate(),
                     );
-                });
-            });
+                },
+            );
         }
     }
 
