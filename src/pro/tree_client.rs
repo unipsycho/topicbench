@@ -134,6 +134,13 @@ fn http_post(path: &str, body: &Value) -> Result<Value, String> {
         }
         Err(ureq::Error::Status(code, resp)) => {
             let text = resp.into_string().unwrap_or_default();
+            // Old Pro sidecars (pre-1.2.5) have /sim but not /tree — 404 looks like “Pro missing”.
+            if code == 404 && path.starts_with("/tree") {
+                return Err(
+                    "TopicBench Pro is running but too old for Tree Import — upgrade Pro to 1.2.5+"
+                        .into(),
+                );
+            }
             let msg = serde_json::from_str::<Value>(&text)
                 .ok()
                 .and_then(|v| {
