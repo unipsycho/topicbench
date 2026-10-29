@@ -17,6 +17,7 @@ pub mod recording;
 pub mod sidecar_launch;
 pub mod sim_client;
 pub mod topic_tree_io;
+pub mod tree_client;
 
 use std::sync::OnceLock;
 

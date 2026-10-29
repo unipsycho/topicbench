@@ -167,6 +167,7 @@ pub fn consume_transport_keys(ctx: &egui::Context) -> Option<&'static str> {
 
 /// Floating Simulation as a real OS viewport (`floating == true`).
 /// Docked UI paints in the central column via [`draw_docked`].
+#[allow(clippy::too_many_arguments)]
 pub fn draw(
     ctx: &egui::Context,
     open: &mut bool,
@@ -177,10 +178,17 @@ pub fn draw(
     profiles: &ProfileStore,
     icons: &IconSet,
     status: &mut String,
+    builder_seed: crate::mqtt::window_geom::WinGeom,
+    saved_geom: &mut Option<crate::mqtt::window_geom::WinGeom>,
+    geom_dirty: &mut bool,
 ) {
     if !*open || !*floating {
+        client.disarm_toolbar();
         return;
     }
+    // Floating viewport restore can deliver a phantom click to the far-right
+    // Open playback button — cool down before beginning native dialogs.
+    client.arm_toolbar_after_open();
 
     // Refresh before paint so the title status matches sidecar state.
     if licensed {
@@ -189,13 +197,14 @@ pub fn draw(
     }
 
     let mut close = false;
+    const MIN: [f32; 2] = [900.0, 220.0];
     // OS window (Payload undock pattern) — draggable outside the main TopicBench frame.
+    // Seed is frozen for this open session so patch does not fight live resize.
     ctx.show_viewport_immediate(
         egui::ViewportId::from_hash_of("topicbench_simulation_vp"),
-        ViewportBuilder::default()
-            .with_title("Simulation")
-            .with_inner_size([1100.0, 360.0])
-            .with_min_inner_size([900.0, 220.0]),
+        builder_seed
+            .apply(ViewportBuilder::default().with_title("Simulation"), MIN)
+            .with_min_inner_size(MIN),
         |ctx, class| {
             // Same chords as global — viewport focus does not reach main handle_shortcuts.
             if licensed {
@@ -241,6 +250,12 @@ pub fn draw(
             if ctx.input(|i| i.viewport().close_requested()) {
                 close = true;
             }
+            // Track live size/pos for next launch (does not update builder_seed).
+            if let Some(g) = crate::mqtt::window_geom::capture(ctx) {
+                if crate::mqtt::window_geom::sync_slot(saved_geom, g, MIN) {
+                    *geom_dirty = true;
+                }
+            }
         },
     );
     if close {
@@ -263,6 +278,7 @@ pub fn draw_docked(
     if !*open || *floating {
         return;
     }
+    client.arm_toolbar_after_open();
 
     if licensed {
         client.poll_if_due(false);
@@ -526,79 +542,115 @@ fn body(
         }
 
         // Far right: Import / Export / Open playback (CSV tape).
+        // Off-thread native dialogs — avoid Linux Wayland "app hung" ANR.
+        let playback_dlg = egui::Id::new("dlg_sim_playback");
+        let export_dlg = egui::Id::new("dlg_sim_export");
+        let export_text_key = egui::Id::new("dlg_sim_export_text");
+        let import_dlg = egui::Id::new("dlg_sim_import");
+        let import_mode_dlg = egui::Id::new("dlg_sim_import_mode");
+        let import_err_dlg = egui::Id::new("dlg_sim_import_err");
+        let import_path_key = egui::Id::new("dlg_sim_import_path");
+        let toolbar_ok = client.toolbar_armed();
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             ui.spacing_mut().item_spacing.x = 6.0;
-            if toolbar_btn(ui, icons, "playback", "Open playback", true)
+            if toolbar_btn(ui, icons, "playback", "Open playback", toolbar_ok)
                 .on_hover_text("Open a topicbench-recording CSV — play back and/or suggest sims")
                 .clicked()
+                && toolbar_ok
             {
-                if let Some(path) = rfd::FileDialog::new()
-                    .set_title("Open playback CSV")
-                    .add_filter("CSV", &["csv"])
-                    .pick_file()
-                {
-                    match std::fs::read_to_string(&path) {
-                        Ok(csv) => {
-                            client.pending_playback = Some(sim_client::PendingPlayback {
-                                csv,
-                                file_label: path
-                                    .file_name()
-                                    .and_then(|n| n.to_str())
-                                    .unwrap_or("recording.csv")
-                                    .to_string(),
-                                profile: default_profile(sessions, profiles),
-                                play: true,
-                                suggest: true,
-                                loop_on: false,
-                            });
-                        }
-                        Err(e) => *status = format!("read {}: {e}", path.display()),
+                crate::ui::native_dialog::begin_path(
+                    ui.ctx(),
+                    playback_dlg,
+                    crate::ui::native_dialog::PathOp::PickFile,
+                    |d| {
+                        d.set_title("Open playback CSV")
+                            .add_filter("CSV", &["csv"])
+                    },
+                );
+            }
+            if let Some(Some(path)) = crate::ui::native_dialog::poll_path(ui.ctx(), playback_dlg) {
+                match std::fs::read_to_string(&path) {
+                    Ok(csv) => {
+                        client.pending_playback = Some(sim_client::PendingPlayback {
+                            csv,
+                            file_label: path
+                                .file_name()
+                                .and_then(|n| n.to_str())
+                                .unwrap_or("recording.csv")
+                                .to_string(),
+                            profile: default_profile(sessions, profiles),
+                            play: true,
+                            suggest: true,
+                            loop_on: false,
+                        });
                     }
+                    Err(e) => *status = format!("read {}: {e}", path.display()),
                 }
             }
-            if toolbar_btn(ui, icons, "export", "Export", true)
+            if toolbar_btn(ui, icons, "export", "Export", toolbar_ok)
                 .on_hover_text("Export simulation definitions as a bare JSON array")
                 .clicked()
+                && toolbar_ok
             {
                 match client.export_sims() {
-                    Ok(json) => {
-                        if let Some(path) = rfd::FileDialog::new()
-                            .set_title("Export simulations")
-                            .add_filter("JSON", &["json"])
-                            .set_file_name("simulations.json")
-                            .save_file()
-                        {
-                            match serde_json::to_string_pretty(&json) {
-                                Ok(text) => match std::fs::write(&path, format!("{text}\n")) {
-                                    Ok(()) => {
-                                        *status = format!("Exported {}", path.display());
-                                    }
-                                    Err(e) => *status = format!("write: {e}"),
+                    Ok(json) => match serde_json::to_string_pretty(&json) {
+                        Ok(text) => {
+                            ui.ctx()
+                                .data_mut(|d| d.insert_temp(export_text_key, text));
+                            crate::ui::native_dialog::begin_path(
+                                ui.ctx(),
+                                export_dlg,
+                                crate::ui::native_dialog::PathOp::SaveFile,
+                                |d| {
+                                    d.set_title("Export simulations")
+                                        .add_filter("JSON", &["json"])
+                                        .set_file_name("simulations.json")
                                 },
-                                Err(e) => *status = format!("json: {e}"),
-                            }
+                            );
                         }
-                    }
+                        Err(e) => *status = format!("json: {e}"),
+                    },
                     Err(e) => *status = e,
                 }
             }
-            if toolbar_btn(ui, icons, "import", "Import", true)
+            if let Some(path_opt) = crate::ui::native_dialog::poll_path(ui.ctx(), export_dlg) {
+                if let Some(path) = path_opt {
+                    if let Some(text) =
+                        ui.ctx().data_mut(|d| d.remove_temp::<String>(export_text_key))
+                    {
+                        match std::fs::write(&path, format!("{text}\n")) {
+                            Ok(()) => *status = format!("Exported {}", path.display()),
+                            Err(e) => *status = format!("write: {e}"),
+                        }
+                    }
+                } else {
+                    let _ = ui.ctx().data_mut(|d| d.remove_temp::<String>(export_text_key));
+                }
+            }
+            if toolbar_btn(ui, icons, "import", "Import", toolbar_ok)
                 .on_hover_text(
                     "Import sims JSON ([…] or {simulations:[…]}) — Replace / Merge / Cancel",
                 )
                 .clicked()
+                && toolbar_ok
             {
-                if let Some(path) = rfd::FileDialog::new()
-                    .set_title("Import simulations")
-                    .add_filter("JSON", &["json"])
-                    .pick_file()
-                {
-                    // Empty list: load without prompting. Else Replace / Merge / Cancel.
-                    let mode = if client.rows.is_empty() {
-                        Some("replace")
-                    } else {
-                        match rfd::MessageDialog::new()
-                            .set_level(rfd::MessageLevel::Info)
+                crate::ui::native_dialog::begin_path(
+                    ui.ctx(),
+                    import_dlg,
+                    crate::ui::native_dialog::PathOp::PickFile,
+                    |d| {
+                        d.set_title("Import simulations")
+                            .add_filter("JSON", &["json"])
+                    },
+                );
+            }
+            if let Some(Some(path)) = crate::ui::native_dialog::poll_path(ui.ctx(), import_dlg) {
+                if client.rows.is_empty() {
+                    finish_sim_import(ui.ctx(), client, status, &path, "replace", import_err_dlg);
+                } else {
+                    ui.ctx().data_mut(|d| d.insert_temp(import_path_key, path));
+                    crate::ui::native_dialog::begin_message(ui.ctx(), import_mode_dlg, |d| {
+                        d.set_level(rfd::MessageLevel::Info)
                             .set_title("Import simulations")
                             .set_description(
                                 "Replace the current list, or Merge (update matching \
@@ -610,55 +662,27 @@ fn body(
                                 "Merge".into(),
                                 "Cancel".into(),
                             ))
-                            .show()
-                        {
-                            rfd::MessageDialogResult::Yes => Some("replace"),
-                            rfd::MessageDialogResult::No => Some("merge"),
-                            rfd::MessageDialogResult::Custom(s)
-                                if s.eq_ignore_ascii_case("replace") =>
-                            {
-                                Some("replace")
-                            }
-                            rfd::MessageDialogResult::Custom(s)
-                                if s.eq_ignore_ascii_case("merge") =>
-                            {
-                                Some("merge")
-                            }
-                            _ => None,
-                        }
-                    };
-                    if let Some(mode) = mode {
-                        let fail = |status: &mut String, msg: String| {
-                            *status = msg.clone();
-                            // Modal so parse/shape errors aren't a silent no-op.
-                            let _ = rfd::MessageDialog::new()
-                                .set_level(rfd::MessageLevel::Error)
-                                .set_title("Import failed")
-                                .set_description(&msg)
-                                .set_buttons(rfd::MessageButtons::Ok)
-                                .show();
-                        };
-                        match std::fs::read_to_string(&path) {
-                            Ok(raw) => match serde_json::from_str::<serde_json::Value>(&raw) {
-                                Ok(v) => match client.import_sims_mode(&v, mode) {
-                                    Ok(n) => {
-                                        *status =
-                                            format!("Imported {n} simulations ({mode})")
-                                    }
-                                    Err(e) => fail(status, format!("Import failed: {e}")),
-                                },
-                                Err(e) => {
-                                    fail(status, format!("Import failed: parse JSON: {e}"))
-                                }
-                            },
-                            Err(e) => fail(
-                                status,
-                                format!("Import failed: read {}: {e}", path.display()),
-                            ),
-                        }
-                    }
+                    });
                 }
             }
+            if let Some(result) =
+                crate::ui::native_dialog::poll_message(ui.ctx(), import_mode_dlg)
+            {
+                if let Some(mode) = crate::ui::native_dialog::replace_merge_mode(result) {
+                    if let Some(path) = ui
+                        .ctx()
+                        .data_mut(|d| d.remove_temp::<std::path::PathBuf>(import_path_key))
+                    {
+                        finish_sim_import(ui.ctx(), client, status, &path, mode, import_err_dlg);
+                    }
+                } else {
+                    let _ = ui
+                        .ctx()
+                        .data_mut(|d| d.remove_temp::<std::path::PathBuf>(import_path_key));
+                }
+            }
+            // Drain error acknowledgement so it never blocks the UI thread.
+            let _ = crate::ui::native_dialog::poll_message(ui.ctx(), import_err_dlg);
         });
     });
 
@@ -731,7 +755,7 @@ fn body(
     }
 
     // Overlay last so it dims toolbar + sheet (and stays on top).
-    draw_open_playback_modal(ui, client, status);
+    draw_open_playback_modal(ui, icons, client, status);
 }
 
 fn delete_selection(client: &mut SimClientState, status: &mut String) {
@@ -1961,6 +1985,7 @@ fn seed_open_playback_modal(
 /// Modal after picking a CSV: play back / suggest / loop (in-panel overlay — reliable in OS viewports).
 fn draw_open_playback_modal(
     ui: &mut egui::Ui,
+    icons: &IconSet,
     client: &mut SimClientState,
     status: &mut String,
 ) {
@@ -1993,9 +2018,21 @@ fn draw_open_playback_modal(
                 .corner_radius(8.0)
                 .inner_margin(egui::Margin::symmetric(16, 14))
                 .show(ui, |ui| {
-                    ui.set_min_width(360.0);
-                    ui.label(RichText::new("Open playback").strong().size(15.0));
-                    ui.add_space(4.0);
+                    ui.set_min_width(380.0);
+                    ui.set_max_width(420.0);
+
+                    // Same section chrome as Export topic tree / Settings panels.
+                    icons::section_header_bar(ui, |ui| {
+                        icons::section_icon(ui, icons, "playback");
+                        icons::section_title(ui, "Open playback");
+                    });
+                    ui.add_space(6.0);
+                    let bar_w = ui.available_width();
+                    let (bar, _) =
+                        ui.allocate_exact_size(egui::vec2(bar_w, 3.0), egui::Sense::hover());
+                    ui.painter().rect_filled(bar, 1.5, CHROME_ACCENT_BORDER);
+                    ui.add_space(12.0);
+
                     ui.label(
                         RichText::new(format!("File: {}", draft.file_label))
                             .color(CHROME_CAPTION),
@@ -2011,21 +2048,69 @@ fn draw_open_playback_modal(
                         ui.checkbox(&mut draft.loop_on, "Loop")
                             .on_hover_text("When playing, restart the CSV when it ends");
                     });
+
                     ui.add_space(14.0);
+                    ui.separator();
+                    ui.add_space(8.0);
                     ui.horizontal(|ui| {
-                        if ui.button("Cancel").clicked() {
-                            close = true;
-                        }
-                        let can = draft.play || draft.suggest;
-                        if ui
-                            .add_enabled(
-                                can,
-                                egui::Button::new("OK").min_size(egui::vec2(72.0, 0.0)),
-                            )
-                            .clicked()
-                        {
-                            confirm = true;
-                        }
+                        ui.with_layout(
+                            egui::Layout::right_to_left(egui::Align::Center),
+                            |ui| {
+                                ui.spacing_mut().item_spacing.x = 8.0;
+                                let can = draft.play || draft.suggest;
+                                // OK — accent fill + icon (mirrors Export / Settings Save).
+                                let ok_btn = if let Some(tex) = icons.get("playback") {
+                                    ui.add_enabled(
+                                        can,
+                                        egui::Button::image_and_text(
+                                            egui::Image::new(tex).fit_to_exact_size(
+                                                egui::vec2(TINY_ICON, TINY_ICON),
+                                            ),
+                                            RichText::new("OK").strong(),
+                                        )
+                                        .fill(CHROME_ACCENT_SOFT)
+                                        .stroke(egui::Stroke::new(
+                                            1.0_f32,
+                                            CHROME_ACCENT_BORDER,
+                                        ))
+                                        .min_size(egui::vec2(120.0, 32.0)),
+                                    )
+                                } else {
+                                    ui.add_enabled(
+                                        can,
+                                        egui::Button::new(RichText::new("OK").strong())
+                                            .fill(CHROME_ACCENT_SOFT)
+                                            .stroke(egui::Stroke::new(
+                                                1.0_f32,
+                                                CHROME_ACCENT_BORDER,
+                                            ))
+                                            .min_size(egui::vec2(120.0, 32.0)),
+                                    )
+                                };
+                                if ok_btn.clicked() {
+                                    confirm = true;
+                                }
+                                let cancel_btn = if let Some(tex) = icons.get("close_red") {
+                                    ui.add(
+                                        egui::Button::image_and_text(
+                                            egui::Image::new(tex).fit_to_exact_size(
+                                                egui::vec2(TINY_ICON, TINY_ICON),
+                                            ),
+                                            "Cancel",
+                                        )
+                                        .min_size(egui::vec2(104.0, 32.0)),
+                                    )
+                                } else {
+                                    ui.add(
+                                        egui::Button::new("Cancel")
+                                            .min_size(egui::vec2(104.0, 32.0)),
+                                    )
+                                };
+                                if cancel_btn.clicked() {
+                                    close = true;
+                                }
+                            },
+                        );
                     });
                 });
         });
@@ -2064,6 +2149,41 @@ fn draw_open_playback_modal(
         client.pending_playback = None;
     } else if let Some(slot) = client.pending_playback.as_mut() {
         *slot = draft;
+    }
+}
+
+/// Apply import after path (+ optional Replace/Merge) without blocking the UI thread.
+fn finish_sim_import(
+    ctx: &egui::Context,
+    client: &mut SimClientState,
+    status: &mut String,
+    path: &std::path::Path,
+    mode: &str,
+    err_dlg: egui::Id,
+) {
+    let fail = |ctx: &egui::Context, status: &mut String, msg: String, err_dlg: egui::Id| {
+        *status = msg.clone();
+        crate::ui::native_dialog::begin_message(ctx, err_dlg, move |d| {
+            d.set_level(rfd::MessageLevel::Error)
+                .set_title("Import failed")
+                .set_description(msg)
+                .set_buttons(rfd::MessageButtons::Ok)
+        });
+    };
+    match std::fs::read_to_string(path) {
+        Ok(raw) => match serde_json::from_str::<serde_json::Value>(&raw) {
+            Ok(v) => match client.import_sims_mode(&v, mode) {
+                Ok(n) => *status = format!("Imported {n} simulations ({mode})"),
+                Err(e) => fail(ctx, status, format!("Import failed: {e}"), err_dlg),
+            },
+            Err(e) => fail(ctx, status, format!("Import failed: parse JSON: {e}"), err_dlg),
+        },
+        Err(e) => fail(
+            ctx,
+            status,
+            format!("Import failed: read {}: {e}", path.display()),
+            err_dlg,
+        ),
     }
 }
 
