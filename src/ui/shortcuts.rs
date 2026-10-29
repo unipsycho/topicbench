@@ -78,7 +78,7 @@ pub const BINDINGS: &[Binding] = &[
     },
     Binding {
         keys: "Delete / Ctrl+Backspace",
-        action: "Delete selected profile (when not typing)",
+        action: "Delete selected sims (Simulate open) or profile",
     },
     Binding {
         keys: "Ctrl+Enter",
@@ -119,6 +119,14 @@ pub const PRO_BINDINGS: &[Binding] = &[
     Binding {
         keys: "Ctrl+Shift+H",
         action: "Stop / pause simulations",
+    },
+    Binding {
+        keys: "Click / Ctrl / Shift / drag",
+        action: "Select sims (box-select from gutter; Shift range)",
+    },
+    Binding {
+        keys: "Delete",
+        action: "Delete selected simulations",
     },
     Binding {
         keys: "Ctrl+Shift+J",
@@ -269,10 +277,14 @@ pub fn consume(ctx: &egui::Context) -> Vec<Action> {
             if chord(i, Modifiers::NONE, Key::Delete) || chord(i, cmd, Key::Backspace) {
                 out.push(Action::DeleteProfile);
             }
-            if chord(i, Modifiers::NONE, Key::ArrowUp) {
+            // NONE or SHIFT so Simulate can Shift-extend selection.
+            if chord(i, Modifiers::NONE, Key::ArrowUp) || chord(i, Modifiers::SHIFT, Key::ArrowUp)
+            {
                 out.push(Action::ProfileSelectPrev);
             }
-            if chord(i, Modifiers::NONE, Key::ArrowDown) {
+            if chord(i, Modifiers::NONE, Key::ArrowDown)
+                || chord(i, Modifiers::SHIFT, Key::ArrowDown)
+            {
                 out.push(Action::ProfileSelectNext);
             }
         }

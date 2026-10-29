@@ -85,7 +85,16 @@ pub fn draw(
     // Topic filter lives under the section header, above broker/tree rows.
     crate::ui::search_bar::draw(ui, filter, focus_search);
     ui.add_space(4.0);
-    ui.weak("Single-click selects for Payload. Double-click a parent to expand/collapse. Double-click a topic/payload row to fill Publish.");
+    // Wrap help to whatever width the central column currently has.
+    ui.add(
+        egui::Label::new(
+            RichText::new(
+                "Single-click selects for Payload. Double-click a parent to expand/collapse. Double-click a topic/payload row to fill Publish.",
+            )
+            .weak(),
+        )
+        .wrap(),
+    );
     ui.add_space(4.0);
 
     // Only currently connected brokers — disconnected sessions are cleared on Disconnect.
@@ -168,7 +177,8 @@ pub fn draw_undocked_viewports(
             ViewportBuilder::default()
                 .with_title(title.clone())
                 .with_inner_size([440.0, 560.0])
-                .with_min_inner_size([280.0, 200.0]),
+                // Half of prior 280 — matches docked central column shrink goal.
+                .with_min_inner_size([140.0, 200.0]),
             |ctx, class| {
                 let mut body = |ui: &mut egui::Ui| {
                     draw_broker_block(
@@ -276,18 +286,9 @@ fn draw_broker_block(
     let is_undocked = undocked.contains(profile_id);
 
     ui.add_space(if in_viewport { 0.0 } else { 6.0 });
+    // Icons claim the right edge first (RTL); nested LTR left-justifies name/state in the
+    // leftover width and truncates so a long broker label never forces the panel min width.
     ui.horizontal(|ui| {
-        ui.label(
-            RichText::new(format!("▸ {profile_name}"))
-                .heading()
-                .color(color)
-                .strong(),
-        );
-        ui.label(
-            RichText::new(format!("· {state_label}"))
-                .small()
-                .color(color),
-        );
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             ui.spacing_mut().item_spacing.x = 4.0;
             if in_viewport || is_undocked {
@@ -356,6 +357,37 @@ fn draw_broker_block(
                     }
                 }
             }
+            // Claim full leftover width so the name stays left (not shrink-wrapped
+            // against the icons) and Label::truncate can ellipsize instead of growing the panel.
+            let left_w = ui.available_width();
+            let row_h = ui
+                .text_style_height(&egui::TextStyle::Heading)
+                .max(ui.spacing().interact_size.y)
+                .max(icons::TINY_ICON);
+            ui.allocate_ui_with_layout(
+                egui::vec2(left_w, row_h),
+                Layout::left_to_right(Align::Center),
+                |ui| {
+                    ui.spacing_mut().item_spacing.x = 4.0;
+                    ui.add(
+                        egui::Label::new(
+                            RichText::new(format!("▸ {profile_name}"))
+                                .heading()
+                                .color(color)
+                                .strong(),
+                        )
+                        .truncate(),
+                    );
+                    ui.add(
+                        egui::Label::new(
+                            RichText::new(format!("· {state_label}"))
+                                .small()
+                                .color(color),
+                        )
+                        .truncate(),
+                    );
+                },
+            );
         });
     });
 
@@ -548,8 +580,9 @@ fn draw_node(
             // and header_resp unions the arrow (wrong !was_open path).
             let header_row = ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 0.0;
-                let toggle_size =
-                    egui::vec2(ui.spacing().indent, ui.spacing().icon_width);
+                // Disclosure mark tracks the font, same as the leaf-row glyphs.
+                let icon_px = icons::tree_row_icon_px(ui);
+                let toggle_size = egui::vec2(icon_px, icon_px);
                 let (toggle_id, toggle_rect) = ui.allocate_space(toggle_size);
                 // Unique id so we don't share interaction with CollapsingState persistence id.
                 let toggle_resp =
@@ -567,8 +600,10 @@ fn draw_node(
                     .inner_margin(egui::Margin::symmetric(3, 1))
                     .corner_radius(2.0)
                     .show(ui, |ui| {
+                        // Same mono/size/color as Payload topic path + leaf rows
+                        // (was Body+.strong — looked larger/heavier than Payload).
                         ui.add(
-                            egui::Label::new(RichText::new(segment).strong())
+                            egui::Label::new(json_view::topic_path_text(segment))
                                 .sense(egui::Sense::click())
                                 .selectable(false),
                         )
@@ -765,12 +800,12 @@ fn leaf_row(
         ui.set_min_width(row_w);
         ui.horizontal(|ui| {
             ui.set_min_width(row_w);
-            // Left action icons: zero gap + half-pad hit targets (tighter than prior 1px+pad2).
-            ui.spacing_mut().item_spacing.x = 0.0;
+            // Left action icons track the font (see tree_row_icon_px); 1px gap, no extra pad.
+            ui.spacing_mut().item_spacing.x = 1.0;
 
             // Left: copy-topic + sticky + optional Pro bookmark toggle.
             if icons
-                .tiny_cluster(ui, "topic_tags", false, "Copy topic")
+                .tiny_tree(ui, "topic_tags", false, "Copy topic")
                 .clicked()
             {
                 ui.ctx().copy_text(full_topic.to_string());
@@ -787,7 +822,7 @@ fn leaf_row(
                 "Ctrl+Shift+S",
             );
             if icons
-                .tiny_cluster(ui, "sticky_topic", sticky, &sticky_tip)
+                .tiny_tree(ui, "sticky_topic", sticky, &sticky_tip)
                 .clicked()
             {
                 select_topic(pins, profile_id, profile_name, full_topic);
@@ -848,7 +883,7 @@ fn leaf_row(
                     if show_copy_payload {
                         ui.label(RichText::new("=").monospace().color(json_view::C_TOPIC));
                         if icons
-                            .tiny(ui, "clipboard_checklist", false, "Copy payload")
+                            .tiny_tree(ui, "clipboard_checklist", false, "Copy payload")
                             .clicked()
                         {
                             let copy = json_view::try_pretty_json(payload)

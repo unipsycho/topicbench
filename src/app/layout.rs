@@ -587,10 +587,11 @@ impl MqttMonitorApp {
         }
 
         if self.panels.publish {
+            // Min ~half of prior 200 — leaves more room for Topic tree when the window shrinks.
             let r = egui::SidePanel::right("publish")
                 .default_width(280.0)
-                .min_width(200.0)
-                .width_range(200.0..=480.0)
+                .min_width(100.0)
+                .width_range(100.0..=480.0)
                 .resizable(true)
                 .show(ctx, |ui| {
                     reserve_side_panel_space(ui);
@@ -599,10 +600,11 @@ impl MqttMonitorApp {
         }
 
         if self.panels.payload {
+            // Min ~half of prior 220 — Topic tree keeps search/icons instead of clipping first.
             let r = egui::SidePanel::right("payload")
                 .default_width(320.0)
-                .min_width(220.0)
-                .width_range(220.0..=560.0)
+                .min_width(110.0)
+                .width_range(110.0..=560.0)
                 .resizable(true)
                 .show(ctx, |ui| {
                     reserve_side_panel_space(ui);

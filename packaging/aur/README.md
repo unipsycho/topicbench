@@ -64,7 +64,7 @@ cp -a /path/to/topicbench/packaging/aur/topicbench-bin/{PKGBUILD,.SRCINFO,topicb
 # git add / commit / push — AUR rejects empty first commits; include PKGBUILD + .SRCINFO
 
 git add PKGBUILD .SRCINFO topicbench.desktop topicbench.png LICENSE-MIT LICENSE-APACHE
-git commit -m "topicbench-bin 1.2.0-1"
+git commit -m "topicbench-bin 1.2.1-1"
 git push
 ```
 

@@ -7,10 +7,12 @@ use crate::mqtt::profile::ProfileStore;
 use crate::mqtt::session::SessionManager;
 use crate::pro::sim_client::{self, SimClientState, SimRow};
 use crate::ui::icons::{
-    self, IconSet, CHROME_BG, CHROME_CAPTION, CHROME_MUTED, CHROME_TEXT, TINY_ICON,
+    self, IconSet, CHROME_ACCENT_BORDER, CHROME_ACCENT_SOFT, CHROME_BG, CHROME_CAPTION,
+    CHROME_MUTED, CHROME_ROW, CHROME_TEXT, TINY_ICON,
 };
-use eframe::egui::{self, Color32, RichText, Vec2, ViewportBuilder, ViewportClass};
+use eframe::egui::{self, Color32, Pos2, RichText, Vec2, ViewportBuilder, ViewportClass};
 use serde_json::{json, Value};
+use std::collections::HashSet;
 
 /// Wire ids ordered by display label (Bool Toggle … Random, Random Walk …).
 const GEN_TYPES: &[&str] = &[
@@ -34,17 +36,83 @@ const INTERVAL_TICKS_MS: &[u64] = &[
     6000, 7000, 8000, 9000, 10_000,
 ];
 
-// Spreadsheet column widths (keep rows aligned).
-// Refresh→Prec→Value→Generator are tight; Settings gets the reclaimed width.
-const COL_PROFILE: f32 = 110.0;
-const COL_TOPIC: f32 = 160.0;
-const COL_FIELD: f32 = 130.0;
-const COL_REFRESH: f32 = 158.0;
-const COL_PREC: f32 = 44.0;
-const COL_VALUE: f32 = 92.0;
-const COL_GEN: f32 = 118.0;
-const COL_SETTINGS: f32 = 400.0;
-const COL_DELETE: f32 = 36.0;
+// Spreadsheet geometry — Topic/Field/Value flex; Settings aligned slots; trash far-right.
+const ROW_H: f32 = 22.0;
+const ROW_GAP: f32 = 2.0; // between-row chrome — marquee drag target
+const COL_GAP: f32 = 4.0;
+/// Fixed label width inside Settings slots so values share one vertical column.
+const SET_LABEL_W: f32 = 30.0;
+/// Wide left gutter: circle select glyph + dedicated marquee drag strip (avoids fighting inputs).
+const COL_GUTTER: f32 = 28.0;
+const COL_PROFILE: f32 = 104.0;
+const TOPIC_MIN: f32 = 120.0;
+const FIELD_MIN: f32 = 96.0;
+const VALUE_MIN: f32 = 72.0;
+/// Cap so long ISO timestamps ellipsize inside the cell and never shove Generator/trash.
+const VALUE_MAX: f32 = 120.0;
+const TOPIC_FLEX: f32 = 1.55;
+const FIELD_FLEX: f32 = 1.0;
+const VALUE_FLEX: f32 = 0.75;
+const COL_REFRESH: f32 = 148.0;
+const COL_PREC: f32 = 40.0;
+const COL_GEN: f32 = 110.0;
+const COL_DELETE: f32 = 26.0;
+/// Settings band: four vertical columns shared by every generator row.
+const SET_GAP: f32 = 4.0;
+const SET_A: f32 = 84.0; // min / val / start
+const SET_B: f32 = 84.0; // max / ±% / step
+const SET_C: f32 = 76.0; // T / dur / step / noise
+const SET_D: f32 = 56.0; // loop / extras
+const COL_SETTINGS: f32 = SET_A + SET_B + SET_C + SET_D + 3.0 * SET_GAP;
+/// Available width below this → two-line stacked rows (less horizontal scroll).
+const WRAP_WIDTH: f32 = 980.0;
+/// Marquee drag must exceed this before box-select engages (preserves click / future reorder).
+const MARQUEE_SLOP: f32 = 6.0;
+
+/// Fixed columns in the wide single-line layout (everything except Topic/Field/Value).
+fn wide_fixed_w() -> f32 {
+    COL_GUTTER + COL_PROFILE + COL_REFRESH + COL_PREC + COL_GEN + COL_SETTINGS + COL_DELETE
+}
+
+fn wide_gap_w() -> f32 {
+    9.0 * COL_GAP // ten cells → nine gaps
+}
+
+/// Fixed columns on wrap line 1 (everything except Topic/Field/Value).
+fn wrap_fixed_w() -> f32 {
+    COL_GUTTER + COL_PROFILE + COL_GEN + COL_DELETE
+}
+
+fn wrap_gap_w() -> f32 {
+    6.0 * COL_GAP // seven cells → six gaps
+}
+
+/// Share leftover width across Topic / Field / Current value (value capped at [`VALUE_MAX`]).
+fn flex_topic_field_value(pool: f32) -> (f32, f32, f32) {
+    let mins = TOPIC_MIN + FIELD_MIN + VALUE_MIN;
+    if pool <= mins {
+        let s = if mins > 0.0 {
+            (pool / mins).clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+        return (TOPIC_MIN * s, FIELD_MIN * s, VALUE_MIN * s);
+    }
+    let extra = pool - mins;
+    let tw = TOPIC_FLEX + FIELD_FLEX + VALUE_FLEX;
+    let mut topic = TOPIC_MIN + extra * (TOPIC_FLEX / tw);
+    let mut field = FIELD_MIN + extra * (FIELD_FLEX / tw);
+    let mut value = VALUE_MIN + extra * (VALUE_FLEX / tw);
+    // Overflow past VALUE_MAX goes back to Topic/Field so timestamps never widen the column.
+    if value > VALUE_MAX {
+        let overflow = value - VALUE_MAX;
+        value = VALUE_MAX;
+        let tf = TOPIC_FLEX + FIELD_FLEX;
+        topic += overflow * (TOPIC_FLEX / tf);
+        field += overflow * (FIELD_FLEX / tf);
+    }
+    (topic, field, value)
+}
 
 /// Match Simulate toolbar **Start** (resume CSV tape, else start_all).
 pub fn action_start(client: &mut SimClientState, status: &mut String) {
@@ -136,8 +204,12 @@ pub fn draw(
                     Some("stop") => action_stop(client, status),
                     _ => {}
                 }
+                // Delete/arrows while the floating Simulation window is focused.
+                handle_sim_list_keys(ctx, client, status);
             }
             let mut paint = |ui: &mut egui::Ui| {
+                // Profiles Body/Small fonts + blue checkbox/slider accents.
+                icons::apply_pro_panel_chrome(ui);
                 header_bar(ui, icons, floating, open, client);
                 ui.separator();
                 // Viewport owns both axes — sheet scrolls inside.
@@ -198,6 +270,7 @@ pub fn draw_docked(
             .request_repaint_after(std::time::Duration::from_millis(500));
     }
 
+    icons::apply_pro_panel_chrome(ui);
     header_bar(ui, icons, floating, open, client);
     ui.separator();
     // Parent central ScrollArea owns vertical; sheet only scrolls horizontally.
@@ -366,11 +439,29 @@ fn body(
             let row = sim_client::blank_row(&profile, "lab/sim/value");
             match client.upsert(&row) {
                 Ok(r) => {
-                    client.selected = Some(r.id.clone());
+                    client.select_only(r.id.clone());
                     *status = format!("Added simulation {}", r.id);
                 }
                 Err(e) => *status = e,
             }
+        }
+        let sel_n = client.selected_ids.len();
+        let del_enabled = sel_n > 0;
+        let del_tip = if sel_n == 0 {
+            crate::ui::shortcuts::tip("Select rows to delete", "Delete")
+        } else if sel_n == 1 {
+            crate::ui::shortcuts::tip("Delete selected simulation", "Delete")
+        } else {
+            crate::ui::shortcuts::tip(
+                &format!("Delete {sel_n} selected simulations"),
+                "Delete",
+            )
+        };
+        if toolbar_btn(ui, icons, "delete_red", "Delete", del_enabled)
+            .on_hover_text(del_tip)
+            .clicked()
+        {
+            delete_selection(client, status);
         }
         let pb_active = client.playback.active;
         let pb_paused = client.playback.paused;
@@ -425,6 +516,13 @@ fn body(
                     Err(e) => *status = e,
                 }
             }
+        }
+        if sel_n > 0 {
+            ui.label(
+                RichText::new(format!("{sel_n} selected"))
+                    .small()
+                    .color(CHROME_CAPTION),
+            );
         }
 
         // Far right: Import / Export / Open playback (CSV tape).
@@ -566,40 +664,69 @@ fn body(
 
     ui.add_space(4.0);
 
-    let sheet = |ui: &mut egui::Ui| {
-        egui::Grid::new("sim_sheet")
-            .num_columns(9)
-            .spacing([5.0, 6.0])
-            .min_col_width(36.0)
-            .striped(true)
-            .show(ui, |ui| {
-                // Profile → Topic → Field → Refresh → Prec → Value → Generator → Settings → Delete
-                header_cell(ui, COL_PROFILE, "Profile");
-                header_cell(ui, COL_TOPIC, "Topic");
-                header_cell(ui, COL_FIELD, "Field");
-                header_cell(ui, COL_REFRESH, "Refresh");
-                header_cell(ui, COL_PREC, "Prec");
-                header_cell(ui, COL_VALUE, "Current value");
-                header_cell(ui, COL_GEN, "Generator");
-                header_cell(ui, COL_SETTINGS, "Settings");
-                header_cell(ui, COL_DELETE, "");
-                ui.end_row();
+    // List keys (Delete / arrows) when not typing into a field.
+    handle_sim_list_keys(ui.ctx(), client, status);
 
-                let rows = client.rows.clone();
-                for row in rows {
-                    draw_row(ui, &row, client, sessions, profiles, icons, status);
-                    ui.end_row();
-                }
-            });
+    let wrap = ui.available_width() < WRAP_WIDTH;
+
+    let sheet = |ui: &mut egui::Ui| {
+        ui.spacing_mut().item_spacing.y = ROW_GAP;
+        // Match row frame horizontal margin so flex cols fill the real inner width.
+        let inner_w = (ui.available_width() - 4.0).max(0.0);
+        let (topic_w, field_w, value_w) = if wrap {
+            flex_topic_field_value((inner_w - wrap_fixed_w() - wrap_gap_w()).max(0.0))
+        } else {
+            flex_topic_field_value((inner_w - wide_fixed_w() - wide_gap_w()).max(0.0))
+        };
+        draw_sheet_header(ui, wrap, topic_w, field_w, value_w);
+        ui.add_space(1.0);
+
+        let rows = client.rows.clone();
+        let ids: Vec<String> = rows.iter().map(|r| r.id.clone()).collect();
+        let mut row_rects: Vec<(String, egui::Rect)> = Vec::with_capacity(rows.len());
+        let list_origin = ui.cursor().min;
+
+        for row in &rows {
+            let rect = draw_row(
+                ui,
+                row,
+                &ids,
+                wrap,
+                topic_w,
+                field_w,
+                value_w,
+                client,
+                sessions,
+                profiles,
+                icons,
+                status,
+            );
+            row_rects.push((row.id.clone(), rect));
+        }
+
+        let list_bottom = ui.cursor().min.y;
+        let list_rect = egui::Rect::from_min_max(
+            list_origin,
+            Pos2::new(
+                ui.max_rect().right(),
+                list_bottom.max(list_origin.y + 4.0),
+            ),
+        );
+        handle_marquee(ui, client, &ids, &row_rects, list_rect);
+        client.prune_selection();
     };
 
     if scroll_both {
         egui::ScrollArea::both()
             .auto_shrink([false, false])
+            .id_salt("sim_sheet_scroll")
             .show(ui, sheet);
     } else {
+        // Docked: hug content vertically so Topic tree sits right under the list
+        // (auto_shrink y=false left a tall empty band after the last row).
         egui::ScrollArea::horizontal()
-            .auto_shrink([false, false])
+            .auto_shrink([false, true])
+            .id_salt("sim_sheet_scroll")
             .show(ui, sheet);
     }
 
@@ -607,13 +734,228 @@ fn body(
     draw_open_playback_modal(ui, client, status);
 }
 
+fn delete_selection(client: &mut SimClientState, status: &mut String) {
+    let n = client.selected_ids.len();
+    if n == 0 {
+        return;
+    }
+    match client.delete_selected() {
+        Ok(deleted) => {
+            *status = if deleted == 1 {
+                "Deleted 1 simulation".into()
+            } else {
+                format!("Deleted {deleted} simulations")
+            };
+        }
+        Err(e) => *status = e,
+    }
+}
+
+fn handle_sim_list_keys(ctx: &egui::Context, client: &mut SimClientState, status: &mut String) {
+    if ctx.wants_keyboard_input() || client.rows.is_empty() {
+        return;
+    }
+    // Only when the sim list has a selection (avoids stealing profile Delete/arrows).
+    if client.selected_ids.is_empty() && client.selection_focus.is_none() {
+        return;
+    }
+    let shift = ctx.input(|i| i.modifiers.shift);
+    let mut do_del = false;
+    let mut move_by: Option<i32> = None;
+    let mut clear = false;
+    ctx.input_mut(|i| {
+        if i.consume_key(egui::Modifiers::NONE, egui::Key::Delete)
+            || i.consume_key(egui::Modifiers::COMMAND, egui::Key::Backspace)
+        {
+            if !client.selected_ids.is_empty() {
+                do_del = true;
+            }
+        } else if i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowUp)
+            || i.consume_key(egui::Modifiers::SHIFT, egui::Key::ArrowUp)
+        {
+            move_by = Some(-1);
+        } else if i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowDown)
+            || i.consume_key(egui::Modifiers::SHIFT, egui::Key::ArrowDown)
+        {
+            move_by = Some(1);
+        } else if i.consume_key(egui::Modifiers::NONE, egui::Key::Escape) {
+            clear = true;
+        }
+    });
+    if do_del {
+        delete_selection(client, status);
+    } else if let Some(delta) = move_by {
+        client.move_selection(delta, shift);
+    } else if clear {
+        client.clear_selection();
+    }
+}
+
+fn apply_row_click(client: &mut SimClientState, ids: &[String], id: &str, mods: egui::Modifiers) {
+    if mods.command || mods.ctrl {
+        client.toggle_select(id.to_string());
+    } else if mods.shift {
+        client.select_range(ids, id);
+    } else {
+        client.select_only(id.to_string());
+    }
+}
+
+#[derive(Clone)]
+struct SimMarquee {
+    origin: Pos2,
+    /// Ctrl/Cmd held at press → add to selection instead of replace.
+    additive: bool,
+    /// Snapshot of selection when the drag began (additive mode).
+    base: HashSet<String>,
+}
+
+impl Default for SimMarquee {
+    fn default() -> Self {
+        Self {
+            origin: Pos2::ZERO,
+            additive: false,
+            base: HashSet::new(),
+        }
+    }
+}
+
+fn handle_marquee(
+    ui: &mut egui::Ui,
+    client: &mut SimClientState,
+    ids: &[String],
+    row_rects: &[(String, egui::Rect)],
+    list_rect: egui::Rect,
+) {
+    let marquee_id = egui::Id::new("sim_list_marquee");
+    let pointer = ui.input(|i| i.pointer.clone());
+    let mods = ui.input(|i| i.modifiers);
+    let mut marquee = ui.ctx().data_mut(|d| d.get_temp::<SimMarquee>(marquee_id));
+
+    // Start on primary press over the list when not typing into a field.
+    if pointer.primary_pressed()
+        && !ui.ctx().wants_keyboard_input()
+        && pointer
+            .interact_pos()
+            .is_some_and(|p| list_rect.contains(p))
+    {
+        let origin = pointer.interact_pos().unwrap_or(list_rect.min);
+        // Wide left gutter — primary marquee hit strip (circle still click-selects).
+        let in_gutter = row_rects.iter().any(|(_, r)| {
+            let g = egui::Rect::from_min_size(r.min, Vec2::new(COL_GUTTER, r.height()));
+            g.contains(origin)
+        }) || row_rects.is_empty();
+        let on_row_body = row_rects.iter().any(|(_, r)| r.contains(origin));
+        // Between-row chrome (ROW_GAP) or empty list padding.
+        let in_row_gap = list_rect.contains(origin) && !on_row_body;
+        // Only block when a non-gutter widget already owns a drag (slider etc.).
+        // Do NOT use is_using_pointer() — gutter click_and_drag would always trip it.
+        let foreign_drag = ui.ctx().dragged_id().is_some() && !in_gutter;
+
+        if !foreign_drag && (in_gutter || in_row_gap) {
+            marquee = Some(SimMarquee {
+                origin,
+                additive: mods.command || mods.ctrl,
+                base: if mods.command || mods.ctrl {
+                    client.selected_ids.clone()
+                } else {
+                    HashSet::new()
+                },
+            });
+        } else if !foreign_drag && !mods.shift && !(mods.command || mods.ctrl) && on_row_body {
+            // Press on row chrome (not a text/slider steal) can still begin after slop.
+            marquee = Some(SimMarquee {
+                origin,
+                additive: false,
+                base: HashSet::new(),
+            });
+        }
+    }
+
+    if let Some(ref m) = marquee {
+        if let Some(pos) = pointer.interact_pos() {
+            let drag = (pos - m.origin).length();
+            if pointer.primary_down() && drag >= MARQUEE_SLOP {
+                let rect = egui::Rect::from_two_pos(m.origin, pos);
+                ui.painter().rect(
+                    rect,
+                    2.0,
+                    Color32::from_rgba_unmultiplied(80, 140, 200, 40),
+                    egui::Stroke::new(1.0, CHROME_ACCENT_BORDER),
+                    egui::StrokeKind::Outside,
+                );
+                let mut hit = m.base.clone();
+                for (id, r) in row_rects {
+                    if r.intersects(rect) {
+                        hit.insert(id.clone());
+                    }
+                }
+                client.selected_ids = hit;
+                // Focus tip = last intersecting in list order.
+                if let Some((id, _)) = row_rects.iter().rev().find(|(id, r)| {
+                    r.intersects(rect) && client.selected_ids.contains(id)
+                }) {
+                    client.selection_focus = Some(id.clone());
+                    if !m.additive {
+                        client.selection_anchor = Some(id.clone());
+                    }
+                }
+                ui.ctx().request_repaint();
+            }
+        }
+        if pointer.primary_released() {
+            // Click without drag on gutter already handled by row gutter response.
+            marquee = None;
+        }
+    }
+
+    if !pointer.primary_down() && !pointer.primary_pressed() {
+        marquee = None;
+    }
+    ui.ctx().data_mut(|d| {
+        if let Some(m) = marquee {
+            d.insert_temp(marquee_id, m);
+        } else {
+            d.remove_temp::<SimMarquee>(marquee_id);
+        }
+    });
+    let _ = ids;
+}
+
+fn draw_sheet_header(ui: &mut egui::Ui, wrap: bool, topic_w: f32, field_w: f32, value_w: f32) {
+    let header_w = ui.available_width();
+    ui.allocate_ui_with_layout(
+        Vec2::new(header_w, 16.0),
+        egui::Layout::left_to_right(egui::Align::Center),
+        |ui| {
+            ui.spacing_mut().item_spacing.x = COL_GAP;
+            header_cell(ui, COL_GUTTER, "");
+            header_cell(ui, COL_PROFILE, "Profile");
+            header_cell(ui, topic_w, "Topic");
+            header_cell(ui, field_w, "Field");
+            if !wrap {
+                header_cell(ui, COL_REFRESH, "Refresh");
+                header_cell(ui, COL_PREC, "Prec");
+            }
+            header_cell(ui, value_w, "Current value");
+            header_cell(ui, COL_GEN, "Generator");
+            if !wrap {
+                header_cell(ui, COL_SETTINGS, "Settings");
+            }
+            header_cell(ui, COL_DELETE, "");
+        },
+    );
+}
+
 fn header_cell(ui: &mut egui::Ui, width: f32, label: &str) {
     ui.allocate_ui_with_layout(
-        Vec2::new(width, 18.0),
+        Vec2::new(width, 16.0),
         egui::Layout::left_to_right(egui::Align::Center),
         |ui| {
             ui.set_min_width(width);
-            ui.label(RichText::new(label).strong().color(CHROME_CAPTION));
+            if !label.is_empty() {
+                ui.label(RichText::new(label).strong().color(CHROME_CAPTION));
+            }
         },
     );
 }
@@ -621,22 +963,196 @@ fn header_cell(ui: &mut egui::Ui, width: f32, label: &str) {
 fn draw_row(
     ui: &mut egui::Ui,
     row: &SimRow,
+    ids: &[String],
+    wrap: bool,
+    topic_w: f32,
+    field_w: f32,
+    value_w: f32,
     client: &mut SimClientState,
     sessions: &SessionManager,
     profiles: &ProfileStore,
     icons: &IconSet,
     status: &mut String,
-) {
-    let selected = client.selected.as_deref() == Some(row.id.as_str());
+) -> egui::Rect {
+    let selected = client.is_selected(&row.id);
     let st = client.status_for(&row.id).cloned();
     let running = st.as_ref().map(|s| s.running).unwrap_or(false);
     let mut draft = row.clone();
     let mut dirty = false;
     let gen_type = sim_client::generator_label(&draft.generator);
+    let mods = ui.input(|i| i.modifiers);
 
-    // Profile (broker) — first column
+    let fill = if selected {
+        CHROME_ACCENT_SOFT
+    } else {
+        CHROME_ROW
+    };
+    // No Frame stroke — a 1px selected stroke widens the row and walks trash right.
+
+    // Full sheet width — Topic/Field/Value flex; trash lands on a shared right edge.
+    let row_w = ui.available_width();
+    let frame = egui::Frame::NONE
+        .fill(fill)
+        .stroke(egui::Stroke::NONE)
+        .corner_radius(2.0)
+        .inner_margin(egui::Margin::symmetric(2, 0));
+
+    let inner = frame.show(ui, |ui| {
+        ui.set_min_width((row_w - 4.0).max(200.0));
+        ui.spacing_mut().item_spacing.x = COL_GAP;
+        ui.spacing_mut().item_spacing.y = 0.0;
+        if wrap {
+            // Line 1: exact clipped width — value/settings never shove trash off the shared right edge.
+            let line_w = ui.available_width();
+            let (line_rect, _) =
+                ui.allocate_exact_size(Vec2::new(line_w, ROW_H), egui::Sense::hover());
+            ui.allocate_new_ui(egui::UiBuilder::new().max_rect(line_rect), |ui| {
+                ui.set_clip_rect(line_rect);
+                ui.spacing_mut().item_spacing.x = COL_GAP;
+                ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                    draw_gutter(ui, client, ids, &row.id, selected, mods);
+                    draw_profile_cell(ui, &mut draft, &mut dirty, row, sessions, profiles);
+                    draw_topic_cell(ui, &mut draft, &mut dirty, topic_w);
+                    draw_field_cell(ui, &mut draft, &mut dirty, field_w);
+                    draw_value_cell(
+                        ui,
+                        client,
+                        ids,
+                        &row.id,
+                        &st,
+                        running,
+                        selected,
+                        mods,
+                        value_w,
+                    );
+                    draw_gen_cell(ui, &mut draft, &mut dirty, &gen_type, row);
+                    pin_settings_and_trash(ui, icons, client, &row.id, status, None);
+                });
+            });
+            // Line 2: refresh · prec · settings (aligned slots)
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = COL_GAP;
+                ui.add_space(COL_GUTTER);
+                draw_refresh_cell(ui, &mut draft, &mut dirty);
+                draw_prec_cell(ui, &mut draft, &mut dirty);
+                draw_settings_cell(ui, &row.id, &gen_type, &mut draft, client, &mut dirty);
+            });
+        } else {
+            // Wide: exact clipped line — Constant ±% cannot grow the row or shove trash.
+            let line_w = ui.available_width();
+            let (line_rect, _) =
+                ui.allocate_exact_size(Vec2::new(line_w, ROW_H), egui::Sense::hover());
+            ui.allocate_new_ui(egui::UiBuilder::new().max_rect(line_rect), |ui| {
+                ui.set_clip_rect(line_rect);
+                ui.spacing_mut().item_spacing.x = COL_GAP;
+                ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                    draw_gutter(ui, client, ids, &row.id, selected, mods);
+                    draw_profile_cell(ui, &mut draft, &mut dirty, row, sessions, profiles);
+                    draw_topic_cell(ui, &mut draft, &mut dirty, topic_w);
+                    draw_field_cell(ui, &mut draft, &mut dirty, field_w);
+                    draw_refresh_cell(ui, &mut draft, &mut dirty);
+                    draw_prec_cell(ui, &mut draft, &mut dirty);
+                    draw_value_cell(
+                        ui,
+                        client,
+                        ids,
+                        &row.id,
+                        &st,
+                        running,
+                        selected,
+                        mods,
+                        value_w,
+                    );
+                    draw_gen_cell(ui, &mut draft, &mut dirty, &gen_type, row);
+                    // Trash pinned far-right; Settings clipped to COL_SETTINGS.
+                    pin_settings_and_trash(
+                        ui,
+                        icons,
+                        client,
+                        &row.id,
+                        status,
+                        Some((&row.id, &gen_type, &mut draft, &mut dirty)),
+                    );
+                });
+            });
+        }
+    });
+
+    // Selection border painted after layout so it never changes row width.
+    if selected {
+        ui.painter().rect_stroke(
+            inner.response.rect,
+            2.0,
+            egui::Stroke::new(1.0_f32, CHROME_ACCENT_BORDER),
+            egui::StrokeKind::Inside,
+        );
+    }
+
+    if dirty {
+        // Optimistic local patch so a 500ms list poll cannot flash the old mode.
+        if let Some(slot) = client.rows.iter_mut().find(|r| r.id == draft.id) {
+            *slot = draft.clone();
+        }
+        match client.upsert(&draft) {
+            Ok(saved) => {
+                if let Some(slot) = client.rows.iter_mut().find(|r| r.id == saved.id) {
+                    *slot = saved;
+                }
+            }
+            Err(e) => *status = e,
+        }
+    }
+
+    inner.response.rect
+}
+
+fn draw_gutter(
+    ui: &mut egui::Ui,
+    client: &mut SimClientState,
+    ids: &[String],
+    id: &str,
+    selected: bool,
+    mods: egui::Modifiers,
+) {
+    // Wide strip: click selects; drag from here starts marquee without hitting inputs.
+    let (rect, resp) =
+        ui.allocate_exact_size(Vec2::new(COL_GUTTER, ROW_H), egui::Sense::click_and_drag());
+    // Quiet well so the marquee hit area reads as chrome, not empty void.
+    let gut_fill = if selected {
+        Color32::from_rgb(40, 64, 92)
+    } else {
+        Color32::from_rgb(40, 43, 50)
+    };
+    ui.painter().rect_filled(rect.shrink2(Vec2::new(1.0, 1.0)), 2.0, gut_fill);
+    // Painter circles — ● often tofu/squares in egui's font; ○/● must stay circular.
+    let center = rect.center();
+    let radius = 4.0;
+    if selected {
+        ui.painter()
+            .circle_filled(center, radius, CHROME_ACCENT_BORDER);
+    } else {
+        ui.painter().circle_stroke(
+            center,
+            radius,
+            egui::Stroke::new(1.25_f32, CHROME_MUTED),
+        );
+    }
+    if resp.clicked() {
+        apply_row_click(client, ids, id, mods);
+    }
+    resp.on_hover_text("Click to select · Ctrl click toggle · Shift range · drag box-select");
+}
+
+fn draw_profile_cell(
+    ui: &mut egui::Ui,
+    draft: &mut SimRow,
+    dirty: &mut bool,
+    row: &SimRow,
+    sessions: &SessionManager,
+    profiles: &ProfileStore,
+) {
     ui.allocate_ui_with_layout(
-        Vec2::new(COL_PROFILE, 28.0),
+        Vec2::new(COL_PROFILE, ROW_H),
         egui::Layout::left_to_right(egui::Align::Center),
         |ui| {
             ui.set_min_width(COL_PROFILE);
@@ -662,38 +1178,40 @@ fn draw_row(
                             .clicked()
                         {
                             draft.profile = p.id.clone();
-                            dirty = true;
+                            *dirty = true;
                         }
                     }
                 });
         },
     );
+}
 
-    // Topic
+fn draw_topic_cell(ui: &mut egui::Ui, draft: &mut SimRow, dirty: &mut bool, width: f32) {
     ui.allocate_ui_with_layout(
-        Vec2::new(COL_TOPIC, 28.0),
+        Vec2::new(width, ROW_H),
         egui::Layout::left_to_right(egui::Align::Center),
         |ui| {
-            ui.set_min_width(COL_TOPIC);
+            ui.set_min_width(width);
             if ui
                 .add(
                     egui::TextEdit::singleline(&mut draft.topic)
-                        .desired_width(COL_TOPIC - 8.0)
+                        .desired_width((width - 6.0).max(40.0))
                         .hint_text("topic"),
                 )
                 .changed()
             {
-                dirty = true;
+                *dirty = true;
             }
         },
     );
+}
 
-    // Field — compact checkbox; path only when checked (Field mode)
+fn draw_field_cell(ui: &mut egui::Ui, draft: &mut SimRow, dirty: &mut bool, width: f32) {
     ui.allocate_ui_with_layout(
-        Vec2::new(COL_FIELD, 28.0),
+        Vec2::new(width, ROW_H),
         egui::Layout::left_to_right(egui::Align::Center),
         |ui| {
-            ui.set_min_width(COL_FIELD);
+            ui.set_min_width(width);
             ui.spacing_mut().item_spacing.x = 4.0;
             let mut use_field = draft.mode == "field_patch";
             if ui
@@ -709,27 +1227,28 @@ fn draw_row(
                 } else {
                     draft.mode = "whole_payload".into();
                 }
-                dirty = true;
+                *dirty = true;
             }
             if use_field {
                 if ui
                     .add(
                         egui::TextEdit::singleline(&mut draft.field_path)
-                            .desired_width(COL_FIELD - 28.0)
+                            .desired_width((width - 28.0).max(32.0))
                             .hint_text("path"),
                     )
                     .on_hover_text("JSON dot path to patch (e.g. sensors.temp)")
                     .changed()
                 {
-                    dirty = true;
+                    *dirty = true;
                 }
             }
         },
     );
+}
 
-    // Refresh — stepped interval (fine at low ms, ~1s above 1s)
+fn draw_refresh_cell(ui: &mut egui::Ui, draft: &mut SimRow, dirty: &mut bool) {
     ui.allocate_ui_with_layout(
-        Vec2::new(COL_REFRESH, 28.0),
+        Vec2::new(COL_REFRESH, ROW_H),
         egui::Layout::left_to_right(egui::Align::Center),
         |ui| {
             ui.set_min_width(COL_REFRESH);
@@ -741,6 +1260,7 @@ fn draw_row(
                     egui::Slider::new(&mut idx, 0.0..=max_i)
                         .integer()
                         .show_value(false)
+                        .trailing_fill(true)
                         .clamping(egui::SliderClamping::Always),
                 )
                 .on_hover_text("Publish interval (fine at low ms, ~1s steps above 1s)")
@@ -748,11 +1268,10 @@ fn draw_row(
             {
                 let i = idx.round().clamp(0.0, max_i) as usize;
                 draft.interval_ms = INTERVAL_TICKS_MS[i];
-                dirty = true;
+                *dirty = true;
             }
-            // Fixed-ish label width so "100 ms" / "10 s" stay readable without padding the column.
             ui.add_sized(
-                [52.0, 18.0],
+                [48.0, 16.0],
                 egui::Label::new(
                     RichText::new(format_interval_ms(draft.interval_ms))
                         .small()
@@ -762,10 +1281,11 @@ fn draw_row(
             );
         },
     );
+}
 
-    // Prec — decimal digits for published numbers
+fn draw_prec_cell(ui: &mut egui::Ui, draft: &mut SimRow, dirty: &mut bool) {
     ui.allocate_ui_with_layout(
-        Vec2::new(COL_PREC, 28.0),
+        Vec2::new(COL_PREC, ROW_H),
         egui::Layout::left_to_right(egui::Align::Center),
         |ui| {
             ui.set_min_width(COL_PREC);
@@ -776,42 +1296,73 @@ fn draw_row(
                 .changed()
             {
                 draft.precision = prec.clamp(0, 12) as u8;
-                dirty = true;
+                *dirty = true;
             }
         },
     );
+}
 
-    // Current value — click selects row
+fn draw_value_cell(
+    ui: &mut egui::Ui,
+    client: &mut SimClientState,
+    ids: &[String],
+    id: &str,
+    st: &Option<sim_client::SimStatus>,
+    running: bool,
+    selected: bool,
+    mods: egui::Modifiers,
+    width: f32,
+) {
     let val = sim_client::value_label(st.as_ref());
-    ui.allocate_ui_with_layout(
-        Vec2::new(COL_VALUE, 28.0),
-        egui::Layout::left_to_right(egui::Align::Center),
-        |ui| {
-            ui.set_min_width(COL_VALUE);
-            let resp = ui.selectable_label(
-                selected,
-                RichText::new(truncate(&val, 11))
-                    .monospace()
-                    .color(if running {
-                        Color32::from_rgb(140, 210, 160)
-                    } else {
-                        CHROME_TEXT
-                    }),
+    // Exact clipped width — long ISO strings ellipsize inside; never expand Gen/trash.
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(width, ROW_H), egui::Sense::click());
+    if selected {
+        ui.painter().rect_filled(
+            rect.shrink2(Vec2::new(0.0, 1.0)),
+            2.0,
+            Color32::from_rgb(40, 64, 92),
+        );
+    }
+    let color = if running {
+        Color32::from_rgb(140, 210, 160)
+    } else {
+        CHROME_TEXT
+    };
+    ui.allocate_new_ui(egui::UiBuilder::new().max_rect(rect), |ui| {
+        ui.set_clip_rect(rect);
+        ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+            let resp = ui.add(
+                egui::Label::new(RichText::new(&val).monospace().color(color))
+                    .truncate()
+                    .sense(egui::Sense::click()),
             );
             if resp.clicked() {
-                client.selected = Some(row.id.clone());
+                apply_row_click(client, ids, id, mods);
             }
             resp.on_hover_text(&val);
-        },
-    );
+        });
+    });
+    // Click on empty padding in the value cell still selects.
+    let resp = ui.interact(rect, ui.id().with(("sim_val", id)), egui::Sense::click());
+    if resp.clicked() {
+        apply_row_click(client, ids, id, mods);
+    }
+    resp.on_hover_text(&val);
+}
 
-    // Generator type
+fn draw_gen_cell(
+    ui: &mut egui::Ui,
+    draft: &mut SimRow,
+    dirty: &mut bool,
+    gen_type: &str,
+    row: &SimRow,
+) {
     ui.allocate_ui_with_layout(
-        Vec2::new(COL_GEN, 28.0),
+        Vec2::new(COL_GEN, ROW_H),
         egui::Layout::left_to_right(egui::Align::Center),
         |ui| {
             ui.set_min_width(COL_GEN);
-            let mut gt = gen_type.clone();
+            let mut gt = gen_type.to_string();
             egui::ComboBox::from_id_salt(format!("sim_gen_{}", row.id))
                 .selected_text(sim_client::generator_display_name(&gt))
                 .width(COL_GEN - 8.0)
@@ -823,67 +1374,104 @@ fn draw_row(
                         {
                             gt = (*t).to_string();
                             draft.generator = default_generator(t);
-                            dirty = true;
+                            *dirty = true;
                         }
                     }
                 });
         },
     );
-
-    // Settings — generator-specific params only
-    ui.allocate_ui_with_layout(
-        Vec2::new(COL_SETTINGS, 28.0),
-        egui::Layout::left_to_right(egui::Align::Center),
-        |ui| {
-            ui.set_min_width(COL_SETTINGS);
-            ui.spacing_mut().item_spacing.x = 6.0;
-            ui.set_max_height(28.0);
-            if edit_generator_inline(ui, &row.id, &gen_type, &mut draft.generator, client) {
-                dirty = true;
-            }
-        },
-    );
-
-    // Per-row delete
-    ui.allocate_ui_with_layout(
-        Vec2::new(COL_DELETE, 28.0),
-        egui::Layout::left_to_right(egui::Align::Center),
-        |ui| {
-            ui.set_min_width(COL_DELETE);
-            if icons
-                .tiny(ui, "delete_red", false, "Delete this simulation")
-                .clicked()
-            {
-                match client.delete(&row.id) {
-                    Ok(()) => {
-                        if client.selected.as_deref() == Some(row.id.as_str()) {
-                            client.selected = None;
-                        }
-                        *status = format!("Deleted {}", row.id);
-                    }
-                    Err(e) => *status = e,
-                }
-            }
-        },
-    );
-
-    if dirty {
-        // Optimistic local patch so a 500ms list poll cannot flash the old mode.
-        if let Some(slot) = client.rows.iter_mut().find(|r| r.id == draft.id) {
-            *slot = draft.clone();
-        }
-        match client.upsert(&draft) {
-            Ok(saved) => {
-                if let Some(slot) = client.rows.iter_mut().find(|r| r.id == saved.id) {
-                    *slot = saved;
-                }
-            }
-            Err(e) => *status = e,
-        }
-    }
 }
 
-/// Inline generator params; returns true if changed.
+fn draw_settings_cell(
+    ui: &mut egui::Ui,
+    row_id: &str,
+    gen_type: &str,
+    draft: &mut SimRow,
+    client: &mut SimClientState,
+    dirty: &mut bool,
+) {
+    // Exact clipped band — Constant ±% (and friends) cannot grow past COL_SETTINGS.
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(COL_SETTINGS, ROW_H), egui::Sense::hover());
+    ui.allocate_new_ui(egui::UiBuilder::new().max_rect(rect), |ui| {
+        ui.set_clip_rect(rect);
+        // Parent may be right_to_left (trash pin) — force LTR so slots stay A→D.
+        ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+            ui.spacing_mut().item_spacing.x = SET_GAP;
+            if edit_generator_inline(ui, row_id, gen_type, &mut draft.generator, client) {
+                *dirty = true;
+            }
+        });
+    });
+}
+
+/// Pin trash to the far right of the remaining row; Settings is a fixed clipped band beside it.
+fn pin_settings_and_trash(
+    ui: &mut egui::Ui,
+    icons: &IconSet,
+    client: &mut SimClientState,
+    id: &str,
+    status: &mut String,
+    settings: Option<(&str, &str, &mut SimRow, &mut bool)>,
+) {
+    let rem = ui
+        .available_width()
+        .max(COL_SETTINGS + COL_DELETE + COL_GAP);
+    // Exact rect so a fat Constant slider cannot expand past the row's right edge.
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(rem, ROW_H), egui::Sense::hover());
+    ui.allocate_new_ui(egui::UiBuilder::new().max_rect(rect), |ui| {
+        ui.set_clip_rect(rect);
+        ui.spacing_mut().item_spacing.x = COL_GAP;
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            draw_delete_cell(ui, icons, client, id, status);
+            if let Some((row_id, gen_type, draft, dirty)) = settings {
+                draw_settings_cell(ui, row_id, gen_type, draft, client, dirty);
+            }
+        });
+    });
+}
+
+/// One Settings column slot — exact clipped width so values share one vertical column.
+fn settings_slot(ui: &mut egui::Ui, width: f32, add_contents: impl FnOnce(&mut egui::Ui)) {
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(width, ROW_H), egui::Sense::hover());
+    ui.allocate_new_ui(egui::UiBuilder::new().max_rect(rect), |ui| {
+        ui.set_clip_rect(rect);
+        ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+            ui.spacing_mut().item_spacing.x = 3.0;
+            add_contents(ui);
+        });
+    });
+}
+
+/// Muted Settings label with fixed width so DragValues share a vertical column.
+fn settings_label(ui: &mut egui::Ui, text: &str) {
+    ui.add_sized(
+        [SET_LABEL_W, ROW_H],
+        egui::Label::new(RichText::new(text).small().color(CHROME_MUTED)),
+    );
+}
+
+fn draw_delete_cell(
+    ui: &mut egui::Ui,
+    icons: &IconSet,
+    client: &mut SimClientState,
+    id: &str,
+    status: &mut String,
+) {
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(COL_DELETE, ROW_H), egui::Sense::hover());
+    ui.allocate_new_ui(egui::UiBuilder::new().max_rect(rect), |ui| {
+        if icons
+            .tiny(ui, "delete_red", false, "Delete this simulation")
+            .clicked()
+        {
+            match client.delete(id) {
+                Ok(()) => *status = format!("Deleted {id}"),
+                Err(e) => *status = e,
+            }
+        }
+    });
+}
+
+/// Inline generator params in fixed Settings slots A–D; returns true if changed.
 fn edit_generator_inline(
     ui: &mut egui::Ui,
     row_id: &str,
@@ -896,43 +1484,71 @@ fn edit_generator_inline(
         "constant" => {
             let mut val = num_or_str(generator.get("value"), "0");
             let mut noise = f64_field(generator, "noise_pct", 0.0) as f32;
-            ui.label(RichText::new("val").small().color(CHROME_MUTED));
-            if ui
-                .add(egui::TextEdit::singleline(&mut val).desired_width(48.0))
-                .changed()
-            {
-                let value = serde_json::from_str::<Value>(&val).unwrap_or(Value::String(val));
-                *generator = json!({"type": "constant", "value": value, "noise_pct": noise as f64});
-                dirty = true;
-            }
-            ui.label(RichText::new("±%").small().color(CHROME_MUTED));
-            if ui
-                .add(
-                    egui::Slider::new(&mut noise, 0.0..=50.0)
-                        .show_value(true)
-                        .suffix("%")
-                        .clamping(egui::SliderClamping::Always),
-                )
-                .changed()
-            {
-                let value = generator.get("value").cloned().unwrap_or(Value::from(0));
+            settings_slot(ui, SET_A, |ui| {
+                settings_label(ui, "val");
+                if ui
+                    .add(egui::TextEdit::singleline(&mut val).desired_width(44.0))
+                    .changed()
+                {
+                    dirty = true;
+                }
+            });
+            // ±% slider capped to B+C — never expands Settings / trash.
+            settings_slot(ui, SET_B + SET_GAP + SET_C, |ui| {
+                settings_label(ui, "±%");
+                let sw = (ui.available_width() - 2.0).max(36.0);
+                if ui
+                    .add_sized(
+                        [sw, ROW_H],
+                        egui::Slider::new(&mut noise, 0.0..=50.0)
+                            .show_value(false)
+                            .trailing_fill(true)
+                            .clamping(egui::SliderClamping::Always),
+                    )
+                    .on_hover_text(format!("Noise ±{noise:.0}%"))
+                    .changed()
+                {
+                    dirty = true;
+                }
+            });
+            settings_slot(ui, SET_D, |ui| {
+                ui.label(
+                    RichText::new(format!("{noise:.0}%"))
+                        .small()
+                        .monospace()
+                        .color(CHROME_TEXT),
+                );
+            });
+            if dirty {
+                let value = serde_json::from_str::<Value>(&val).unwrap_or_else(|_| {
+                    generator
+                        .get("value")
+                        .cloned()
+                        .unwrap_or(Value::String(val))
+                });
                 *generator =
                     json!({"type": "constant", "value": value, "noise_pct": noise as f64});
-                dirty = true;
             }
         }
         "counter" => {
             let mut start = f64_field(generator, "start", 0.0);
             let mut step = f64_field(generator, "step", 1.0);
-            ui.label(RichText::new("start").small().color(CHROME_MUTED));
-            if ui.add(egui::DragValue::new(&mut start).speed(0.1)).changed() {
+            settings_slot(ui, SET_A, |ui| {
+                settings_label(ui, "start");
+                if ui.add(egui::DragValue::new(&mut start).speed(0.1)).changed() {
+                    dirty = true;
+                }
+            });
+            settings_slot(ui, SET_B, |ui| {
+                settings_label(ui, "step");
+                if ui.add(egui::DragValue::new(&mut step).speed(0.1)).changed() {
+                    dirty = true;
+                }
+            });
+            settings_slot(ui, SET_C, |_| {});
+            settings_slot(ui, SET_D, |_| {});
+            if dirty {
                 *generator = json!({"type": "counter", "start": start, "step": step});
-                dirty = true;
-            }
-            ui.label(RichText::new("step").small().color(CHROME_MUTED));
-            if ui.add(egui::DragValue::new(&mut step).speed(0.1)).changed() {
-                *generator = json!({"type": "counter", "start": start, "step": step});
-                dirty = true;
             }
         }
         "sine" | "triangle" => {
@@ -948,11 +1564,14 @@ fn edit_generator_inline(
             let mut min = f64_field(generator, "min", 0.0);
             let mut max = f64_field(generator, "max", 1.0);
             let mut step = f64_field(generator, "step", 0.1);
-            dirty |= range_sliders(ui, row_id, &mut min, &mut max);
-            ui.label(RichText::new("step").small().color(CHROME_MUTED));
-            if ui.add(egui::DragValue::new(&mut step).speed(0.01)).changed() {
-                dirty = true;
-            }
+            dirty |= range_slots(ui, &mut min, &mut max);
+            settings_slot(ui, SET_C, |ui| {
+                settings_label(ui, "step");
+                if ui.add(egui::DragValue::new(&mut step).speed(0.01)).changed() {
+                    dirty = true;
+                }
+            });
+            settings_slot(ui, SET_D, |_| {});
             if dirty {
                 *generator = json!({"type": "random_walk", "min": min, "max": max, "step": step});
             }
@@ -962,13 +1581,25 @@ fn edit_generator_inline(
                 .get("start")
                 .and_then(|v| v.as_bool())
                 .unwrap_or(false);
-            if ui.checkbox(&mut start, "start").changed() {
+            settings_slot(ui, SET_A, |ui| {
+                if ui.checkbox(&mut start, "start").changed() {
+                    dirty = true;
+                }
+            });
+            settings_slot(ui, SET_B, |_| {});
+            settings_slot(ui, SET_C, |_| {});
+            settings_slot(ui, SET_D, |_| {});
+            if dirty {
                 *generator = json!({"type": "bool_toggle", "start": start});
-                dirty = true;
             }
         }
         "iso_timestamp" => {
-            ui.label(RichText::new("UTC").small().color(CHROME_MUTED));
+            settings_slot(ui, SET_A, |ui| {
+                ui.label(RichText::new("UTC").small().color(CHROME_MUTED));
+            });
+            settings_slot(ui, SET_B, |_| {});
+            settings_slot(ui, SET_C, |_| {});
+            settings_slot(ui, SET_D, |_| {});
         }
         "enum_cycle" => {
             let mut raw = generator
@@ -987,14 +1618,20 @@ fn edit_generator_inline(
                         .unwrap_or_default()
                 })
                 .unwrap_or_else(|| "a,b,c".into());
-            if ui
-                .add(
-                    egui::TextEdit::singleline(&mut raw)
-                        .desired_width(120.0)
-                        .hint_text("a,b,c"),
-                )
-                .changed()
-            {
+            // Span A–D so the values field uses the full aligned Settings band.
+            settings_slot(ui, COL_SETTINGS, |ui| {
+                if ui
+                    .add(
+                        egui::TextEdit::singleline(&mut raw)
+                            .desired_width((COL_SETTINGS - 8.0).max(80.0))
+                            .hint_text("a,b,c"),
+                    )
+                    .changed()
+                {
+                    dirty = true;
+                }
+            });
+            if dirty {
                 let values: Vec<Value> = raw
                     .split(',')
                     .map(|s| s.trim())
@@ -1004,7 +1641,6 @@ fn edit_generator_inline(
                     })
                     .collect();
                 *generator = json!({"type": "enum_cycle", "values": values});
-                dirty = true;
             }
         }
         "formula" | "expr" => {
@@ -1013,56 +1649,68 @@ fn edit_generator_inline(
                 .and_then(|v| v.as_str())
                 .unwrap_or(r#"topic("lab/temp_c") * 1.8 + 32"#)
                 .to_string();
-            let resp = ui.add(
-                egui::TextEdit::singleline(&mut formula)
-                    .desired_width(168.0)
-                    .hint_text(r#"topic("a/b") * 1.8 + 32"#),
-            );
-            if resp.changed() {
-                *generator = json!({"type": "formula", "formula": formula.clone()});
-                dirty = true;
-            }
-            // Live syntax check via sidecar; cache per row until formula changes.
-            let cache_id = egui::Id::new(("sim_formula_ok", row_id));
-            let need = ui.ctx().data(|d| {
-                d.get_temp::<(String, bool)>(cache_id)
-                    .map(|(f, _)| f != formula)
-                    .unwrap_or(true)
-            });
-            if need {
-                let ok = !formula.trim().is_empty()
-                    && client.validate_formula(&formula).is_ok();
-                ui.ctx()
-                    .data_mut(|d| d.insert_temp(cache_id, (formula.clone(), ok)));
-            }
-            let ok = ui.ctx().data(|d| {
-                d.get_temp::<(String, bool)>(cache_id)
-                    .map(|(_, o)| o)
-                    .unwrap_or(false)
-            });
-            let border = if ok {
-                Color32::from_rgb(90, 180, 120)
-            } else {
-                Color32::from_rgb(200, 90, 90)
-            };
-            ui.painter().rect_stroke(
-                resp.rect.expand(1.0),
-                3.0,
-                egui::Stroke::new(1.5, border),
-                egui::StrokeKind::Outside,
-            );
-            if !ok {
-                resp.on_hover_text(
-                    "Invalid formula — use t, n, sin/cos/abs/min/max/rand/randn, \
-                     topic(\"path\"), topic(\"path\", \"field\"), sim(\"id\")",
+            let mut resp_rect = egui::Rect::NOTHING;
+            settings_slot(ui, COL_SETTINGS, |ui| {
+                let resp = ui.add(
+                    egui::TextEdit::singleline(&mut formula)
+                        .desired_width((COL_SETTINGS - 8.0).max(80.0))
+                        .hint_text(r#"topic("a/b") * 1.8 + 32"#),
                 );
-            } else {
-                resp.on_hover_text(
-                    r#"Calculated channel: topic("lab/temp_c") * 1.8 + 32"#,
+                resp_rect = resp.rect;
+                if resp.changed() {
+                    dirty = true;
+                }
+                // Live syntax check via sidecar; cache per row until formula changes.
+                let cache_id = egui::Id::new(("sim_formula_ok", row_id));
+                let need = ui.ctx().data(|d| {
+                    d.get_temp::<(String, bool)>(cache_id)
+                        .map(|(f, _)| f != formula)
+                        .unwrap_or(true)
+                });
+                if need {
+                    let ok = !formula.trim().is_empty()
+                        && client.validate_formula(&formula).is_ok();
+                    ui.ctx()
+                        .data_mut(|d| d.insert_temp(cache_id, (formula.clone(), ok)));
+                }
+                let ok = ui.ctx().data(|d| {
+                    d.get_temp::<(String, bool)>(cache_id)
+                        .map(|(_, o)| o)
+                        .unwrap_or(false)
+                });
+                let border = if ok {
+                    Color32::from_rgb(90, 180, 120)
+                } else {
+                    Color32::from_rgb(200, 90, 90)
+                };
+                ui.painter().rect_stroke(
+                    resp.rect.expand(1.0),
+                    3.0,
+                    egui::Stroke::new(1.5, border),
+                    egui::StrokeKind::Outside,
                 );
+                if !ok {
+                    resp.on_hover_text(
+                        "Invalid formula — use t, n, sin/cos/abs/min/max/rand/randn, \
+                         topic(\"path\"), topic(\"path\", \"field\"), sim(\"id\")",
+                    );
+                } else {
+                    resp.on_hover_text(
+                        r#"Calculated channel: topic("lab/temp_c") * 1.8 + 32"#,
+                    );
+                }
+            });
+            let _ = resp_rect;
+            if dirty {
+                *generator = json!({"type": "formula", "formula": formula});
             }
         }
-        _ => {}
+        _ => {
+            settings_slot(ui, SET_A, |_| {});
+            settings_slot(ui, SET_B, |_| {});
+            settings_slot(ui, SET_C, |_| {});
+            settings_slot(ui, SET_D, |_| {});
+        }
     }
     dirty
 }
@@ -1074,18 +1722,24 @@ fn edit_min_max_period(
     generator: &mut Value,
     with_period: bool,
 ) -> bool {
+    let _ = row_id;
     let (mut min, mut max) = resolved_min_max(generator);
     let mut period = f64_field(generator, "period_s", 10.0);
-    let mut dirty = range_sliders(ui, row_id, &mut min, &mut max);
+    let mut dirty = range_slots(ui, &mut min, &mut max);
     if with_period {
-        ui.label(RichText::new("T").small().color(CHROME_MUTED));
-        if ui
-            .add(egui::DragValue::new(&mut period).range(0.1..=3600.0).speed(0.1))
-            .changed()
-        {
-            dirty = true;
-        }
+        settings_slot(ui, SET_C, |ui| {
+            settings_label(ui, "T");
+            if ui
+                .add(egui::DragValue::new(&mut period).range(0.1..=3600.0).speed(0.1))
+                .changed()
+            {
+                dirty = true;
+            }
+        });
+    } else {
+        settings_slot(ui, SET_C, |_| {});
     }
+    settings_slot(ui, SET_D, |_| {});
     if dirty {
         *generator = json!({
             "type": gen_type,
@@ -1098,6 +1752,7 @@ fn edit_min_max_period(
 }
 
 fn edit_min_max_duration(ui: &mut egui::Ui, row_id: &str, generator: &mut Value) -> bool {
+    let _ = row_id;
     let (mut min, mut max) = resolved_min_max(generator);
     // Support legacy start/end already mapped by resolved_min_max.
     let mut duration = f64_field(generator, "duration_s", 10.0);
@@ -1105,17 +1760,21 @@ fn edit_min_max_duration(ui: &mut egui::Ui, row_id: &str, generator: &mut Value)
         .get("loop")
         .and_then(|v| v.as_bool())
         .unwrap_or(true);
-    let mut dirty = range_sliders(ui, row_id, &mut min, &mut max);
-    ui.label(RichText::new("dur").small().color(CHROME_MUTED));
-    if ui
-        .add(egui::DragValue::new(&mut duration).range(0.1..=3600.0).speed(0.1))
-        .changed()
-    {
-        dirty = true;
-    }
-    if ui.checkbox(&mut loop_, "loop").changed() {
-        dirty = true;
-    }
+    let mut dirty = range_slots(ui, &mut min, &mut max);
+    settings_slot(ui, SET_C, |ui| {
+        settings_label(ui, "dur");
+        if ui
+            .add(egui::DragValue::new(&mut duration).range(0.1..=3600.0).speed(0.1))
+            .changed()
+        {
+            dirty = true;
+        }
+    });
+    settings_slot(ui, SET_D, |ui| {
+        if ui.checkbox(&mut loop_, "loop").changed() {
+            dirty = true;
+        }
+    });
     if dirty {
         *generator = json!({
             "type": "ramp",
@@ -1134,25 +1793,32 @@ fn edit_min_max_only(
     gen_type: &str,
     generator: &mut Value,
 ) -> bool {
+    let _ = row_id;
     let (mut min, mut max) = resolved_min_max(generator);
-    let dirty = range_sliders(ui, row_id, &mut min, &mut max);
+    let dirty = range_slots(ui, &mut min, &mut max);
+    settings_slot(ui, SET_C, |_| {});
+    settings_slot(ui, SET_D, |_| {});
     if dirty {
         *generator = json!({"type": gen_type, "min": min, "max": max});
     }
     dirty
 }
 
-fn range_sliders(ui: &mut egui::Ui, row_id: &str, min: &mut f64, max: &mut f64) -> bool {
-    let _ = row_id;
+/// Settings slots A+B for min/max — same x for every generator that uses a range.
+fn range_slots(ui: &mut egui::Ui, min: &mut f64, max: &mut f64) -> bool {
     let mut dirty = false;
-    ui.label(RichText::new("min").small().color(CHROME_MUTED));
-    if ui.add(egui::DragValue::new(min).speed(0.1)).changed() {
-        dirty = true;
-    }
-    ui.label(RichText::new("max").small().color(CHROME_MUTED));
-    if ui.add(egui::DragValue::new(max).speed(0.1)).changed() {
-        dirty = true;
-    }
+    settings_slot(ui, SET_A, |ui| {
+        settings_label(ui, "min");
+        if ui.add(egui::DragValue::new(min).speed(0.1)).changed() {
+            dirty = true;
+        }
+    });
+    settings_slot(ui, SET_B, |ui| {
+        settings_label(ui, "max");
+        if ui.add(egui::DragValue::new(max).speed(0.1)).changed() {
+            dirty = true;
+        }
+    });
     if *min > *max {
         std::mem::swap(min, max);
     }
@@ -1207,17 +1873,6 @@ fn num_or_str(v: Option<&Value>, default: &str) -> String {
         None => default.to_string(),
     }
 }
-
-fn truncate(s: &str, max_chars: usize) -> String {
-    let mut it = s.chars();
-    let head: String = it.by_ref().take(max_chars).collect();
-    if it.next().is_some() {
-        format!("{head}…")
-    } else {
-        head
-    }
-}
-
 
 /// Icon + label button matching Profiles Connect / Publish chrome.
 
