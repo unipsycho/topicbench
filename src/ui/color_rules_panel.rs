@@ -70,20 +70,22 @@ pub fn draw_popup(
     store: &mut ColorRulesStore,
     icons: &IconSet,
     status: &mut String,
+    builder_seed: crate::mqtt::window_geom::WinGeom,
+    saved_geom: &mut Option<crate::mqtt::window_geom::WinGeom>,
+    geom_dirty: &mut bool,
 ) {
     if !*open {
         return;
     }
     let mut close = false;
+    const MIN: [f32; 2] = [720.0, 280.0];
     // OS window — draggable outside the main TopicBench frame.
     ctx.show_viewport_immediate(
         // Id bump resets stale tiny OS window size from earlier sessions.
         egui::ViewportId::from_hash_of("topicbench_color_rules_vp_v3"),
-        ViewportBuilder::default()
-            .with_title("Color Rules")
-            // Wide enough for aligned Topic / Match / color columns on one row.
-            .with_inner_size([920.0, 440.0])
-            .with_min_inner_size([720.0, 280.0]),
+        builder_seed
+            .apply(ViewportBuilder::default().with_title("Color Rules"), MIN)
+            .with_min_inner_size(MIN),
         |ctx, class| {
             let mut paint = |ui: &mut egui::Ui| {
                 // Profiles-matching Body/Small + blue checkbox accent (also set globally).
@@ -181,6 +183,11 @@ pub fn draw_popup(
             }
             if ctx.input(|i| i.viewport().close_requested()) {
                 close = true;
+            }
+            if let Some(g) = crate::mqtt::window_geom::capture(ctx) {
+                if crate::mqtt::window_geom::sync_slot(saved_geom, g, MIN) {
+                    *geom_dirty = true;
+                }
             }
         },
     );
