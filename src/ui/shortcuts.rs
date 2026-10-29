@@ -37,6 +37,10 @@ pub const BINDINGS: &[Binding] = &[
         action: "Toggle Payload panel",
     },
     Binding {
+        keys: "← / →",
+        action: "Payload history · older / newer sample (when not Live)",
+    },
+    Binding {
         keys: "Ctrl+Shift+K",
         action: "Toggle Stickies panel",
     },
