@@ -317,6 +317,8 @@ fn draw_machine_id_controls(ui: &mut egui::Ui) {
     }
 
     ui.add_space(6.0);
+    // Off-thread native save dialog — avoid Linux Wayland "app hung" ANR.
+    let license_dlg = egui::Id::new("dlg_license_request");
     if ui
         .button("Save license-request.json…")
         .on_hover_text(
@@ -325,23 +327,26 @@ fn draw_machine_id_controls(ui: &mut egui::Ui) {
         .clicked()
     {
         let default_name = pro::LICENSE_REQUEST_FILE_NAME;
-        if let Some(path) = rfd::FileDialog::new()
-            .set_file_name(default_name)
-            .set_directory(paths::config_dir())
-            .save_file()
-        {
-            let msg = match pro::LicenseRequestV1::for_this_machine(None) {
-                Ok(req) => match pro::write_license_request(&path, &req) {
-                    Ok(()) => format!("Saved {}", path.display()),
-                    Err(e) => format!("Save failed: {e}"),
-                },
-                Err(e) => format!("Request failed: {e}"),
-            };
-            ui.memory_mut(|m| {
-                m.data
-                    .insert_temp(egui::Id::new("settings_mid_save_msg"), msg);
-            });
-        }
+        let dir = paths::config_dir();
+        crate::ui::native_dialog::begin_path(
+            ui.ctx(),
+            license_dlg,
+            crate::ui::native_dialog::PathOp::SaveFile,
+            move |d| d.set_file_name(default_name).set_directory(dir),
+        );
+    }
+    if let Some(Some(path)) = crate::ui::native_dialog::poll_path(ui.ctx(), license_dlg) {
+        let msg = match pro::LicenseRequestV1::for_this_machine(None) {
+            Ok(req) => match pro::write_license_request(&path, &req) {
+                Ok(()) => format!("Saved {}", path.display()),
+                Err(e) => format!("Save failed: {e}"),
+            },
+            Err(e) => format!("Request failed: {e}"),
+        };
+        ui.memory_mut(|m| {
+            m.data
+                .insert_temp(egui::Id::new("settings_mid_save_msg"), msg);
+        });
     }
     if let Some(msg) = ui.memory(|m| {
         m.data

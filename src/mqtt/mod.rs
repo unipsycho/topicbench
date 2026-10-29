@@ -14,3 +14,4 @@ pub mod topic_tree;
 pub mod traffic_stats;
 pub mod value_path;
 pub mod visibility;
+pub mod window_geom;

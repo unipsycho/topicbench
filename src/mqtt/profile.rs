@@ -245,7 +245,8 @@ impl ConnectionProfile {
             ws_path: default_ws_path(),
             use_tls: false,
             certs_dir: String::new(),
-            subscriptions: Vec::new(),
+            // Default: subscribe to everything; users can narrow later in any order.
+            subscriptions: vec!["#".into()],
             stickies: Vec::new(),
             color_rgb: default_profile_color(),
             mqtt_version: MqttVersion::V311,

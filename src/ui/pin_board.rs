@@ -775,14 +775,40 @@ fn draw_combined_graph(
                     if ui.small_button("Dismiss").clicked() {
                         *open = false; // persisted by pin_board::draw when it differs
                     }
+                    // Off-thread save dialog — avoid Linux Wayland "app hung" ANR.
+                    let png_dlg = egui::Id::new("dlg_combined_png");
+                    let png_h_key = egui::Id::new("dlg_combined_png_h");
                     if !series.is_empty()
                         && icons
                             .tiny(ui, "export", false, "Save Combined graph as PNG")
                             .clicked()
                     {
-                        match export_combined_png(&series, plot_h) {
-                            Ok(path) => *status = format!("Saved Combined graph → {path}"),
-                            Err(e) => *status = format!("Combined graph export failed: {e}"),
+                        ui.ctx().data_mut(|d| d.insert_temp(png_h_key, plot_h));
+                        let name = combined_export_filename();
+                        crate::ui::native_dialog::begin_path(
+                            ui.ctx(),
+                            png_dlg,
+                            crate::ui::native_dialog::PathOp::SaveFile,
+                            move |d| {
+                                d.set_title("Save Combined graph")
+                                    .set_file_name(&name)
+                                    .add_filter("PNG image", &["png"])
+                            },
+                        );
+                    }
+                    if let Some(path_opt) = crate::ui::native_dialog::poll_path(ui.ctx(), png_dlg) {
+                        let plot_h = ui
+                            .ctx()
+                            .data_mut(|d| d.remove_temp::<f32>(png_h_key))
+                            .unwrap_or(plot_h);
+                        match path_opt {
+                            Some(path) => match write_combined_png(&path, &series, plot_h) {
+                                Ok(p) => *status = format!("Saved Combined graph → {p}"),
+                                Err(e) => {
+                                    *status = format!("Combined graph export failed: {e}")
+                                }
+                            },
+                            None => {}
                         }
                     }
                 });
@@ -1119,15 +1145,12 @@ fn value_at_time(pin: &StickyTopic, at: Instant) -> Option<f64> {
     }
 }
 
-/// Rasterize Combined chart + legend to PNG via file dialog (dark chrome).
-fn export_combined_png(series: &[(&StickyTopic, Color32)], plot_h: f32) -> Result<String, String> {
-    let path = rfd::FileDialog::new()
-        .set_title("Save Combined graph")
-        .set_file_name(combined_export_filename())
-        .add_filter("PNG image", &["png"])
-        .save_file()
-        .ok_or_else(|| "cancelled".to_string())?;
-
+/// Rasterize Combined chart + legend to PNG at `path` (dark chrome).
+fn write_combined_png(
+    path: &std::path::Path,
+    series: &[(&StickyTopic, Color32)],
+    plot_h: f32,
+) -> Result<String, String> {
     let domain = series_time_value_domain(series).ok_or_else(|| "no numeric samples".to_string())?;
     let w = 900u32;
     let label_w = 70u32;

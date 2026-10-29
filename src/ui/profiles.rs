@@ -456,17 +456,24 @@ pub fn draw(
                             .desired_width(140.0)
                             .hint_text("/path/to/certs"),
                     );
+                    // Off-thread native dialog — avoid Linux Wayland "app hung" ANR.
+                    let certs_dlg = egui::Id::new("dlg_certs_folder");
                     if icons
                         .tiny(ui, "certificates", false, "Choose certs folder")
                         .clicked()
                     {
-                        if let Some(path) = rfd::FileDialog::new()
-                            .set_title("MQTT TLS / WSS certs folder")
-                            .pick_folder()
-                        {
-                            profile.certs_dir = path.display().to_string();
-                            profile.use_tls = true;
-                        }
+                        crate::ui::native_dialog::begin_path(
+                            ui.ctx(),
+                            certs_dlg,
+                            crate::ui::native_dialog::PathOp::PickFolder,
+                            |d| d.set_title("MQTT TLS / WSS certs folder"),
+                        );
+                    }
+                    if let Some(Some(path)) =
+                        crate::ui::native_dialog::poll_path(ui.ctx(), certs_dlg)
+                    {
+                        profile.certs_dir = path.display().to_string();
+                        profile.use_tls = true;
                     }
                     if !profile.certs_dir.trim().is_empty()
                         && icons
@@ -657,15 +664,6 @@ pub fn draw(
                         Ok(msg) => {
                             settings.remember_connected(&id, connecting);
                             if connecting {
-                                // Persist pruned filters (overlapping subs double-count messages).
-                                let pruned = profiles
-                                    .profiles
-                                    .get_mut(&id)
-                                    .map(|p| subscribe::prune_redundant(&mut p.subscriptions))
-                                    .unwrap_or(false);
-                                if pruned {
-                                    let _ = profiles.save();
-                                }
                                 if let Some(p) = profiles.profiles.get(&id) {
                                     pins.restore_from_profile(p);
                                 }
