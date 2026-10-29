@@ -261,17 +261,29 @@ impl MqttMonitorApp {
         let licensed = crate::pro::has(crate::pro::Entitlement::Simulation);
         let was_open = self.simulation_open;
         let was_float = self.simulation_floating;
-        simulation_panel::draw(
-            ctx,
-            &mut self.simulation_open,
-            &mut self.simulation_floating,
-            licensed,
-            &mut self.sim_client,
-            &self.sessions,
-            &self.profiles,
-            &self.icons,
-            &mut self.status,
-        );
+        if self.simulation_open && self.simulation_floating {
+            let seed = Self::vp_seed(
+                &mut self.vp_seeds.simulation,
+                self.settings.window_simulation,
+                crate::mqtt::window_geom::WinGeom::size(1100.0, 360.0),
+            );
+            simulation_panel::draw(
+                ctx,
+                &mut self.simulation_open,
+                &mut self.simulation_floating,
+                licensed,
+                &mut self.sim_client,
+                &self.sessions,
+                &self.profiles,
+                &self.icons,
+                &mut self.status,
+                seed,
+                &mut self.settings.window_simulation,
+                &mut self.geometry_dirty,
+            );
+        } else {
+            self.vp_seeds.simulation = None;
+        }
         if self.simulation_open != was_open || self.simulation_floating != was_float {
             self.persist_panels();
         }
@@ -576,39 +588,54 @@ impl MqttMonitorApp {
         if self.panels.profiles {
             // Hard min width — resize handle cannot drag past this (avoids see-through gap).
             let r = egui::SidePanel::left("profiles")
-                .default_width(320.0)
+                .default_width(self.settings.profiles_panel_width)
                 .min_width(PROFILES_PANEL_MIN_W)
                 .width_range(PROFILES_PANEL_MIN_W..=560.0)
                 .resizable(true)
                 .show(ctx, |ui| {
                     reserve_side_panel_space(ui);
                 });
+            let w = crate::mqtt::settings::AppSettings::clamp_profiles_width(r.response.rect.width());
+            if (w - self.settings.profiles_panel_width).abs() > 0.5 {
+                self.settings.profiles_panel_width = w;
+                self.geometry_dirty = true;
+            }
             profiles_rect = Some(r.response.rect);
         }
 
         if self.panels.publish {
             // Min ~half of prior 200 — leaves more room for Topic tree when the window shrinks.
             let r = egui::SidePanel::right("publish")
-                .default_width(280.0)
+                .default_width(self.settings.publish_panel_width)
                 .min_width(100.0)
                 .width_range(100.0..=480.0)
                 .resizable(true)
                 .show(ctx, |ui| {
                     reserve_side_panel_space(ui);
                 });
+            let w = crate::mqtt::settings::AppSettings::clamp_publish_width(r.response.rect.width());
+            if (w - self.settings.publish_panel_width).abs() > 0.5 {
+                self.settings.publish_panel_width = w;
+                self.geometry_dirty = true;
+            }
             publish_rect = Some(r.response.rect);
         }
 
         if self.panels.payload {
             // Min ~half of prior 220 — Topic tree keeps search/icons instead of clipping first.
             let r = egui::SidePanel::right("payload")
-                .default_width(320.0)
+                .default_width(self.settings.payload_panel_width)
                 .min_width(110.0)
                 .width_range(110.0..=560.0)
                 .resizable(true)
                 .show(ctx, |ui| {
                     reserve_side_panel_space(ui);
                 });
+            let w = crate::mqtt::settings::AppSettings::clamp_payload_width(r.response.rect.width());
+            if (w - self.settings.payload_panel_width).abs() > 0.5 {
+                self.settings.payload_panel_width = w;
+                self.geometry_dirty = true;
+            }
             payload_rect = Some(r.response.rect);
         }
 
@@ -708,6 +735,7 @@ impl MqttMonitorApp {
                                 self.search.scope,
                                 self.search.apply_to_stickies,
                             );
+                            let undocked_before = self.topic_tree_undocked.len();
                             topic_tree_panel::draw(
                                 ui,
                                 &mut self.sessions,
@@ -725,12 +753,16 @@ impl MqttMonitorApp {
                                 &mut self.scroll_tree_to,
                                 &mut self.recordings,
                                 &mut self.tree_export_open,
+                                &mut self.tree_import,
                             );
                             if self.search.query != search_before.0
                                 || self.search.scope != search_before.1
                                 || self.search.apply_to_stickies != search_before.2
                             {
                                 self.persist_search();
+                            }
+                            if self.topic_tree_undocked.len() != undocked_before {
+                                self.persist_panels();
                             }
                             // Leaf double-click → open Publish and fill broker / topic / payload.
                             self.apply_publish_from_tree(publish_from_tree);
@@ -789,6 +821,7 @@ impl MqttMonitorApp {
 
         if let Some(rect) = payload_rect {
             let stickies_before = self.panels.stickies;
+            let popped_before = self.payload_popped.len();
             side_panel_overlay(ctx, "payload_front", rect, |ui| {
                 payload_panel::draw(
                     ui,
@@ -805,7 +838,8 @@ impl MqttMonitorApp {
                     &mut self.bookmarks,
                 );
             });
-            if self.panels.stickies != stickies_before {
+            if self.panels.stickies != stickies_before || self.payload_popped.len() != popped_before
+            {
                 self.persist_panels();
             }
         }
@@ -814,9 +848,11 @@ impl MqttMonitorApp {
     /// Floating payload windows — each locked to the topic when it was popped.
     pub(super) fn draw_undocked_payloads(&mut self, ctx: &egui::Context) {
         if self.payload_popped.is_empty() {
+            self.vp_seeds.payload_pops.clear();
             return;
         }
         let stickies_before = self.panels.stickies;
+        let n_before = self.payload_popped.len();
         payload_panel::draw_undocked_viewports(
             ctx,
             &mut self.sessions,
@@ -826,8 +862,11 @@ impl MqttMonitorApp {
             &mut self.panels.stickies,
             &mut self.status,
             &mut self.payload_popped,
+            &mut self.vp_seeds.payload_pops,
+            &mut self.settings.window_payload_popouts,
+            &mut self.geometry_dirty,
         );
-        if self.panels.stickies != stickies_before {
+        if self.panels.stickies != stickies_before || self.payload_popped.len() != n_before {
             self.persist_panels();
         }
     }
@@ -835,8 +874,10 @@ impl MqttMonitorApp {
     /// Floating topic-tree windows for brokers that were popped out.
     pub(super) fn draw_undocked_topic_trees(&mut self, ctx: &egui::Context) {
         if self.topic_tree_undocked.is_empty() {
+            self.vp_seeds.topic_trees.clear();
             return;
         }
+        let undocked_before = self.topic_tree_undocked.len();
         let mut publish_from_tree: Option<PublishFromTree> = None;
         topic_tree_panel::draw_undocked_viewports(
             ctx,
@@ -853,12 +894,34 @@ impl MqttMonitorApp {
             &self.color_rules,
             &mut self.scroll_tree_to,
             &mut self.recordings,
+            &mut self.vp_seeds.topic_trees,
+            &mut self.settings.window_topic_trees,
+            &mut self.geometry_dirty,
         );
+        if self.topic_tree_undocked.len() != undocked_before {
+            self.persist_panels();
+        }
         self.apply_publish_from_tree(publish_from_tree);
     }
 
     /// Pro Bookmarks + Color Rules popups (ribbon-opened; jump dismisses bookmarks).
     pub(super) fn draw_pro_chrome_popups(&mut self, ctx: &egui::Context) {
+        // Dev/screenshot: TOPICBENCH_OPEN_TREE_EXPORT / _IMPORT seed modals once.
+        {
+            use std::sync::atomic::{AtomicBool, Ordering};
+            static TREE_EXPORT_SEEDED: AtomicBool = AtomicBool::new(false);
+            if !TREE_EXPORT_SEEDED.swap(true, Ordering::SeqCst)
+                && std::env::var_os("TOPICBENCH_OPEN_TREE_EXPORT").is_some()
+            {
+                self.tree_export_open = true;
+            }
+            static TREE_IMPORT_SEEDED: AtomicBool = AtomicBool::new(false);
+            if !TREE_IMPORT_SEEDED.swap(true, Ordering::SeqCst)
+                && std::env::var_os("TOPICBENCH_OPEN_TREE_IMPORT").is_some()
+            {
+                self.tree_import.open = true;
+            }
+        }
         // Topic-tree Export scope modal (Pro).
         if self.tree_export_open {
             topic_tree_panel::draw_export_modal(
@@ -866,6 +929,21 @@ impl MqttMonitorApp {
                 &mut self.tree_export_open,
                 &self.sessions,
                 &self.pins,
+                &self.icons,
+                &mut self.status,
+            );
+        }
+        // Topic-tree Import remap modal (Pro sidecar).
+        if self.tree_import.open
+            || crate::ui::native_dialog::path_pending(egui::Id::new("dlg_tree_import_browse"))
+        {
+            topic_tree_panel::draw_import_modal(
+                ctx,
+                &mut self.tree_import,
+                &self.sessions,
+                &self.profiles,
+                &self.pins,
+                &self.icons,
                 &mut self.status,
             );
         }
@@ -885,29 +963,63 @@ impl MqttMonitorApp {
                         .map(|p| (id, p.name.clone()))
                 })
                 .collect();
-            crate::ui::bookmarks_panel::draw_popup(
-                ctx,
-                &mut self.bookmarks_open,
-                &mut self.bookmarks,
-                &profile_names,
-                &self.icons,
-                &mut self.status,
-                &mut self.pending_bookmark_jump,
-            );
+            let was_open = self.bookmarks_open;
+            if self.bookmarks_open {
+                let seed = Self::vp_seed(
+                    &mut self.vp_seeds.bookmarks,
+                    self.settings.window_bookmarks,
+                    crate::mqtt::window_geom::WinGeom::size(420.0, 320.0),
+                );
+                crate::ui::bookmarks_panel::draw_popup(
+                    ctx,
+                    &mut self.bookmarks_open,
+                    &mut self.bookmarks,
+                    &profile_names,
+                    &self.icons,
+                    &mut self.status,
+                    &mut self.pending_bookmark_jump,
+                    seed,
+                    &mut self.settings.window_bookmarks,
+                    &mut self.geometry_dirty,
+                );
+            } else {
+                self.vp_seeds.bookmarks = None;
+            }
+            if self.bookmarks_open != was_open {
+                self.persist_panels();
+            }
         } else {
             self.bookmarks_open = false;
+            self.vp_seeds.bookmarks = None;
         }
 
         if crate::pro::has(crate::pro::Entitlement::ColorRules) {
-            crate::ui::color_rules_panel::draw_popup(
-                ctx,
-                &mut self.color_rules_open,
-                &mut self.color_rules,
-                &self.icons,
-                &mut self.status,
-            );
+            let was_open = self.color_rules_open;
+            if self.color_rules_open {
+                let seed = Self::vp_seed(
+                    &mut self.vp_seeds.color_rules,
+                    self.settings.window_color_rules,
+                    crate::mqtt::window_geom::WinGeom::size(920.0, 440.0),
+                );
+                crate::ui::color_rules_panel::draw_popup(
+                    ctx,
+                    &mut self.color_rules_open,
+                    &mut self.color_rules,
+                    &self.icons,
+                    &mut self.status,
+                    seed,
+                    &mut self.settings.window_color_rules,
+                    &mut self.geometry_dirty,
+                );
+            } else {
+                self.vp_seeds.color_rules = None;
+            }
+            if self.color_rules_open != was_open {
+                self.persist_panels();
+            }
         } else {
             self.color_rules_open = false;
+            self.vp_seeds.color_rules = None;
         }
     }
 
