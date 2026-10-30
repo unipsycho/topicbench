@@ -107,6 +107,8 @@ pub struct MqttMonitorApp {
     update_auto_check_done: bool,
     /// Extra note when install fell back to opening the browser.
     update_modal_fallback_note: Option<String>,
+    /// Last Pro sidecar update probe (None = Pro not answering; hide Pro lines).
+    pro_update_info: Option<crate::pro::update_client::ProUpdateInfo>,
     /// Pro MCP localhost Unix-socket bridge (None when not entitled / failed to bind).
     /// Settings → MCP will start/stop this later; v1 auto-starts when `mcp_server` is licensed.
     pro_bridge: Option<crate::pro::bridge::BridgeHandle>,
@@ -270,6 +272,7 @@ impl MqttMonitorApp {
             update_check_quiet: true,
             update_auto_check_done: false,
             update_modal_fallback_note: None,
+            pro_update_info: None,
             pro_bridge,
             // Licensed + binary beside GUI → spawn Pro on a worker; free installs skip.
             pro_sidecar: crate::pro::sidecar_launch::SidecarLauncher::start_if_licensed(),
