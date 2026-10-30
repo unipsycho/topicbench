@@ -65,6 +65,10 @@ pub struct UpdatesSection<'a> {
     pub status: &'a UpdateStatus,
     pub checking: bool,
     pub check_now: &'a mut bool,
+    /// Pro sidecar version lines — `None` when Pro does not answer (hide entirely).
+    pub pro: Option<&'a crate::pro::update_client::ProUpdateInfo>,
+    /// Set when user clicks Update Pro (only shown if `pro.update_available`).
+    pub update_pro: &'a mut bool,
 }
 
 /// Draw settings body into `draft` (caller commits on Save / discards on Cancel).
@@ -172,7 +176,7 @@ pub fn draw(
 
     // Updates | Pro — narrow Updates; Pro claims remaining width for one-line machine ID.
     ui.add_space(12.0);
-    const UPDATES_W: f32 = 168.0;
+    const UPDATES_W: f32 = 200.0;
     const GAP: f32 = 16.0;
     ui.horizontal(|ui| {
         // Nested verticals required — children of `horizontal` inherit row layout.
@@ -199,6 +203,44 @@ fn draw_updates_column(ui: &mut egui::Ui, updates: UpdatesSection<'_>) {
         RichText::new(format!("Current version: {}", update::current_version())).color(CHROME_TEXT),
     );
     ui.label(RichText::new(updates.status.settings_line()).color(CHROME_MUTED));
+
+    // Pro lines only when the sidecar answers (no Pro URLs/creds in free paths).
+    if let Some(pro) = updates.pro {
+        ui.add_space(6.0);
+        let pro_cur = if pro.current.is_empty() {
+            "Pro: (running)".to_string()
+        } else {
+            format!("Pro: {}", pro.current)
+        };
+        ui.label(RichText::new(pro_cur).color(CHROME_TEXT));
+        let pro_line = if pro.installing {
+            "Pro: installing update…".to_string()
+        } else if pro.checking {
+            "Pro: checking…".to_string()
+        } else if pro.update_available {
+            match &pro.latest {
+                Some(v) => format!("Pro update available: {v}."),
+                None => "Pro update available.".to_string(),
+            }
+        } else if let Some(err) = &pro.error {
+            format!("Pro couldn't check: {err}")
+        } else if let Some(latest) = &pro.latest {
+            format!("Pro up to date (latest {latest}).")
+        } else {
+            "Pro: not checked yet.".to_string()
+        };
+        ui.label(RichText::new(pro_line).color(CHROME_MUTED));
+        if pro.update_available && !pro.installing {
+            ui.add_space(2.0);
+            if ui
+                .add(egui::Button::new("Update Pro").min_size(egui::vec2(96.0, 24.0)))
+                .clicked()
+            {
+                *updates.update_pro = true;
+            }
+        }
+    }
+
     ui.add_space(4.0);
     let check_btn = ui.add_enabled(
         !updates.checking,
