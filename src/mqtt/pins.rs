@@ -7,8 +7,24 @@ use std::time::{Duration, Instant};
 
 pub use crate::mqtt::profile::StickyViewMode;
 
-/// Ring size for sticky Graph / Combined series (≈10 min at 1 Hz).
-const HISTORY_CAP: usize = 600;
+/// Sticky / Combined ring — longer than general leaves (Explorer chart ≈500).
+const HISTORY_CAP: usize = 2_000;
+/// Soft byte budget per sticky so large JSON cannot balloon RAM.
+const HISTORY_BYTES: usize = 512 * 1024;
+
+/// Trim sticky history by count then bytes (keep ≥1).
+fn trim_sticky_history(history: &mut VecDeque<HistorySample>) {
+    while history.len() > HISTORY_CAP {
+        history.pop_front();
+    }
+    while history.len() > 1 {
+        let bytes: usize = history.iter().map(|s| s.payload.len()).sum();
+        if bytes <= HISTORY_BYTES {
+            break;
+        }
+        history.pop_front();
+    }
+}
 
 /// Payload sample drained by the Pro history forwarder (no Pro types here).
 #[derive(Clone, Debug)]
@@ -178,13 +194,28 @@ impl PinBoard {
         std::mem::take(&mut self.pending_history_fwd)
     }
 
-    /// Queue full topic payloads for Pro deep store (called from session apply).
+    /// True when any sticky (incl. filter / field-path) matches this live topic.
+    fn has_matching_sticky(&self, profile_id: &str, topic: &str) -> bool {
+        self.items.values().any(|sticky| {
+            if sticky.profile_id != profile_id {
+                return false;
+            }
+            let (base, _) = crate::mqtt::value_path::split_sticky_id(&sticky.topic);
+            base == topic || crate::mqtt::subscribe::topic_matches_filter(topic, base)
+        })
+    }
+
+    /// Queue payloads for Pro deep store — sticky / Combined topics only.
+    /// General live leaves stay on the short OSS ring; do not open a 50k series per topic.
     pub fn enqueue_topic_hist(
         &mut self,
         profile_id: &str,
         topic: &str,
         samples: &[(Instant, String)],
     ) {
+        if samples.is_empty() || !self.has_matching_sticky(profile_id, topic) {
+            return;
+        }
         for (at, payload) in samples {
             let v = crate::mqtt::value_path::sample_numeric(payload);
             self.pending_history_fwd.push(HistoryFwdSample {
@@ -293,9 +324,7 @@ impl PinBoard {
                     payload: extracted,
                     numeric,
                 });
-                while sticky.history.len() > HISTORY_CAP {
-                    sticky.history.pop_front();
-                }
+                trim_sticky_history(&mut sticky.history);
                 if i == last_i {
                     sticky.message_count = sticky.message_count.saturating_add(count);
                     sticky.flash_until = Some(*at + Duration::from_millis(FLASH_MS));
@@ -332,5 +361,42 @@ impl PinBoard {
                 sticky.message_count = sticky.message_count.max(1);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn enqueue_topic_hist_only_for_stickies() {
+        let mut pins = PinBoard::default();
+        let now = Instant::now();
+        let samples = vec![(now, "21.5".into())];
+        pins.enqueue_topic_hist("p1", "sensors/temp", &samples);
+        assert!(pins.drain_history_fwd().is_empty());
+
+        pins.pin("p1", "Lab", "sensors/temp");
+        pins.enqueue_topic_hist("p1", "sensors/temp", &samples);
+        let fwd = pins.drain_history_fwd();
+        assert_eq!(fwd.len(), 1);
+        assert_eq!(fwd[0].topic, "sensors/temp");
+
+        // Non-sticky sibling still skipped.
+        pins.enqueue_topic_hist("p1", "sensors/humidity", &samples);
+        assert!(pins.drain_history_fwd().is_empty());
+    }
+
+    #[test]
+    fn sticky_history_respects_count_cap() {
+        let mut pins = PinBoard::default();
+        let now = Instant::now();
+        pins.pin("p1", "Lab", "sensors/temp");
+        let samples: Vec<_> = (0..HISTORY_CAP + 50)
+            .map(|i| (now, format!("{i}")))
+            .collect();
+        pins.on_message_samples("p1", "Lab", "sensors/temp", &samples, samples.len() as u64);
+        let sticky = pins.items.values().next().unwrap();
+        assert_eq!(sticky.history.len(), HISTORY_CAP);
     }
 }
