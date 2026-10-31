@@ -14,13 +14,16 @@ Latest free release: **[v1.2.5](https://github.com/unipsycho/topicbench/releases
 |:--|:--|
 | **Windows** portable (x64) | [TopicBench-windows-x64-portable.zip](https://github.com/unipsycho/topicbench/releases/download/v1.2.5/TopicBench-windows-x64-portable.zip) |
 | **Linux** binary (x64) | [topicbench-linux-x64](https://github.com/unipsycho/topicbench/releases/download/v1.2.5/topicbench-linux-x64) |
+| **Linux** AppImage (x64) | [TopicBench-x86_64.AppImage](https://github.com/unipsycho/topicbench/releases/download/v1.2.5/TopicBench-x86_64.AppImage) |
 | **Debian / Ubuntu** (.deb) | [topicbench_1.2.5_amd64.deb](https://github.com/unipsycho/topicbench/releases/download/v1.2.5/topicbench_1.2.5_amd64.deb) |
+| **Fedora / RHEL / openSUSE** (.rpm) | [topicbench-1.2.5-1.x86_64.rpm](https://github.com/unipsycho/topicbench/releases/download/v1.2.5/topicbench-1.2.5-1.x86_64.rpm) |
 | **Arch / Omarchy** (AUR) | [`topicbench-bin`](packaging/aur/topicbench-bin) — `yay -S topicbench-bin` |
 | SHA-256 checksums | [SHA256SUMS](https://github.com/unipsycho/topicbench/releases/download/v1.2.5/SHA256SUMS) |
 
 Windows: unzip and run `TopicBench.exe`.
 Linux binaries target **glibc 2.35+** (Ubuntu 22.04 / Debian 12 and newer).
 
+**Updates:** the bare **Linux binary** and **Windows** portable / bare `.exe` can apply updates in place (download → verify SHA-256 → replace their own files). **AppImage**, **`.deb`**, **`.rpm`**, and **AUR** installs still get in-app update notifications; installing the new package is usually manual (system paths aren’t writable by the app). Packaging scripts: [`packaging/README.md`](packaging/README.md).
 
 Arch: AUR package installs the Release binary + desktop entry (OSS only). PKGBUILD lives in-tree; publish steps in [`packaging/aur/README.md`](packaging/aur/README.md).
 
@@ -39,7 +42,7 @@ TopicBench Pro is the paid companion — a standalone download for licensed cust
 - **Stickies & graphs** — pin important topics and watch values over time
 - **Search** — find topics and payloads without leaving the desktop UI
 - **Free & open source** — use it, report issues, contribute.
-- **Updates via GitHub Releases** — in-app check when releases are published
+- **Updates via GitHub Releases** — in-app check for every install; bare Linux/Windows binaries can self-replace, packaged installs notify and may need a manual upgrade
 
 ## Features
 
