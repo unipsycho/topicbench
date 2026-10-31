@@ -811,22 +811,22 @@ fn leaf_row(
     let mut dbl = false;
     let selected = is_selected(pins, profile_id, full_topic);
     let payload = node.last_payload.as_deref().unwrap_or("");
-    // Pro color rules: first-match style for leaves with payloads.
+    // Pro color rules: cached first-match style (paint path; not on MQTT ingest).
     let rule_style = if crate::pro::has(crate::pro::Entitlement::ColorRules) && !payload.is_empty()
     {
         color_rules.style_for(profile_id, full_topic, payload)
     } else {
         None
     };
-    let row_fill = if let Some(bg) = rule_style.and_then(|s| s.row_bg_c32()) {
+    let row_fill = if let Some(bg) = rule_style.as_ref().and_then(|s| s.row_bg_c32()) {
         bg
     } else if selected {
         select_fill()
     } else {
         Color32::TRANSPARENT
     };
-    let topic_color = rule_style.and_then(|s| s.topic_c32());
-    let value_override = rule_style.and_then(|s| s.value_c32());
+    let topic_color = rule_style.as_ref().and_then(|s| s.topic_c32());
+    let value_override = rule_style.as_ref().and_then(|s| s.value_c32());
 
     // See flash::ITEM_CLIP_CLEAR — not full avail, or right flash/select stroke clips.
     let row_w = (ui.available_width() - flash::ITEM_CLIP_CLEAR).max(32.0);
