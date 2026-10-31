@@ -7,8 +7,24 @@ use std::time::{Duration, Instant};
 /// Update-flash duration: full-on border, then fade out (resets on each new value).
 pub const FLASH_MS: u64 = 500;
 
-/// Short payload ring for Payload-panel history scrub (≈10 min at 1 Hz).
-const PAYLOAD_HISTORY_CAP: usize = 600;
+/// Explorer-style per-leaf ring: drop oldest when either bound is exceeded.
+const PAYLOAD_HISTORY_CAP: usize = 100;
+/// Total payload UTF-8 bytes retained per leaf (MQTT Explorer ≈20 KB).
+const PAYLOAD_HISTORY_BYTES: usize = 20 * 1024;
+
+/// Trim oldest samples until under count and byte budgets (keep ≥1).
+fn trim_payload_history(history: &mut VecDeque<(Instant, String)>) {
+    while history.len() > PAYLOAD_HISTORY_CAP {
+        history.pop_front();
+    }
+    while history.len() > 1 {
+        let bytes: usize = history.iter().map(|(_, p)| p.len()).sum();
+        if bytes <= PAYLOAD_HISTORY_BYTES {
+            break;
+        }
+        history.pop_front();
+    }
+}
 
 #[derive(Clone, Debug, Default)]
 pub struct TopicNode {
@@ -81,9 +97,7 @@ impl TopicNode {
                     node.payload_history
                         .push_back((*at, payload.clone()));
                 }
-                while node.payload_history.len() > PAYLOAD_HISTORY_CAP {
-                    node.payload_history.pop_front();
-                }
+                trim_payload_history(&mut node.payload_history);
             }
         }
     }
@@ -190,6 +204,34 @@ mod tests {
         assert_eq!(leaf.last_payload.as_deref(), Some("22.0"));
         assert!(leaf.last_retain);
         assert_eq!(leaf.message_count, 10);
+    }
+
+    #[test]
+    fn payload_history_caps_count_and_bytes() {
+        let mut tree = TopicTree::default();
+        let now = Instant::now();
+        // Count cap: 100 messages, tiny payloads.
+        let samples: Vec<_> = (0..150)
+            .map(|i| (now, format!("v{i}")))
+            .collect();
+        tree.root.push_payload_samples("sensors/temp", &samples);
+        let leaf = tree.root.node_at("sensors/temp").unwrap();
+        assert_eq!(leaf.payload_history.len(), PAYLOAD_HISTORY_CAP);
+        assert_eq!(leaf.payload_history.front().unwrap().1, "v50");
+
+        // Byte cap: few oversized payloads shrink below count cap (keep ≥1).
+        let mut tree = TopicTree::default();
+        let big = "x".repeat(8 * 1024);
+        let big_samples: Vec<_> = (0..5).map(|_| (now, big.clone())).collect();
+        tree.root.push_payload_samples("sensors/blob", &big_samples);
+        let leaf = tree.root.node_at("sensors/blob").unwrap();
+        assert!(leaf.payload_history.len() <= 2);
+        assert!(!leaf.payload_history.is_empty());
+        let bytes: usize = leaf.payload_history.iter().map(|(_, p)| p.len()).sum();
+        // May exceed budget with a single large sample; never with two oversize ones.
+        if leaf.payload_history.len() > 1 {
+            assert!(bytes <= PAYLOAD_HISTORY_BYTES);
+        }
     }
 
     #[test]
