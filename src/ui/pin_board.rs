@@ -258,14 +258,14 @@ fn draw_sticky(
         1.0_f32,
         ui.visuals().widgets.noninteractive.bg_stroke.color,
     );
-    // Pro color rules paint sticky chrome when the topic payload matches.
+    // Pro color rules paint sticky chrome (cached; same path as topic-tree leaves).
     let rule_style = if pro::has(Entitlement::ColorRules) && !pin.last_payload.is_empty() {
         color_rules.style_for(&pin.profile_id, &pin.topic, &pin.last_payload)
     } else {
         None
     };
-    let rule_bg = rule_style.and_then(|s| s.row_bg_c32());
-    let rule_topic = rule_style.and_then(|s| s.topic_c32());
+    let rule_bg = rule_style.as_ref().and_then(|s| s.row_bg_c32());
+    let rule_topic = rule_style.as_ref().and_then(|s| s.topic_c32());
 
     let mut pending_reorder = None;
     let profile_id = pin.profile_id.clone();
