@@ -27,6 +27,12 @@ impl MqttMonitorApp {
             self.settings.last_update_check = last_update_check;
             self.settings.skipped_update_version = skipped_update_version;
             self.settings.remind_later_until = remind_later_until;
+            if let Some(tc) = self.theme_client.as_ref() {
+                tc.set_wanted(&self.settings.theme_id);
+            } else {
+                // Unlicensed installs only persist Classic.
+                self.settings.theme_id = crate::ui::theme::CLASSIC_ID.to_string();
+            }
             match self.settings.save() {
                 Ok(()) => {
                     self.status = format!("Saved {}", AppSettings::path().display());
@@ -165,6 +171,17 @@ impl MqttMonitorApp {
             let mut check_now = false;
             let checking = matches!(self.update_status, UpdateStatus::Checking);
             let status_snapshot = self.update_status.clone();
+            let pro_catalog = self
+                .theme_client
+                .as_ref()
+                .map(|t| t.catalog())
+                .unwrap_or_default();
+            let pro_up = self
+                .theme_client
+                .as_ref()
+                .map(|t| t.sidecar_up())
+                .unwrap_or(false);
+            let licensed = crate::pro::is_licensed();
             let modal = egui::Modal::new(egui::Id::new("mqtt_master_settings")).show(ctx, |ui| {
                 // Wide enough for narrow Updates + Pro with one-line machine ID (~68 chars).
                 ui.set_min_width(760.0);
@@ -182,6 +199,11 @@ impl MqttMonitorApp {
                                     status: &status_snapshot,
                                     checking,
                                     check_now: &mut check_now,
+                                },
+                                settings_panel::ThemeSection {
+                                    pro_catalog: &pro_catalog,
+                                    pro_up,
+                                    licensed,
                                 },
                             );
                         }
@@ -201,15 +223,15 @@ impl MqttMonitorApp {
                                         )),
                                     RichText::new("Save").strong(),
                                 )
-                                .fill(CHROME_ACCENT_SOFT)
-                                .stroke(egui::Stroke::new(1.0_f32, CHROME_ACCENT_BORDER))
+                                .fill(CHROME_ACCENT_SOFT())
+                                .stroke(egui::Stroke::new(1.0_f32, CHROME_ACCENT_BORDER()))
                                 .min_size(egui::vec2(96.0, 32.0)),
                             )
                         } else {
                             ui.add(
                                 egui::Button::new(RichText::new("Save").strong())
-                                    .fill(CHROME_ACCENT_SOFT)
-                                    .stroke(egui::Stroke::new(1.0_f32, CHROME_ACCENT_BORDER))
+                                    .fill(CHROME_ACCENT_SOFT())
+                                    .stroke(egui::Stroke::new(1.0_f32, CHROME_ACCENT_BORDER()))
                                     .min_size(egui::vec2(96.0, 32.0)),
                             )
                         };
@@ -260,7 +282,7 @@ impl MqttMonitorApp {
                 RichText::new("Update available")
                     .strong()
                     .size(18.0)
-                    .color(CHROME_TEXT),
+                    .color(CHROME_TEXT()),
             );
             ui.add_space(4.0);
             // ASCII "->" — egui default fonts lack Unicode arrows (→ shows as a box).
@@ -270,18 +292,18 @@ impl MqttMonitorApp {
                     update::current_version(),
                     info.tag
                 ))
-                .color(CHROME_ACCENT_BORDER),
+                .color(CHROME_ACCENT_BORDER()),
             );
             if !info.name.is_empty() && info.name != info.tag {
-                ui.label(RichText::new(&info.name).color(CHROME_MUTED));
+                ui.label(RichText::new(&info.name).color(CHROME_MUTED()));
             }
             ui.add_space(8.0);
             let bar_w = ui.available_width();
             let (bar, _) = ui.allocate_exact_size(egui::vec2(bar_w, 2.0), egui::Sense::hover());
-            ui.painter().rect_filled(bar, 1.0, CHROME_SEP);
+            ui.painter().rect_filled(bar, 1.0, CHROME_SEP());
             ui.add_space(8.0);
 
-            ui.label(RichText::new("Release notes").strong().color(CHROME_TEXT));
+            ui.label(RichText::new("Release notes").strong().color(CHROME_TEXT()));
             ui.add_space(4.0);
             egui::ScrollArea::vertical()
                 .max_height(220.0)
@@ -295,7 +317,7 @@ impl MqttMonitorApp {
                     RichText::new(format!(
                         "Couldn't install in-app — opened the release page.\n{note}"
                     ))
-                    .color(CHROME_MUTED),
+                    .color(CHROME_MUTED()),
                 );
             } else if info.asset_url.is_none() || info.sha256sums_url.is_none() {
                 ui.add_space(8.0);
@@ -303,7 +325,7 @@ impl MqttMonitorApp {
                     RichText::new(
                         "Release assets or SHA256SUMS missing — Update will open the release page in your browser.",
                     )
-                    .color(CHROME_MUTED),
+                    .color(CHROME_MUTED()),
                 );
             }
 
@@ -319,8 +341,8 @@ impl MqttMonitorApp {
                         } else {
                             "Update"
                         }).strong())
-                        .fill(CHROME_ACCENT_SOFT)
-                        .stroke(egui::Stroke::new(1.0_f32, CHROME_ACCENT_BORDER))
+                        .fill(CHROME_ACCENT_SOFT())
+                        .stroke(egui::Stroke::new(1.0_f32, CHROME_ACCENT_BORDER()))
                         .min_size(egui::vec2(96.0, 32.0)),
                     );
                     if update_btn.clicked() {

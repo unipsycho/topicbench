@@ -76,8 +76,8 @@ impl SplashIntro {
         }
         // Opaque panel fills again (splash left them transparent on glass platforms).
         ctx.style_mut(|s| {
-            s.visuals.panel_fill = CHROME_BG;
-            s.visuals.window_fill = CHROME_BG;
+            s.visuals.panel_fill = CHROME_BG();
+            s.visuals.window_fill = CHROME_BG();
         });
     }
 
@@ -124,9 +124,9 @@ impl SplashIntro {
                         full,
                         0.0,
                         Color32::from_rgba_unmultiplied(
-                            CHROME_BG.r(),
-                            CHROME_BG.g(),
-                            CHROME_BG.b(),
+                            CHROME_BG().r(),
+                            CHROME_BG().g(),
+                            CHROME_BG().b(),
                             a,
                         ),
                     );

@@ -81,14 +81,14 @@ pub fn draw_popup(
                         .resizable(true)
                         .default_width(360.0)
                         .default_height(280.0)
-                        .frame(egui::Frame::window(&ctx.style()).fill(CHROME_BG))
+                        .frame(egui::Frame::window(&ctx.style()).fill(CHROME_BG()))
                         .show(ctx, |ui| paint(ui));
                 }
                 _ => {
                     egui::CentralPanel::default()
                         .frame(
                             egui::Frame::central_panel(&ctx.style())
-                                .fill(CHROME_BG)
+                                .fill(CHROME_BG())
                                 .inner_margin(egui::Margin::same(8)),
                         )
                         .show(ctx, |ui| paint(ui));
@@ -251,7 +251,7 @@ fn paint_bookmarks_body(
         let mut dismiss = false;
         let mut save = false;
         egui::Frame::NONE
-            .fill(CHROME_ROW)
+            .fill(CHROME_ROW())
             .corner_radius(3.0)
             .inner_margin(egui::Margin::same(8))
             .show(ui, |ui| {
@@ -260,10 +260,10 @@ fn paint_bookmarks_body(
                 } else {
                     "Add bookmark"
                 };
-                ui.label(RichText::new(heading).strong().color(CHROME_TEXT));
+                ui.label(RichText::new(heading).strong().color(CHROME_TEXT()));
                 ui.add_space(4.0);
                 ui.horizontal(|ui| {
-                    ui.label(RichText::new("Profile").small().color(CHROME_MUTED));
+                    ui.label(RichText::new("Profile").small().color(CHROME_MUTED()));
                     let selected_name = profiles_names
                         .iter()
                         .find(|(id, _)| id == &f.profile_id)
@@ -284,7 +284,7 @@ fn paint_bookmarks_body(
                         });
                 });
                 ui.horizontal(|ui| {
-                    ui.label(RichText::new("Topic").small().color(CHROME_MUTED));
+                    ui.label(RichText::new("Topic").small().color(CHROME_MUTED()));
                     ui.add(
                         egui::TextEdit::singleline(&mut f.topic)
                             .desired_width(260.0)
@@ -292,7 +292,7 @@ fn paint_bookmarks_body(
                     );
                 });
                 ui.horizontal(|ui| {
-                    ui.label(RichText::new("Label").small().color(CHROME_MUTED));
+                    ui.label(RichText::new("Label").small().color(CHROME_MUTED()));
                     ui.add(
                         egui::TextEdit::singleline(&mut f.label)
                             .desired_width(180.0)
@@ -417,7 +417,7 @@ fn paint_bookmarks_body(
             ui.label(
                 RichText::new(group_name.as_str())
                     .strong()
-                    .color(CHROME_ACCENT_BORDER),
+                    .color(CHROME_ACCENT_BORDER()),
             );
             ui.add_space(2.0);
             // Pin width once — body widgets must not widen the ScrollArea (icons drift right).
@@ -433,13 +433,13 @@ fn paint_bookmarks_body(
                 ui.painter().rect_filled(
                     row_rect,
                     2.0,
-                    if is_selected { CHROME_HOVER } else { CHROME_ROW },
+                    if is_selected { CHROME_HOVER() } else { CHROME_ROW() },
                 );
                 if is_selected {
                     ui.painter().rect_stroke(
                         row_rect,
                         2.0,
-                        egui::Stroke::new(1.0, CHROME_ACCENT_BORDER),
+                        egui::Stroke::new(1.0, CHROME_ACCENT_BORDER()),
                         egui::StrokeKind::Inside,
                     );
                 }
@@ -489,8 +489,8 @@ fn paint_bookmarks_body(
                         let layer = egui::LayerId::new(egui::Order::Tooltip, grip_id);
                         let preview = egui::Rect::from_center_size(pos, egui::vec2(GRIP_W, ROW_H));
                         let painter = ui.ctx().layer_painter(layer);
-                        painter.rect_filled(preview, 2.0, CHROME_HOVER);
-                        let color = CHROME_MUTED;
+                        painter.rect_filled(preview, 2.0, CHROME_HOVER());
+                        let color = CHROME_MUTED();
                         let r = 1.2_f32;
                         let cx = preview.center().x;
                         let cy = preview.center().y;
@@ -526,15 +526,15 @@ fn paint_bookmarks_body(
                         ui.painter().hline(
                             drop_response.rect.x_range(),
                             y,
-                            egui::Stroke::new(2.0_f32, CHROME_ACCENT_BORDER),
+                            egui::Stroke::new(2.0_f32, CHROME_ACCENT_BORDER()),
                         );
                         ui.painter().rect_filled(
                             drop_response.rect,
                             2.0,
                             egui::Color32::from_rgba_unmultiplied(
-                                CHROME_HOVER.r(),
-                                CHROME_HOVER.g(),
-                                CHROME_HOVER.b(),
+                                CHROME_HOVER().r(),
+                                CHROME_HOVER().g(),
+                                CHROME_HOVER().b(),
                                 80,
                             ),
                         );
@@ -571,12 +571,12 @@ fn paint_bookmarks_body(
                         ui.spacing_mut().item_spacing.x = 8.0;
                         let hovering_body = ui.rect_contains_pointer(body_rect);
                         if hovering_body {
-                            ui.painter().rect_filled(body_rect, 2.0, CHROME_HOVER);
+                            ui.painter().rect_filled(body_rect, 2.0, CHROME_HOVER());
                         }
                         let name_color = if hovering_body {
-                            CHROME_ACCENT_BORDER
+                            CHROME_ACCENT_BORDER()
                         } else {
-                            CHROME_TEXT
+                            CHROME_TEXT()
                         };
                         // Expand fixed on the right of body; label uses remaining left (truncated).
                         let mut exp = b.expand_subtree;
@@ -600,7 +600,7 @@ fn paint_bookmarks_body(
                                     ui.painter().hline(
                                         name_resp.rect.x_range(),
                                         name_resp.rect.bottom() - 1.0,
-                                        egui::Stroke::new(1.0_f32, CHROME_ACCENT_BORDER),
+                                        egui::Stroke::new(1.0_f32, CHROME_ACCENT_BORDER()),
                                     );
                                 }
                                 if name_resp.clicked() {
