@@ -64,14 +64,14 @@ pub fn draw_group(ui: &mut egui::Ui, stats: &TrafficStats) {
     // Cap width before ribbon_group so the tint cannot expand into leftover ribbon.
     ui.set_max_width(content_w + 40.0);
 
-    icons::ribbon_group(ui, "Stats", TINT_STATS, |ui| {
+    icons::ribbon_group(ui, "Stats", TINT_STATS(), |ui| {
         // Exact CMD_H cell — same vertical size as Settings/Zoom command cells.
         let (rect, _) = ui.allocate_exact_size(Vec2::new(content_w, BODY_H), Sense::hover());
         let cx = rect.center().x;
         let mut y = rect.top() + (BODY_H - content_h) * 0.5;
 
         for s in &lines_main {
-            paint_centered(ui, cx, y, row_h_main, s, main_sz, CHROME_TEXT);
+            paint_centered(ui, cx, y, row_h_main, s, main_sz, CHROME_TEXT());
             y += row_h_main;
         }
         y += mid_gap;
@@ -83,7 +83,7 @@ pub fn draw_group(ui: &mut egui::Ui, stats: &TrafficStats) {
 
 fn measure_line(ui: &egui::Ui, text: &str, size: f32) -> f32 {
     ui.fonts(|f| {
-        f.layout_no_wrap(text.to_owned(), FontId::proportional(size), CHROME_TEXT)
+        f.layout_no_wrap(text.to_owned(), FontId::proportional(size), CHROME_TEXT())
             .size()
             .x
     })
@@ -121,7 +121,7 @@ fn paint_centered_proj(
         0.0,
         egui::TextFormat {
             font_id: FontId::proportional(size),
-            color: CHROME_CAPTION,
+            color: CHROME_CAPTION(),
             ..Default::default()
         },
     );
@@ -130,11 +130,11 @@ fn paint_centered_proj(
         0.0,
         egui::TextFormat {
             font_id: FontId::proportional(size),
-            color: CHROME_MUTED,
+            color: CHROME_MUTED(),
             ..Default::default()
         },
     );
     let galley = ui.fonts(|f| f.layout_job(job));
     let pos = egui::pos2(cx - galley.size().x * 0.5, top + (row_h - galley.size().y) * 0.5);
-    ui.painter().galley(pos, galley, CHROME_CAPTION);
+    ui.painter().galley(pos, galley, CHROME_CAPTION());
 }

@@ -129,6 +129,9 @@ pub struct AppSettings {
     /// App-wide font zoom step (−4…+5). 0 = default egui sizes.
     #[serde(default)]
     pub font_zoom_step: i8,
+    /// UI chrome theme id (`classic` or a Pro catalog id). Sidecar down → Classic look.
+    #[serde(default = "default_theme_id")]
+    pub theme_id: String,
     /// Ribbon panel open/closed — restored on reload (same for Payload as Publish/Stickies/…).
     #[serde(default = "default_true")]
     pub show_profiles: bool,
@@ -226,6 +229,10 @@ fn default_true() -> bool {
     true
 }
 
+fn default_theme_id() -> String {
+    "classic".into()
+}
+
 fn default_max_packet_bytes() -> usize {
     MAX_PACKET_DEFAULT
 }
@@ -278,6 +285,7 @@ impl Default for AppSettings {
             combined_graph_height: default_combined_graph_height(),
             combined_graph_open: false,
             font_zoom_step: 0,
+            theme_id: default_theme_id(),
             show_profiles: true,
             show_live_traffic: false,
             show_publish: false,

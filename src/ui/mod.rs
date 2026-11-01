@@ -19,5 +19,6 @@ pub mod shortcuts;
 pub mod simulation_panel;
 pub mod splash;
 pub mod stats_ribbon;
+pub mod theme;
 pub mod topic_tree_panel;
 pub mod traffic_panel;
