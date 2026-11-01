@@ -95,7 +95,7 @@ fn replace_and_relaunch(exe: &Path, new_bytes: &[u8]) -> Result<(), String> {
         "{}.new",
         exe.file_name()
             .and_then(|s| s.to_str())
-            .unwrap_or("mqtt-master")
+            .unwrap_or("topicbench")
     ));
     let backup = backup_path(exe);
     write_bytes(&staging, new_bytes)?;
@@ -122,7 +122,7 @@ fn replace_and_relaunch(exe: &Path, new_bytes: &[u8]) -> Result<(), String> {
         "{}.new",
         exe.file_name()
             .and_then(|s| s.to_str())
-            .unwrap_or("mqtt-master")
+            .unwrap_or("topicbench")
     ));
     let backup = backup_path(exe);
     write_bytes(&staging, new_bytes)?;

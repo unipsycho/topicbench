@@ -23,8 +23,8 @@ fn main() -> eframe::Result<()> {
     let mut viewport = egui::ViewportBuilder::default()
         .with_inner_size([1200.0, 760.0])
         .with_title("TopicBench")
-        // Wayland app_id — keep stable so Hyprland rules keep matching.
-        .with_app_id("com.agileautomation.mqtt-master");
+        // Wayland app_id / X11 WM_CLASS — matches StartupWMClass in packaging/*.desktop.
+        .with_app_id("topicbench");
     // Prefer last session size from settings.json (eframe also restores when available).
     if let Some(g) = settings.window_main {
         viewport = g.apply(viewport, [400.0, 300.0]);

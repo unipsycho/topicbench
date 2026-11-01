@@ -48,5 +48,5 @@ path = "src/main.rs"
 
 [package.metadata.packager]
 product-name = "TopicBench"
-identifier = "com.agileautomation.mqtt-master"
+identifier = "topicbench"
 before-packaging-command = "cargo build --release"

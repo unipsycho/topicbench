@@ -6,5 +6,5 @@ Exec=topicbench
 Icon=topicbench
 Terminal=false
 Categories=Network;
-StartupWMClass=com.agileautomation.mqtt-master
+StartupWMClass=topicbench
 Keywords=MQTT;IoT;broker;topics;
