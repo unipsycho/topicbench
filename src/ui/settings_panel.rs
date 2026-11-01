@@ -134,8 +134,8 @@ pub fn draw(
     ui.add_space(10.0);
 
     match tab {
-        SettingsTab::General => draw_general_tab(ui, draft, open_shortcuts, theme),
-        SettingsTab::Pro => draw_pro_tab(ui),
+        SettingsTab::General => draw_general_tab(ui, draft, open_shortcuts),
+        SettingsTab::Pro => draw_pro_tab(ui, draft, theme),
         SettingsTab::Updates => draw_updates_tab(ui, updates),
     }
 }
@@ -179,12 +179,7 @@ fn theme_label(id: &str, catalog: &[crate::pro::theme_client::ThemeInfo]) -> Str
         .unwrap_or_else(|| id.to_string())
 }
 
-fn draw_general_tab(
-    ui: &mut egui::Ui,
-    draft: &mut AppSettings,
-    open_shortcuts: &mut bool,
-    theme: ThemeSection<'_>,
-) {
+fn draw_general_tab(ui: &mut egui::Ui, draft: &mut AppSettings, open_shortcuts: &mut bool) {
     ui.checkbox(
         &mut draft.auto_reconnect_on_reload,
         "Auto Reconnect on Reload",
@@ -209,39 +204,6 @@ fn draw_general_tab(
             });
     });
     ui.weak("Initial expand depth when topics appear.");
-
-    ui.add_space(12.0);
-    ui.strong("Appearance");
-    ui.horizontal(|ui| {
-        ui.label("Theme");
-        let selected_label = theme_label(&draft.theme_id, theme.pro_catalog);
-        let before = draft.theme_id.clone();
-        egui::ComboBox::from_id_salt("ui_theme_id")
-            .selected_text(selected_label)
-            .show_ui(ui, |ui| {
-                ui.selectable_value(
-                    &mut draft.theme_id,
-                    crate::ui::theme::CLASSIC_ID.to_string(),
-                    "Classic",
-                );
-                if theme.licensed && theme.pro_up {
-                    for t in theme.pro_catalog {
-                        ui.selectable_value(&mut draft.theme_id, t.id.clone(), &t.name);
-                    }
-                }
-            });
-        // Live preview as soon as the ComboBox selection changes.
-        if draft.theme_id != before {
-            *theme.changed_id = Some(draft.theme_id.clone());
-        }
-    });
-    if theme.licensed && !theme.pro_up {
-        ui.weak("Pro themes appear when TopicBench Pro is running.");
-    } else if !theme.licensed {
-        ui.weak("Classic only — Pro unlocks Nord, Tokyo Night, Everforest, Latte.");
-    } else {
-        ui.weak("Pro presets from the sidecar; falls back to Classic if Pro is down.");
-    }
 
     ui.add_space(12.0);
     ui.strong("Sticky topics");
@@ -301,14 +263,45 @@ fn draw_general_tab(
     ui.weak("Also F1 or ? when not typing.");
 }
 
-fn draw_pro_tab(ui: &mut egui::Ui) {
-    ui.strong("TopicBench Pro");
+/// Pro feature settings only (themes, etc.) — Machine ID lives under Updates.
+fn draw_pro_tab(ui: &mut egui::Ui, draft: &mut AppSettings, theme: ThemeSection<'_>) {
+    ui.strong("Themes");
+    ui.horizontal(|ui| {
+        ui.label("Theme");
+        let selected_label = theme_label(&draft.theme_id, theme.pro_catalog);
+        let before = draft.theme_id.clone();
+        egui::ComboBox::from_id_salt("ui_theme_id")
+            .selected_text(selected_label)
+            .show_ui(ui, |ui| {
+                ui.selectable_value(
+                    &mut draft.theme_id,
+                    crate::ui::theme::CLASSIC_ID.to_string(),
+                    "Classic",
+                );
+                if theme.licensed && theme.pro_up {
+                    for t in theme.pro_catalog {
+                        ui.selectable_value(&mut draft.theme_id, t.id.clone(), &t.name);
+                    }
+                }
+            });
+        // Live preview as soon as the ComboBox selection changes.
+        if draft.theme_id != before {
+            *theme.changed_id = Some(draft.theme_id.clone());
+        }
+    });
+    if theme.licensed && !theme.pro_up {
+        ui.weak("Pro themes appear when TopicBench Pro is running.");
+    } else if !theme.licensed {
+        ui.weak("Classic only — Pro unlocks Nord, Tokyo Night, Everforest, Latte.");
+    } else {
+        ui.weak("Pro presets from the sidecar; falls back to Classic if Pro is down.");
+    }
+
+    ui.add_space(14.0);
     ui.hyperlink_to(
         RichText::new("Learn about TopicBench Pro").color(CHROME_ACCENT_BORDER()),
         TOPICBENCH_PRO_URL,
     );
-    ui.add_space(8.0);
-    draw_machine_id_controls(ui);
 }
 
 fn draw_updates_tab(ui: &mut egui::Ui, updates: UpdatesSection<'_>) {
@@ -390,6 +383,11 @@ fn draw_updates_tab(ui: &mut egui::Ui, updates: UpdatesSection<'_>) {
     } else {
         ui.weak("Checks the free TopicBench GitHub release channel.");
     }
+
+    // Machine ID for checkout / license — lives with Updates, not Pro features.
+    ui.add_space(16.0);
+    ui.strong("Machine ID");
+    draw_machine_id_controls(ui);
 }
 
 /// Monospace ID + Copy / Save license-request (and license-installed note when present).

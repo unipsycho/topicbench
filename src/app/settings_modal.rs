@@ -14,6 +14,8 @@ impl MqttMonitorApp {
     pub(super) fn open_settings(&mut self) {
         self.settings_draft = Some(self.settings.clone());
         self.settings_open = true;
+        // One-shot Pro version probe on open — never every frame (stalls MQTT stats).
+        self.refresh_pro_update_info();
     }
 
     /// Commit draft to live settings + disk, then close.
@@ -188,7 +190,7 @@ impl MqttMonitorApp {
             let mut cancel_clicked = false;
             let mut check_now = false;
             let mut update_pro = false;
-            self.refresh_pro_update_info();
+            // Do NOT probe Pro here — sync HTTP every frame tanks MQTT rates.
             let checking = matches!(self.update_status, UpdateStatus::Checking);
             let status_snapshot = self.update_status.clone();
             let pro_snapshot = self.pro_update_info.clone();
