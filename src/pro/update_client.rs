@@ -1,9 +1,12 @@
 //! Probe Pro sidecar update status (localhost only — no clients-host URLs/creds).
 //!
 //! Free TopicBench shows Pro version lines in Settings → Updates only when the
-//! sidecar answers. Check/install are delegated to Pro (`/update/*`).
+//! sidecar answers. Uses the **same base URL + Bearer `mcp-token`** as `/sim`
+//! (and other Pro HTTP clients). Check/install are delegated to Pro (`/update/*`).
 
 use serde::Deserialize;
+use std::fs;
+use std::path::PathBuf;
 use std::time::Duration;
 
 const DEFAULT_BASE: &str = "http://127.0.0.1:7853";
@@ -64,31 +67,70 @@ struct StatusJson {
     error: Option<String>,
 }
 
+/// Same base resolution as sim / launch (PRO_URL, else MCP_URL stripped of `/mcp`).
 fn base_url() -> String {
-    std::env::var("TOPICBENCH_PRO_URL")
-        .ok()
-        .map(|s| s.trim().trim_end_matches('/').to_string())
-        .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| DEFAULT_BASE.to_string())
+    if let Ok(s) = std::env::var("TOPICBENCH_PRO_URL") {
+        let s = s.trim().trim_end_matches('/').to_string();
+        if !s.is_empty() {
+            return s;
+        }
+    }
+    if let Ok(u) = std::env::var("TOPICBENCH_MCP_URL") {
+        let u = u.trim().trim_end_matches('/');
+        if u.is_empty() {
+            // fall through
+        } else if let Some(rest) = u.strip_suffix("/mcp") {
+            return rest.to_string();
+        } else {
+            return u.to_string();
+        }
+    }
+    DEFAULT_BASE.to_string()
 }
 
-/// Returns `Some` only when the Pro sidecar answers.
+fn token_path() -> PathBuf {
+    crate::mqtt::paths::config_file("mcp-token")
+}
+
+fn read_token() -> Option<String> {
+    let t = fs::read_to_string(token_path()).ok()?.trim().to_string();
+    if t.is_empty() {
+        None
+    } else {
+        Some(t)
+    }
+}
+
+/// GET/POST with the same Bearer header sim uses (required on Pro `/update/*`).
+fn call(method: &str, path: &str) -> Option<ureq::Response> {
+    let url = format!("{}{path}", base_url());
+    let agent = ureq::AgentBuilder::new().timeout(TIMEOUT).build();
+    let mut req = match method {
+        "GET" => agent.get(&url),
+        "POST" => agent.post(&url),
+        _ => return None,
+    };
+    if let Some(tok) = read_token() {
+        req = req.set("Authorization", &format!("Bearer {tok}"));
+    }
+    req.call().ok().filter(|r| (200..300).contains(&r.status()))
+}
+
+/// Returns `Some` only when the Pro sidecar answers on the live port.
 pub fn probe() -> Option<ProUpdateInfo> {
-    let base = base_url();
     // Prefer /update/status (richer); fall back to /health.version.
-    if let Some(info) = get_status(&base) {
+    if let Some(info) = get_status() {
         return Some(info);
     }
-    get_health(&base)
+    if let Some(info) = get_health() {
+        return Some(info);
+    }
+    // Last resort: same Bearer path Simulation uses — proves sidecar is the live one.
+    probe_via_sim()
 }
 
-fn get_status(base: &str) -> Option<ProUpdateInfo> {
-    let url = format!("{base}/update/status");
-    let agent = ureq::AgentBuilder::new().timeout(TIMEOUT).build();
-    let resp = agent.get(&url).call().ok()?;
-    if !(200..300).contains(&resp.status()) {
-        return None;
-    }
+fn get_status() -> Option<ProUpdateInfo> {
+    let resp = call("GET", "/update/status")?;
     let j: StatusJson = resp.into_json().ok()?;
     if !j.ok && j.current.is_none() {
         return None;
@@ -103,13 +145,8 @@ fn get_status(base: &str) -> Option<ProUpdateInfo> {
     })
 }
 
-fn get_health(base: &str) -> Option<ProUpdateInfo> {
-    let url = format!("{base}/health");
-    let agent = ureq::AgentBuilder::new().timeout(TIMEOUT).build();
-    let resp = agent.get(&url).call().ok()?;
-    if !(200..300).contains(&resp.status()) {
-        return None;
-    }
+fn get_health() -> Option<ProUpdateInfo> {
+    let resp = call("GET", "/health")?;
     let j: HealthJson = resp.into_json().ok()?;
     info_from_health(j)
 }
@@ -136,11 +173,15 @@ fn info_from_health(j: HealthJson) -> Option<ProUpdateInfo> {
     })
 }
 
+/// Bearer GET `/sim` — same connection as Simulation when update routes are absent.
+fn probe_via_sim() -> Option<ProUpdateInfo> {
+    let _resp = call("GET", "/sim")?;
+    Some(ProUpdateInfo::default())
+}
+
 /// Ask Pro to check its private update channel (fire-and-forget). No-op if down.
 pub fn request_check() {
-    let url = format!("{}/update/check", base_url());
-    let agent = ureq::AgentBuilder::new().timeout(TIMEOUT).build();
-    let _ = agent.post(&url).call();
+    let _ = call("POST", "/update/check");
 }
 
 /// Ask Pro to download/install the pending update. Returns Err if sidecar refuses/down.
@@ -149,10 +190,11 @@ pub fn request_install() -> Result<(), String> {
     let agent = ureq::AgentBuilder::new()
         .timeout(Duration::from_secs(2))
         .build();
-    let resp = agent
-        .post(&url)
-        .call()
-        .map_err(|e| format!("Pro install: {e}"))?;
+    let mut req = agent.post(&url);
+    if let Some(tok) = read_token() {
+        req = req.set("Authorization", &format!("Bearer {tok}"));
+    }
+    let resp = req.call().map_err(|e| format!("Pro install: {e}"))?;
     let status = resp.status();
     let body = resp
         .into_string()
