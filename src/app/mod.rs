@@ -109,6 +109,8 @@ pub struct MqttMonitorApp {
     update_modal_fallback_note: Option<String>,
     /// Last Pro sidecar update probe (None = Pro not answering; hide Pro lines).
     pro_update_info: Option<crate::pro::update_client::ProUpdateInfo>,
+    /// Throttle Settings re-probes while Pro reports `checking` / `installing`.
+    last_pro_update_probe: Option<Instant>,
     /// Pro MCP localhost Unix-socket bridge (None when not entitled / failed to bind).
     /// Settings → MCP will start/stop this later; v1 auto-starts when `mcp_server` is licensed.
     pro_bridge: Option<crate::pro::bridge::BridgeHandle>,
@@ -289,6 +291,7 @@ impl MqttMonitorApp {
             update_auto_check_done: false,
             update_modal_fallback_note: None,
             pro_update_info: None,
+            last_pro_update_probe: None,
             pro_bridge,
             // Licensed + binary beside GUI → spawn Pro on a worker; free installs skip.
             pro_sidecar: crate::pro::sidecar_launch::SidecarLauncher::start_if_licensed(),
@@ -489,6 +492,26 @@ impl eframe::App for MqttMonitorApp {
         while let Some(ev) = self.update_service.try_recv() {
             self.handle_update_event(ev);
             ctx.request_repaint();
+        }
+        // Re-probe Pro while Settings is open and sidecar is still checking/installing
+        // (clients-host check is async; a one-shot probe right after POST stays on “Checking…”).
+        if self.settings_open {
+            let pro_busy = self
+                .pro_update_info
+                .as_ref()
+                .map(|p| p.checking || p.installing)
+                .unwrap_or(false);
+            if pro_busy {
+                let due = self
+                    .last_pro_update_probe
+                    .map(|t| t.elapsed() >= Duration::from_millis(450))
+                    .unwrap_or(true);
+                if due {
+                    self.refresh_pro_update_info();
+                    self.last_pro_update_probe = Some(Instant::now());
+                }
+                ctx.request_repaint_after(Duration::from_millis(450));
+            }
         }
         // Quiet startup check once after splash (24h cache).
         if !self.update_auto_check_done
