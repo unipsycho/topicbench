@@ -111,15 +111,18 @@ fn get_health(base: &str) -> Option<ProUpdateInfo> {
         return None;
     }
     let j: HealthJson = resp.into_json().ok()?;
+    info_from_health(j)
+}
+
+/// `/health` alone means the sidecar is up — even older Pro builds that omit
+/// `version` / `update` (UI shows “Running (version unknown)”).
+fn info_from_health(j: HealthJson) -> Option<ProUpdateInfo> {
     if !j.ok {
         return None;
     }
     if let Some(u) = j.update {
         return Some(ProUpdateInfo {
-            current: u
-                .current
-                .or(j.version)
-                .unwrap_or_default(),
+            current: u.current.or(j.version).unwrap_or_default(),
             checking: u.checking,
             installing: u.installing,
             latest: u.latest,
@@ -127,8 +130,8 @@ fn get_health(base: &str) -> Option<ProUpdateInfo> {
             error: u.error,
         });
     }
-    j.version.map(|v| ProUpdateInfo {
-        current: v,
+    Some(ProUpdateInfo {
+        current: j.version.unwrap_or_default(),
         ..Default::default()
     })
 }
@@ -167,4 +170,37 @@ pub fn request_install() -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn health_ok_without_version_still_counts_as_up() {
+        let j: HealthJson = serde_json::from_str(
+            r#"{"ok":true,"mcp":"http://127.0.0.1:7853/mcp","sim":"http://127.0.0.1:7853/sim","bridge":true}"#,
+        )
+        .unwrap();
+        let info = info_from_health(j).expect("sidecar answering");
+        assert!(info.current.is_empty());
+        assert!(!info.update_available);
+    }
+
+    #[test]
+    fn health_with_version_and_update_block() {
+        let j: HealthJson = serde_json::from_str(
+            r#"{"ok":true,"version":"1.2.6","update":{"current":"1.2.6","latest":"1.2.6","update_available":false}}"#,
+        )
+        .unwrap();
+        let info = info_from_health(j).unwrap();
+        assert_eq!(info.current, "1.2.6");
+        assert_eq!(info.latest.as_deref(), Some("1.2.6"));
+    }
+
+    #[test]
+    fn health_not_ok_is_down() {
+        let j: HealthJson = serde_json::from_str(r#"{"ok":false}"#).unwrap();
+        assert!(info_from_health(j).is_none());
+    }
 }
