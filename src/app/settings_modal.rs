@@ -68,6 +68,16 @@ impl MqttMonitorApp {
         self.update_check_quiet = quiet;
         self.update_status = UpdateStatus::Checking;
         self.update_service.start_check();
+        // Delegate Pro channel check to the sidecar when licensed (no Pro URLs in OSS).
+        if crate::pro::is_licensed() {
+            crate::pro::update_client::request_check();
+        }
+        self.refresh_pro_update_info();
+    }
+
+    /// Probe localhost Pro sidecar for version / update status (hide lines if down).
+    pub(super) fn refresh_pro_update_info(&mut self) {
+        self.pro_update_info = crate::pro::update_client::probe();
     }
 
     /// Apply a background update event on the UI thread.
@@ -177,8 +187,11 @@ impl MqttMonitorApp {
             let mut save_clicked = false;
             let mut cancel_clicked = false;
             let mut check_now = false;
+            let mut update_pro = false;
+            self.refresh_pro_update_info();
             let checking = matches!(self.update_status, UpdateStatus::Checking);
             let status_snapshot = self.update_status.clone();
+            let pro_snapshot = self.pro_update_info.clone();
             let pro_catalog = self
                 .theme_client
                 .as_ref()
@@ -192,9 +205,9 @@ impl MqttMonitorApp {
             let licensed = crate::pro::is_licensed();
             let mut theme_changed: Option<String> = None;
             let modal = egui::Modal::new(egui::Id::new("mqtt_master_settings")).show(ctx, |ui| {
-                // Wide enough for narrow Updates + Pro with one-line machine ID (~68 chars).
-                ui.set_min_width(760.0);
-                ui.set_max_width(860.0);
+                // Tabbed Settings — General / Pro / Updates.
+                ui.set_min_width(560.0);
+                ui.set_max_width(640.0);
                 egui::ScrollArea::vertical()
                     .max_height(620.0)
                     .show(ui, |ui| {
@@ -208,6 +221,9 @@ impl MqttMonitorApp {
                                     status: &status_snapshot,
                                     checking,
                                     check_now: &mut check_now,
+                                    pro: pro_snapshot.as_ref(),
+                                    pro_enabled: licensed,
+                                    update_pro: &mut update_pro,
                                 },
                                 settings_panel::ThemeSection {
                                     pro_catalog: &pro_catalog,
@@ -270,6 +286,15 @@ impl MqttMonitorApp {
             }
             if check_now {
                 self.request_update_check(false);
+            }
+            if update_pro {
+                match crate::pro::update_client::request_install() {
+                    Ok(()) => {
+                        self.status = "Pro update installing…".into();
+                        self.refresh_pro_update_info();
+                    }
+                    Err(e) => self.status = format!("Pro update failed: {e}"),
+                }
             }
             if save_clicked {
                 self.save_settings_modal(ctx);

@@ -319,9 +319,8 @@ impl MqttMonitorApp {
         let tip_out = shortcuts::tip("Decrease font size (−4 steps from default)", "Ctrl+-");
         let tip_in =
             shortcuts::tip("Increase font size (+5 steps from default)", "Ctrl+= / Ctrl++");
-        // Quiet chrome pad so the stack reads as a dedicated trailing control.
-        ui.painter()
-            .rect_filled(ui.max_rect(), 3.0, Color32::from_rgb(42, 44, 52));
+        // Quiet chrome pad — same App tint as Settings (tracks Latte / Classic).
+        ui.painter().rect_filled(ui.max_rect(), 3.0, TINT_APP());
         ui.allocate_ui_with_layout(
             egui::vec2(icons::ZOOM_STACK_W, icons::CMD_H),
             egui::Layout::top_down(egui::Align::Center),
