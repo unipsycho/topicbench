@@ -6,7 +6,10 @@ use crate::mqtt::subscribe;
 use crate::mqtt::value_path;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::cell::RefCell;
+use std::collections::HashMap;
 use std::fs;
+use std::hash::{Hash, Hasher};
 use std::path::PathBuf;
 
 const FILE_NAME: &str = "color_rules.json";
@@ -111,9 +114,22 @@ fn rgba_c32([r, g, b, a]: [u8; 4]) -> eframe::egui::Color32 {
     eframe::egui::Color32::from_rgba_unmultiplied(r, g, b, a)
 }
 
+/// Cached `style_for` result for one leaf (profile + topic).
+struct StyleCacheEntry {
+    /// [`ColorRulesStore::revision`] when computed.
+    rev: u64,
+    /// Fast fingerprint of the payload string (recompute on mismatch).
+    payload_fp: u64,
+    style: Option<RuleStyle>,
+}
+
 #[derive(Default)]
 pub struct ColorRulesStore {
     pub rules: Vec<ColorRule>,
+    /// Bumps on any rule-set change so paint can reuse cached styles safely.
+    revision: u64,
+    /// Paint-path cache: key `profile_id\0topic` → last style for that leaf.
+    style_cache: RefCell<HashMap<String, StyleCacheEntry>>,
 }
 
 impl ColorRulesStore {
@@ -131,6 +147,7 @@ impl ColorRulesStore {
         let path = Self::path();
         let Ok(text) = fs::read_to_string(&path) else {
             self.rules.clear();
+            self.bump_revision();
             return;
         };
         // Accept either `match` or `match_rule` in file via a helper.
@@ -141,9 +158,12 @@ impl ColorRulesStore {
             }
             Err(_) => self.rules.clear(),
         }
+        self.bump_revision();
     }
 
-    pub fn save(&self) -> Result<(), String> {
+    pub fn save(&mut self) -> Result<(), String> {
+        // Panel edits mutate `rules` in place then save — drop paint cache first.
+        self.bump_revision();
         let path = Self::path();
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent).map_err(|e| e.to_string())?;
@@ -160,6 +180,12 @@ impl ColorRulesStore {
         let body = serde_json::json!({ "version": 1, "rules": arr });
         let text = serde_json::to_string_pretty(&body).map_err(|e| e.to_string())?;
         fs::write(&path, text).map_err(|e| e.to_string())
+    }
+
+    /// Invalidate paint-path style cache (rule edits / reload).
+    fn bump_revision(&mut self) {
+        self.revision = self.revision.wrapping_add(1);
+        self.style_cache.borrow_mut().clear();
     }
 
     pub fn add_blank(&mut self) -> Result<(), String> {
@@ -297,12 +323,43 @@ impl ColorRulesStore {
     }
 
     /// First matching enabled rule for this leaf topic + payload.
+    ///
+    /// Cached per `(profile, topic)` until the payload fingerprint or rule-set
+    /// revision changes — paint calls this every egui frame; inbound MQTT does not.
     pub fn style_for(
         &self,
         profile_id: &str,
         topic: &str,
         payload: &str,
-    ) -> Option<&RuleStyle> {
+    ) -> Option<RuleStyle> {
+        let key = style_cache_key(profile_id, topic);
+        let payload_fp = payload_fingerprint(payload);
+        if let Some(hit) = self.style_cache.borrow().get(&key) {
+            if hit.rev == self.revision && hit.payload_fp == payload_fp {
+                return hit.style.clone();
+            }
+        }
+        let style = self.eval_style(profile_id, topic, payload);
+        self.style_cache.borrow_mut().insert(
+            key,
+            StyleCacheEntry {
+                rev: self.revision,
+                payload_fp,
+                style: style.clone(),
+            },
+        );
+        style
+    }
+
+    /// Scan rules once (no cache). Parses JSON payload at most once for json_path_* preds.
+    fn eval_style(
+        &self,
+        profile_id: &str,
+        topic: &str,
+        payload: &str,
+    ) -> Option<RuleStyle> {
+        // Lazy: None = not parsed yet; Some(None) = invalid JSON; Some(Some) = root.
+        let mut json: Option<Option<Value>> = None;
         for r in &self.rules {
             if !r.enabled {
                 continue;
@@ -315,12 +372,22 @@ impl ColorRulesStore {
             if !topic_glob_match(&r.topic_glob, topic) {
                 continue;
             }
-            if pred_matches(&r.match_rule, topic, payload) {
-                return Some(&r.style);
+            if pred_matches(&r.match_rule, topic, payload, &mut json) {
+                return Some(r.style.clone());
             }
         }
         None
     }
+}
+
+fn style_cache_key(profile_id: &str, topic: &str) -> String {
+    format!("{profile_id}\0{topic}")
+}
+
+fn payload_fingerprint(payload: &str) -> u64 {
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    payload.hash(&mut h);
+    h.finish()
 }
 
 fn topic_glob_match(glob: &str, topic: &str) -> bool {
@@ -336,22 +403,25 @@ fn topic_glob_match(glob: &str, topic: &str) -> bool {
     subscribe::topic_matches_filter(topic, g)
 }
 
-fn pred_matches(pred: &MatchPred, topic: &str, payload: &str) -> bool {
+fn pred_matches(
+    pred: &MatchPred,
+    topic: &str,
+    payload: &str,
+    json: &mut Option<Option<Value>>,
+) -> bool {
     let trimmed = payload.trim();
     match pred {
         MatchPred::TopicEquals { value } => {
             !value.trim().is_empty() && topic.eq_ignore_ascii_case(value.trim())
         }
         MatchPred::TopicContains { value } => {
-            !value.is_empty()
-                && topic
-                    .to_lowercase()
-                    .contains(&value.trim().to_lowercase())
+            let needle = value.trim();
+            !needle.is_empty() && contains_ignore_ascii_case(topic, needle)
         }
         MatchPred::TopicMatches { pattern } => topic_pattern_match(topic, pattern.trim()),
         MatchPred::PayloadEquals { value } => trimmed == value.trim(),
         MatchPred::PayloadContains { value } => {
-            !value.is_empty() && trimmed.to_lowercase().contains(&value.to_lowercase())
+            !value.is_empty() && contains_ignore_ascii_case(trimmed, value)
         }
         MatchPred::PayloadNumber { op, value } => {
             let Some(n) = parse_payload_number(trimmed) else {
@@ -360,28 +430,48 @@ fn pred_matches(pred: &MatchPred, topic: &str, payload: &str) -> bool {
             cmp_f64(op, n, *value)
         }
         MatchPred::JsonPathEquals { path, value } => {
-            json_at(payload, path).is_some_and(|v| json_eq(&v, value))
+            json_field(payload, path, json).is_some_and(|v| json_eq(v, value))
         }
         MatchPred::JsonPathContains { path, value } => {
             if value.is_empty() || path.trim().is_empty() {
                 return false;
             }
-            let Some(v) = json_at(payload, path) else {
+            let Some(v) = json_field(payload, path, json) else {
                 return false;
             };
-            let hay = json_as_text(&v);
-            !hay.is_empty() && hay.to_lowercase().contains(&value.to_lowercase())
+            let hay = json_as_text(v);
+            !hay.is_empty() && contains_ignore_ascii_case(&hay, value)
         }
         MatchPred::JsonPathNumber { path, op, value } => {
-            let Some(n) = json_at(payload, path).and_then(json_as_f64) else {
+            let Some(n) = json_field(payload, path, json).and_then(json_as_f64_ref) else {
                 return false;
             };
             cmp_f64(op, n, *value)
         }
         MatchPred::JsonPathTruthy { path } => {
-            json_at(payload, path).is_some_and(|v| json_truthy(&v))
+            json_field(payload, path, json).is_some_and(json_truthy)
         }
     }
+}
+
+/// Case-insensitive substring; ASCII path avoids `to_lowercase` allocations.
+fn contains_ignore_ascii_case(haystack: &str, needle: &str) -> bool {
+    if needle.is_empty() {
+        return true;
+    }
+    if haystack.is_ascii() && needle.is_ascii() {
+        let h = haystack.as_bytes();
+        let n = needle.as_bytes();
+        if n.len() > h.len() {
+            return false;
+        }
+        return h.windows(n.len()).any(|w| {
+            w.iter()
+                .zip(n.iter())
+                .all(|(a, b)| a.eq_ignore_ascii_case(b))
+        });
+    }
+    haystack.to_lowercase().contains(&needle.to_lowercase())
 }
 
 fn cmp_f64(op: &str, n: f64, value: f64) -> bool {
@@ -408,10 +498,14 @@ fn parse_payload_number(trimmed: &str) -> Option<f64> {
 }
 
 fn json_as_f64(v: Value) -> Option<f64> {
+    json_as_f64_ref(&v)
+}
+
+fn json_as_f64_ref(v: &Value) -> Option<f64> {
     match v {
         Value::Number(n) => n.as_f64(),
         Value::String(s) => s.trim().parse().ok(),
-        Value::Bool(b) => Some(if b { 1.0 } else { 0.0 }),
+        Value::Bool(b) => Some(if *b { 1.0 } else { 0.0 }),
         _ => None,
     }
 }
@@ -460,9 +554,18 @@ fn glob_match_chars(text: &[char], pattern: &[char]) -> bool {
     pi == pattern.len()
 }
 
-fn json_at(payload: &str, path: &str) -> Option<Value> {
-    // Shared walker: nested objects, array indices, `$.` / `foo[0]` sugar.
-    value_path::value_at_path(payload, path)
+/// Resolve a nested field using a once-per-eval parsed JSON root.
+fn json_field<'a>(
+    payload: &str,
+    path: &str,
+    json: &'a mut Option<Option<Value>>,
+) -> Option<&'a Value> {
+    if json.is_none() {
+        let root = serde_json::from_str(payload.trim()).ok();
+        *json = Some(root);
+    }
+    let root = json.as_ref()?.as_ref()?;
+    value_path::get_at_path(root, path)
 }
 
 fn json_as_text(v: &Value) -> String {
@@ -591,19 +694,24 @@ fn new_id() -> String {
 mod tests {
     use super::*;
 
+    fn matches(pred: MatchPred, topic: &str, payload: &str) -> bool {
+        let mut json = None;
+        pred_matches(&pred, topic, payload, &mut json)
+    }
+
     #[test]
     fn nested_channel_equals() {
         let payload = r#"{"meta":{"channel":"Line-A"},"ok":true}"#;
-        assert!(pred_matches(
-            &MatchPred::JsonPathEquals {
+        assert!(matches(
+            MatchPred::JsonPathEquals {
                 path: "meta.channel".into(),
                 value: Value::String("Line-A".into()),
             },
             "plant/status",
             payload,
         ));
-        assert!(!pred_matches(
-            &MatchPred::JsonPathEquals {
+        assert!(!matches(
+            MatchPred::JsonPathEquals {
                 path: "meta.channel".into(),
                 value: Value::String("Line-B".into()),
             },
@@ -615,16 +723,16 @@ mod tests {
     #[test]
     fn nested_channel_contains_and_array() {
         let payload = r#"{"channels":[{"name":"CH-North"},{"name":"CH-South"}]}"#;
-        assert!(pred_matches(
-            &MatchPred::JsonPathContains {
+        assert!(matches(
+            MatchPred::JsonPathContains {
                 path: "channels[1].name".into(),
                 value: "south".into(),
             },
             "plant/io",
             payload,
         ));
-        assert!(pred_matches(
-            &MatchPred::JsonPathEquals {
+        assert!(matches(
+            MatchPred::JsonPathEquals {
                 path: "$.channels.0.name".into(),
                 value: Value::String("CH-North".into()),
             },
@@ -635,20 +743,61 @@ mod tests {
 
     #[test]
     fn whole_payload_rules_still_work() {
-        assert!(pred_matches(
-            &MatchPred::PayloadContains {
+        assert!(matches(
+            MatchPred::PayloadContains {
                 value: "fault".into(),
             },
             "a/b",
             "device fault code",
         ));
-        assert!(pred_matches(
-            &MatchPred::PayloadNumber {
+        assert!(matches(
+            MatchPred::PayloadNumber {
                 op: ">".into(),
                 value: 10.0,
             },
             "a/b",
             "12.5",
         ));
+    }
+
+    #[test]
+    fn style_for_caches_until_payload_or_rules_change() {
+        let mut store = ColorRulesStore::default();
+        store.rules.push(ColorRule {
+            id: "r1".into(),
+            name: "alarm".into(),
+            enabled: true,
+            order: 0,
+            profile_id: None,
+            topic_glob: "#".into(),
+            match_rule: MatchPred::PayloadContains {
+                value: "ALARM".into(),
+            },
+            style: RuleStyle {
+                topic_color: Some([255, 0, 0, 255]),
+                value_color: None,
+                row_bg: Some([40, 0, 0, 120]),
+            },
+        });
+        store.bump_revision();
+
+        let a = store.style_for("p1", "plant/line", "status ALARM");
+        let b = store.style_for("p1", "plant/line", "status ALARM");
+        assert_eq!(a.as_ref().and_then(|s| s.topic_color), Some([255, 0, 0, 255]));
+        assert_eq!(
+            a.as_ref().and_then(|s| s.topic_color),
+            b.as_ref().and_then(|s| s.topic_color)
+        );
+        assert_eq!(store.style_cache.borrow().len(), 1);
+
+        // Same topic, new payload → recompute (no match).
+        let c = store.style_for("p1", "plant/line", "status OK");
+        assert!(c.is_none());
+
+        // Rule edit invalidates cache.
+        store.rules[0].enabled = false;
+        store.bump_revision();
+        assert!(store.style_cache.borrow().is_empty());
+        assert!(store.style_for("p1", "plant/line", "status ALARM").is_none());
     }
 }
