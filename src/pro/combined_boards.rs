@@ -103,6 +103,12 @@ pub struct CombinedBoardPersist {
     pub time_range: CombinedTimeRange,
     #[serde(default = "default_plot_height")]
     pub plot_height: f32,
+    /// Manual Y lower bound; `None` = auto from series.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub y_min: Option<f64>,
+    /// Manual Y upper bound; `None` = auto from series.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub y_max: Option<f64>,
     #[serde(default)]
     pub window_geom: Option<WinGeom>,
     #[serde(default)]
@@ -125,6 +131,10 @@ pub struct CombinedLibraryEntry {
     pub time_range: CombinedTimeRange,
     #[serde(default = "default_plot_height")]
     pub plot_height: f32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub y_min: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub y_max: Option<f64>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -150,6 +160,10 @@ pub struct CombinedBoard {
     pub series: Vec<CombinedSeriesRef>,
     pub time_range: CombinedTimeRange,
     pub plot_height: f32,
+    /// Manual Y lower; `None` = auto.
+    pub y_min: Option<f64>,
+    /// Manual Y upper; `None` = auto.
+    pub y_max: Option<f64>,
     pub window_geom: Option<WinGeom>,
     pub open: bool,
     /// Per-series display samples (Clear empties these only).
@@ -168,6 +182,8 @@ impl CombinedBoard {
             series: p.series,
             time_range: p.time_range,
             plot_height: clamp_height(p.plot_height),
+            y_min: sanitize_y_limit(p.y_min),
+            y_max: sanitize_y_limit(p.y_max),
             window_geom: p.window_geom,
             open: p.open,
             buffers,
@@ -181,6 +197,8 @@ impl CombinedBoard {
             series: self.series.clone(),
             time_range: self.time_range,
             plot_height: self.plot_height,
+            y_min: self.y_min,
+            y_max: self.y_max,
             window_geom: self.window_geom,
             open: self.open,
         }
@@ -349,6 +367,8 @@ impl CombinedBoardsStore {
             series,
             time_range: CombinedTimeRange::default(),
             plot_height: height,
+            y_min: None,
+            y_max: None,
             window_geom: None,
             open,
             buffers: HashMap::new(),
@@ -424,6 +444,8 @@ impl CombinedBoardsStore {
             series: Vec::new(),
             time_range: CombinedTimeRange::default(),
             plot_height: default_plot_height(),
+            y_min: None,
+            y_max: None,
             window_geom: None,
             open,
             buffers: HashMap::new(),
@@ -544,6 +566,8 @@ impl CombinedBoardsStore {
             series: board.series.clone(),
             time_range: board.time_range,
             plot_height: board.plot_height,
+            y_min: board.y_min,
+            y_max: board.y_max,
         };
         if let Some(existing) = self.library.iter_mut().find(|e| e.name == name) {
             *existing = entry;
@@ -572,6 +596,8 @@ impl CombinedBoardsStore {
             series: entry.series,
             time_range: entry.time_range,
             plot_height: clamp_height(entry.plot_height),
+            y_min: sanitize_y_limit(entry.y_min),
+            y_max: sanitize_y_limit(entry.y_max),
             window_geom: None,
             open: true,
             buffers,
@@ -656,6 +682,11 @@ pub fn clamp_height(h: f32) -> f32 {
     h.clamp(COMBINED_GRAPH_H_MIN, COMBINED_GRAPH_H_MAX)
 }
 
+/// Drop non-finite manual Y limits (treat as auto).
+fn sanitize_y_limit(v: Option<f64>) -> Option<f64> {
+    v.filter(|n| n.is_finite())
+}
+
 fn new_id() -> String {
     format!("cb-{}", uuid::Uuid::new_v4())
 }
@@ -708,5 +739,29 @@ mod tests {
         let now = Instant::now();
         let c = CombinedTimeRange::Min5.cutoff(now).unwrap();
         assert_eq!(now.saturating_duration_since(c), Duration::from_secs(5 * 60));
+    }
+
+    #[test]
+    fn y_limits_roundtrip_and_sanitize() {
+        assert_eq!(sanitize_y_limit(Some(1.5)), Some(1.5));
+        assert_eq!(sanitize_y_limit(Some(f64::NAN)), None);
+        assert_eq!(sanitize_y_limit(Some(f64::INFINITY)), None);
+        let persist = CombinedBoardPersist {
+            id: "cb-test".into(),
+            title: "T".into(),
+            series: Vec::new(),
+            time_range: CombinedTimeRange::default(),
+            plot_height: 120.0,
+            y_min: Some(0.0),
+            y_max: Some(100.0),
+            window_geom: None,
+            open: true,
+        };
+        let board = CombinedBoard::from_persist(persist);
+        assert_eq!(board.y_min, Some(0.0));
+        assert_eq!(board.y_max, Some(100.0));
+        let back = board.to_persist();
+        assert_eq!(back.y_min, Some(0.0));
+        assert_eq!(back.y_max, Some(100.0));
     }
 }
