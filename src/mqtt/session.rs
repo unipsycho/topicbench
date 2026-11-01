@@ -619,7 +619,14 @@ impl SessionManager {
     }
 
     /// Apply coalesced inbox updates flushed by the background applier thread.
-    pub fn poll_events(&mut self, pins: &mut PinBoard) -> PollOutcome {
+    ///
+    /// `combined` receives the same timed samples as stickies so board series
+    /// keep updating when no sticky is present (MultiGraph boards own buffers).
+    pub fn poll_events(
+        &mut self,
+        pins: &mut PinBoard,
+        mut combined: Option<&mut crate::pro::combined_boards::CombinedBoardsStore>,
+    ) -> PollOutcome {
         let now = Instant::now();
         // Ingest totals are counted at fold time — sync before EMA/ribbon read.
         let (msgs, bytes) = self.inbox.inbound_totals();
@@ -726,6 +733,9 @@ impl SessionManager {
                 // Pro deep-store forward (full payloads); drained on the UI thread.
                 pins.enqueue_topic_hist(&profile_id, &topic, &samples);
                 pins.on_message_samples(&profile_id, &name, &topic, &samples, msg.count);
+                if let Some(boards) = combined.as_mut() {
+                    boards.on_message_samples(&profile_id, &name, &topic, &samples);
+                }
             }
         }
 
@@ -808,7 +818,7 @@ mod tests {
     ) -> bool {
         let deadline = Instant::now() + timeout;
         while Instant::now() < deadline {
-            sessions.poll_events(pins);
+            sessions.poll_events(pins, None);
             if pred(sessions) {
                 return true;
             }
@@ -879,7 +889,7 @@ mod tests {
 
         // Stay disconnected — no reconnect chatter applied after intentional stop.
         thread::sleep(Duration::from_secs(2));
-        sessions.poll_events(&mut pins);
+        sessions.poll_events(&mut pins, None);
         let sess = sessions.open.get(&profile.id).expect("session retained");
         assert_eq!(sess.state, SessionState::Disconnected);
         assert!(sess.user_stopped);
