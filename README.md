@@ -69,6 +69,7 @@ Paid extras for teams that outgrow the free explorer — same app, unlock Pro wh
 - **History scrubber** — scrub per-topic history in the Payload panel
 - **Topic bookmarks** — jump list into deep trees
 - **Custom color rules** — paint tree rows by topic / payload predicates
+- **UI themes** — pick a look that’s easier on the eyes or fits your environment
 - **Topic tree export & import** — JSON hierarchy out, republish onto a target broker
 - **CSV recording** — time-series dumps for Excel
 
