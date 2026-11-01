@@ -80,6 +80,7 @@ impl MqttMonitorApp {
     /// Probe localhost Pro sidecar for version / update status (hide lines if down).
     pub(super) fn refresh_pro_update_info(&mut self) {
         self.pro_update_info = crate::pro::update_client::probe();
+        self.last_pro_update_probe = Some(std::time::Instant::now());
     }
 
     /// Apply a background update event on the UI thread.
@@ -122,6 +123,10 @@ impl MqttMonitorApp {
                         };
                     }
                 }
+                // Free check finished first — re-read Pro (may still be checking).
+                if crate::pro::is_licensed() {
+                    self.refresh_pro_update_info();
+                }
             }
             UpdateEvent::CheckFailed(msg) => {
                 self.settings.last_update_check = Some(update::now_unix());
@@ -130,6 +135,9 @@ impl MqttMonitorApp {
                 // Quiet on startup — Settings still shows “Couldn't check”.
                 if !self.update_check_quiet {
                     // Manual Check now already surfaces via status line.
+                }
+                if crate::pro::is_licensed() {
+                    self.refresh_pro_update_info();
                 }
             }
             UpdateEvent::InstallDone(outcome) => match outcome {

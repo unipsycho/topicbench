@@ -384,10 +384,13 @@ fn draw_updates_tab(ui: &mut egui::Ui, updates: UpdatesSection<'_>) {
         ui.weak("Checks the free TopicBench GitHub release channel.");
     }
 
-    // Machine ID for checkout / license — lives with Updates, not Pro features.
-    ui.add_space(16.0);
-    ui.strong("Machine ID");
-    draw_machine_id_controls(ui);
+    // Machine ID / order copy — only for users without a live Pro (licensed + answering).
+    let pro_detected = updates.pro_enabled && updates.pro.is_some();
+    if !pro_detected {
+        ui.add_space(16.0);
+        ui.strong("Machine ID");
+        draw_machine_id_controls(ui);
+    }
 }
 
 /// Monospace ID + Copy / Save license-request (and license-installed note when present).
