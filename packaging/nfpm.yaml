@@ -23,8 +23,25 @@ contents:
       mode: 0755
   - src: packaging/topicbench.desktop
     dst: /usr/share/applications/topicbench.desktop
-  - src: packaging/topicbench.png
+  # hicolor PNGs regenerated from assets/icons/app.ico (see scripts/regen-app-icons.sh)
+  - src: packaging/icons/topicbench-16.png
+    dst: /usr/share/icons/hicolor/16x16/apps/topicbench.png
+  - src: packaging/icons/topicbench-24.png
+    dst: /usr/share/icons/hicolor/24x24/apps/topicbench.png
+  - src: packaging/icons/topicbench-32.png
+    dst: /usr/share/icons/hicolor/32x32/apps/topicbench.png
+  - src: packaging/icons/topicbench-48.png
+    dst: /usr/share/icons/hicolor/48x48/apps/topicbench.png
+  - src: packaging/icons/topicbench-64.png
+    dst: /usr/share/icons/hicolor/64x64/apps/topicbench.png
+  - src: packaging/icons/topicbench-128.png
+    dst: /usr/share/icons/hicolor/128x128/apps/topicbench.png
+  - src: packaging/icons/topicbench-256.png
     dst: /usr/share/icons/hicolor/256x256/apps/topicbench.png
+  - src: packaging/icons/topicbench-512.png
+    dst: /usr/share/icons/hicolor/512x512/apps/topicbench.png
+  - src: packaging/topicbench.png
+    dst: /usr/share/pixmaps/topicbench.png
 overrides:
   rpm:
     depends:
