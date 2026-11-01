@@ -189,6 +189,7 @@ pub fn draw(
     history_fwd: Option<&HistoryForwarder>,
     payload_scrub: &mut PayloadScrub,
     bookmarks: &mut crate::pro::bookmarks::BookmarksStore,
+    combined_boards: &mut crate::pro::combined_boards::CombinedBoardsStore,
 ) {
     // Stay within the side-panel width — long topic paths wrap; they must not widen the column.
     let panel_w = ui.available_width();
@@ -226,6 +227,7 @@ pub fn draw(
         history_fwd,
         Some(payload_scrub),
         Some(bookmarks),
+        Some(combined_boards),
     );
 
     if pop_out {
@@ -262,6 +264,7 @@ pub fn draw_undocked_viewports(
     builder_seeds: &mut std::collections::HashMap<String, crate::mqtt::window_geom::WinGeom>,
     saved_geoms: &mut std::collections::BTreeMap<String, crate::mqtt::window_geom::WinGeom>,
     geom_dirty: &mut bool,
+    combined_boards: &mut crate::pro::combined_boards::CombinedBoardsStore,
 ) {
     let mut close_idxs: Vec<usize> = Vec::new();
     let n = popped.len();
@@ -314,6 +317,7 @@ pub fn draw_undocked_viewports(
                         None,
                         None, // scrub stays on the docked Payload panel
                         None, // bookmark chrome is on the docked Payload bar
+                        Some(combined_boards),
                     );
                 };
                 match class {
@@ -393,6 +397,7 @@ fn draw_topic_body(
     history_fwd: Option<&HistoryForwarder>,
     mut payload_scrub: Option<&mut PayloadScrub>,
     bookmarks: Option<&mut crate::pro::bookmarks::BookmarksStore>,
+    mut combined_boards: Option<&mut crate::pro::combined_boards::CombinedBoardsStore>,
 ) {
     let accent = profiles
         .profiles
@@ -530,6 +535,7 @@ fn draw_topic_body(
                 payload_scrub,
                 &history,
                 sample_at,
+                combined_boards.as_deref_mut(),
             );
         }
         _ => {
@@ -888,6 +894,7 @@ fn draw_searchable_body(
     history: &[(Instant, String)],
     // Receive Instant for the viewed sample (live tip or scrubbed); None → hide clock.
     sample_at: Option<Instant>,
+    mut combined_boards: Option<&mut crate::pro::combined_boards::CombinedBoardsStore>,
 ) {
     let history_len = history.len();
     let matches = find_matches(display, &search.query);
@@ -1093,13 +1100,15 @@ fn draw_searchable_body(
                                 } else {
                                     format!("Sticky Graph: {topic}")
                                 };
-                                if payload_graph_pin(ui, icons, &tip).clicked() {
-                                    let current = if let Some(p) = path_opt {
-                                        value_path::extract_path_value(raw_payload, p)
-                                            .unwrap_or_else(|| line.trim().trim_end_matches(',').to_string())
-                                    } else {
-                                        display.trim().to_string()
-                                    };
+                                let current = if let Some(p) = path_opt {
+                                    value_path::extract_path_value(raw_payload, p)
+                                        .unwrap_or_else(|| {
+                                            line.trim().trim_end_matches(',').to_string()
+                                        })
+                                } else {
+                                    display.trim().to_string()
+                                };
+                                if payload_graph_pin(ui, icons, "line_graph", &tip).clicked() {
                                     pins.pin_graph(
                                         profile_id,
                                         profile_name,
@@ -1116,11 +1125,49 @@ fn draw_searchable_body(
                                     *open_stickies = true;
                                     *status = format!("Sticky Graph · {sticky_topic}");
                                 }
+                                // Add to Combined board (Pro MultiGraph) — button, not drag.
+                                if pro::has(Entitlement::MultiGraph) {
+                                    if payload_graph_pin(
+                                        ui,
+                                        icons,
+                                        "node_graph",
+                                        "Add to Combined",
+                                    )
+                                    .clicked()
+                                    {
+                                        if let Some(boards) = combined_boards.as_mut() {
+                                            let now = Instant::now();
+                                            let numeric =
+                                                value_path::sample_numeric(&current);
+                                            let mut seed = std::collections::VecDeque::new();
+                                            seed.push_back(crate::mqtt::pins::HistorySample {
+                                                at: now,
+                                                payload: current.clone(),
+                                                numeric,
+                                            });
+                                            crate::ui::combined_board_panel::add_series_from_ui(
+                                                boards,
+                                                profile_id,
+                                                profile_name,
+                                                &sticky_topic,
+                                                Some(&seed),
+                                                status,
+                                            );
+                                        }
+                                    }
+                                }
                             } else {
                                 ui.allocate_exact_size(
                                     Vec2::splat(PAYLOAD_GRAPH_ICON),
                                     Sense::hover(),
                                 );
+                                if pro::has(Entitlement::MultiGraph) {
+                                    // Keep indent aligned when Combined icon is gated per-row.
+                                    ui.allocate_exact_size(
+                                        Vec2::splat(PAYLOAD_GRAPH_ICON),
+                                        Sense::hover(),
+                                    );
+                                }
                             }
                             ui.add(
                                 egui::Label::new(job)
@@ -1147,8 +1194,13 @@ fn draw_searchable_body(
     }
 }
 
-/// Compact left-rail graph pin — matches monospace row height.
-fn payload_graph_pin(ui: &mut egui::Ui, icons: &IconSet, tip: &str) -> egui::Response {
+/// Compact left-rail graph / Combined pin — matches monospace row height.
+fn payload_graph_pin(
+    ui: &mut egui::Ui,
+    icons: &IconSet,
+    icon: &str,
+    tip: &str,
+) -> egui::Response {
     let size = Vec2::splat(PAYLOAD_GRAPH_ICON);
     let (rect, response) = ui.allocate_exact_size(size, Sense::click());
     let response = hover_tip::attach(response, tip);
@@ -1156,7 +1208,7 @@ fn payload_graph_pin(ui: &mut egui::Ui, icons: &IconSet, tip: &str) -> egui::Res
         ui.painter()
             .rect_filled(rect, 2.0, icons::CHROME_HOVER());
     }
-    if let Some(tex) = icons.get("line_graph") {
+    if let Some(tex) = icons.get(icon) {
         egui::Image::new(tex)
             .fit_to_exact_size(size)
             .maintain_aspect_ratio(true)

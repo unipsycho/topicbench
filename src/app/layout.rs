@@ -722,6 +722,7 @@ impl MqttMonitorApp {
                                 &self.search,
                                 &mut self.status,
                                 &self.color_rules,
+                                &mut self.combined_boards,
                             );
                             ui.add_space(8.0);
                             ui.separator();
@@ -836,6 +837,7 @@ impl MqttMonitorApp {
                     self.history_fwd.as_ref(),
                     &mut self.payload_scrub,
                     &mut self.bookmarks,
+                    &mut self.combined_boards,
                 );
             });
             if self.panels.stickies != stickies_before || self.payload_popped.len() != popped_before
@@ -843,6 +845,27 @@ impl MqttMonitorApp {
                 self.persist_panels();
             }
         }
+    }
+
+    /// Combined graph board pop-outs (Pro MultiGraph).
+    pub(super) fn draw_combined_boards(&mut self, ctx: &egui::Context) {
+        if !crate::pro::has(crate::pro::Entitlement::MultiGraph) {
+            return;
+        }
+        if !self.combined_boards.any_open() {
+            self.vp_seeds.combined_boards.clear();
+            return;
+        }
+        crate::ui::combined_board_panel::draw_viewports(
+            ctx,
+            &mut self.combined_boards,
+            &self.sessions,
+            &self.profiles,
+            &self.icons,
+            &mut self.status,
+            &mut self.vp_seeds.combined_boards,
+            &mut self.geometry_dirty,
+        );
     }
 
     /// Floating payload windows — each locked to the topic when it was popped.
@@ -865,6 +888,7 @@ impl MqttMonitorApp {
             &mut self.vp_seeds.payload_pops,
             &mut self.settings.window_payload_popouts,
             &mut self.geometry_dirty,
+            &mut self.combined_boards,
         );
         if self.panels.stickies != stickies_before || self.payload_popped.len() != n_before {
             self.persist_panels();

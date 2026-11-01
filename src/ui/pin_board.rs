@@ -5,20 +5,17 @@
 use crate::mqtt::pins::{DetectedValue, HistorySample, PinBoard, StickyTopic, StickyViewMode};
 use crate::mqtt::profile::ProfileStore;
 use crate::mqtt::session::{SessionManager, SessionState};
-use crate::mqtt::settings::{AppSettings, StickyLayoutMode, FONT_ZOOM_STEP_FACTOR};
+use crate::mqtt::settings::{AppSettings, StickyLayoutMode};
 use crate::pro::{self, Entitlement};
 use crate::ui::flash;
 use crate::ui::hover_tip;
-use crate::ui::icons::{
-    self, IconSet, CHROME_ACCENT_BORDER, CHROME_HOVER, CHROME_MUTED, CHROME_TEXT,
-};
+use crate::ui::icons::{self, IconSet, CHROME_ACCENT_BORDER, CHROME_HOVER, CHROME_MUTED};
 use crate::ui::json_view;
 use crate::ui::shortcuts;
 use crate::ui::search_bar::SearchFilter;
 use eframe::egui::{self, Align, Color32, CursorIcon, Pos2, RichText, Sense, Stroke};
-use std::collections::{BTreeMap, HashMap, HashSet};
-use std::sync::LazyLock;
-use std::time::{Duration, Instant, SystemTime};
+use std::collections::{BTreeMap, HashSet};
+use std::time::Instant;
 
 /// DnD payload: sticky topic within one broker (profile_id + topic).
 #[derive(Clone)]
@@ -40,6 +37,7 @@ pub fn draw(
     filter: &SearchFilter,
     status: &mut String,
     color_rules: &crate::pro::color_rules::ColorRulesStore,
+    combined_boards: &mut crate::pro::combined_boards::CombinedBoardsStore,
 ) {
     icons::section_header_bar(ui, |ui| {
         icons::section_icon(ui, icons, "sticky_topic");
@@ -64,25 +62,6 @@ pub fn draw(
         .filter(|(_, s)| s.state == SessionState::Connected)
         .map(|(id, _)| id.as_str())
         .collect();
-
-    // Local copy so we can mutate open without double-borrowing settings.
-    let open_before = settings.combined_graph_open;
-    let mut combined_open = open_before;
-
-    // Combined multi-series graph (entitlement required).
-    if combined_open && pro::has(Entitlement::MultiGraph) {
-        draw_combined_graph(
-            ui,
-            pins,
-            &connected,
-            filter,
-            settings,
-            icons,
-            status,
-            &mut combined_open,
-        );
-        ui.add_space(8.0);
-    }
 
     // Visible stickies grouped by profile_id; order follows profile.stickies.
     let mut by_broker: BTreeMap<String, Vec<String>> = BTreeMap::new();
@@ -172,8 +151,8 @@ pub fn draw(
                         now,
                         false,
                         status,
-                        &mut combined_open,
                         color_rules,
+                        combined_boards,
                     ) {
                         pending_reorder = Some(r);
                     }
@@ -194,8 +173,8 @@ pub fn draw(
                             now,
                             true,
                             status,
-                            &mut combined_open,
                             color_rules,
+                            combined_boards,
                         ) {
                             pending_reorder = Some(r);
                         }
@@ -209,12 +188,6 @@ pub fn draw(
             }
         }
         ui.add_space(4.0);
-    }
-
-    // Persist Combined panel open/closed like other layout prefs.
-    if combined_open != open_before {
-        settings.combined_graph_open = combined_open;
-        let _ = settings.save();
     }
 }
 
@@ -246,8 +219,8 @@ fn draw_sticky(
     now: Instant,
     compact: bool,
     status: &mut String,
-    combined_graph_open: &mut bool,
     color_rules: &crate::pro::color_rules::ColorRulesStore,
+    combined_boards: &mut crate::pro::combined_boards::CombinedBoardsStore,
 ) -> Option<(String, String, bool)> {
     let Some(pin) = pins.items.get(key).cloned() else {
         return None;
@@ -288,7 +261,7 @@ fn draw_sticky(
                 let max_w = (ui.available_width() - flash::ITEM_CLIP_CLEAR).max(80.0);
                 ui.set_max_width(max_w);
                 let mut mode_changed: Option<StickyViewMode> = None;
-                let mut combined_changed: Option<bool> = None;
+                let mut add_combined = false;
                 let mut unstick = false;
                 let mut copy_payload = false;
                 let mut copy_topic = false;
@@ -391,24 +364,19 @@ fn draw_sticky(
                                                     live.view_mode = mode;
                                                 }
                                             }
-                                            // Opt into Combined multi-graph (persisted; default off).
+                                            // Add to Combined board (button; board owns series).
                                             if multi_graph && live.view_mode == StickyViewMode::Graph
                                             {
-                                                let on = live.in_combined;
                                                 if icons
                                                     .tiny(
                                                         ui,
                                                         "node_graph",
-                                                        on,
-                                                        "Include in Combined graph",
+                                                        false,
+                                                        "Add to Combined",
                                                     )
                                                     .clicked()
                                                 {
-                                                    live.in_combined = !on;
-                                                    combined_changed = Some(live.in_combined);
-                                                    if live.in_combined {
-                                                        *combined_graph_open = true;
-                                                    }
+                                                    add_combined = true;
                                                 }
                                             }
                                         });
@@ -486,8 +454,16 @@ fn draw_sticky(
                 if let Some(mode) = mode_changed {
                     profiles.set_sticky_view_mode_and_save(&pin.profile_id, &pin.topic, mode);
                 }
-                if let Some(on) = combined_changed {
-                    profiles.set_sticky_in_combined_and_save(&pin.profile_id, &pin.topic, on);
+                if add_combined {
+                    let seed = pins.items.get(key).map(|p| p.history.clone());
+                    crate::ui::combined_board_panel::add_series_from_ui(
+                        combined_boards,
+                        &pin.profile_id,
+                        &pin.profile_name,
+                        &pin.topic,
+                        seed.as_ref(),
+                        status,
+                    );
                 }
             });
 
@@ -661,783 +637,6 @@ fn draw_scalar_centered(ui: &mut egui::Ui, text: RichText, height: f32) {
             ui.label(text);
         },
     );
-}
-
-/// Series colors for the combined graph (cycle; style change after wrap is deferred).
-const SERIES_PALETTE: [Color32; 8] = [
-    Color32::from_rgb(80, 180, 120),
-    Color32::from_rgb(100, 160, 220),
-    Color32::from_rgb(220, 160, 80),
-    Color32::from_rgb(200, 100, 160),
-    Color32::from_rgb(120, 200, 200),
-    Color32::from_rgb(180, 140, 220),
-    Color32::from_rgb(220, 120, 100),
-    Color32::from_rgb(160, 180, 100),
-];
-
-const Y_LABEL_W: f32 = 56.0;
-const X_LABEL_H: f32 = 18.0;
-const Y_TICKS: usize = 4;
-
-/// Last path segment for legend (topic leaf or field-path leaf).
-fn sticky_short_label(topic: &str) -> String {
-    let (base, path) = crate::mqtt::value_path::split_sticky_id(topic);
-    if let Some(p) = path {
-        p.rsplit('.').next().unwrap_or(p).to_string()
-    } else {
-        base.rsplit('/').next().unwrap_or(base).to_string()
-    }
-}
-
-/// Map sample Instant → local wall clock (via age from Instant::now).
-fn instant_clock(at: Instant, with_secs: bool) -> String {
-    let age = Instant::now().saturating_duration_since(at);
-    let wall = SystemTime::now().checked_sub(age).unwrap_or_else(SystemTime::now);
-    let dt: chrono::DateTime<chrono::Local> = wall.into();
-    if with_secs {
-        dt.format("%H:%M:%S").to_string()
-    } else {
-        dt.format("%H:%M").to_string()
-    }
-}
-
-fn instant_hhmm(at: Instant) -> String {
-    instant_clock(at, false)
-}
-
-fn instant_hhmmss(at: Instant) -> String {
-    instant_clock(at, true)
-}
-
-/// Default PNG filename: `topicbench-combined-YYYYMMDD-HHMM.png`.
-fn combined_export_filename() -> String {
-    let now: chrono::DateTime<chrono::Local> = chrono::Local::now();
-    format!("topicbench-combined-{}.png", now.format("%Y%m%d-%H%M"))
-}
-
-/// Shared time-axis overlay of opted-in Graph stickies with numeric history.
-#[allow(clippy::too_many_arguments)]
-fn draw_combined_graph(
-    ui: &mut egui::Ui,
-    pins: &PinBoard,
-    connected: &HashSet<&str>,
-    filter: &SearchFilter,
-    settings: &mut AppSettings,
-    icons: &IconSet,
-    status: &mut String,
-    open: &mut bool,
-) {
-    // Only stickies with Combined include on (default off).
-    let mut series: Vec<(&StickyTopic, Color32)> = Vec::new();
-    for p in pins.items.values() {
-        if !p.in_combined {
-            continue;
-        }
-        if !connected.contains(p.profile_id.as_str()) {
-            continue;
-        }
-        if p.view_mode != StickyViewMode::Graph {
-            continue;
-        }
-        if filter.apply_to_stickies && !filter.matches(&p.topic, Some(&p.last_payload)) {
-            continue;
-        }
-        if !p.history.iter().any(|s| s.numeric.is_some()) {
-            continue;
-        }
-        let color = SERIES_PALETTE[series.len() % SERIES_PALETTE.len()];
-        series.push((p, color));
-    }
-
-    let mut plot_h =
-        AppSettings::clamp_combined_graph_height(settings.combined_graph_height);
-
-    // Fill+corners (no Frame::stroke); width uses ITEM_CLIP_CLEAR so inset border clears clip.
-    let border = Stroke::new(1.0_f32, CHROME_ACCENT_BORDER());
-    let frame = egui::Frame::NONE
-        .fill(Color32::from_rgb(32, 34, 40))
-        .corner_radius(4.0)
-        .inner_margin(egui::Margin::symmetric(10, 8))
-        .show(ui, |ui| {
-            let w = (ui.available_width() - flash::ITEM_CLIP_CLEAR).max(48.0);
-            ui.set_min_width(w);
-            ui.set_max_width(w);
-            ui.horizontal(|ui| {
-                ui.label(RichText::new("Combined graph").strong().color(CHROME_TEXT()));
-                if !series.is_empty() {
-                    ui.label(
-                        RichText::new(format!("{} series", series.len()))
-                            .small()
-                            .color(CHROME_MUTED()),
-                    );
-                }
-                ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
-                    if ui.small_button("Dismiss").clicked() {
-                        *open = false; // persisted by pin_board::draw when it differs
-                    }
-                    // Off-thread save dialog — avoid Linux Wayland "app hung" ANR.
-                    let png_dlg = egui::Id::new("dlg_combined_png");
-                    let png_h_key = egui::Id::new("dlg_combined_png_h");
-                    if !series.is_empty()
-                        && icons
-                            .tiny(ui, "export", false, "Save Combined graph as PNG")
-                            .clicked()
-                    {
-                        ui.ctx().data_mut(|d| d.insert_temp(png_h_key, plot_h));
-                        let name = combined_export_filename();
-                        crate::ui::native_dialog::begin_path(
-                            ui.ctx(),
-                            png_dlg,
-                            crate::ui::native_dialog::PathOp::SaveFile,
-                            move |d| {
-                                d.set_title("Save Combined graph")
-                                    .set_file_name(&name)
-                                    .add_filter("PNG image", &["png"])
-                            },
-                        );
-                    }
-                    if let Some(path_opt) = crate::ui::native_dialog::poll_path(ui.ctx(), png_dlg) {
-                        let plot_h = ui
-                            .ctx()
-                            .data_mut(|d| d.remove_temp::<f32>(png_h_key))
-                            .unwrap_or(plot_h);
-                        match path_opt {
-                            Some(path) => match write_combined_png(&path, &series, plot_h) {
-                                Ok(p) => *status = format!("Saved Combined graph → {p}"),
-                                Err(e) => {
-                                    *status = format!("Combined graph export failed: {e}")
-                                }
-                            },
-                            None => {}
-                        }
-                    }
-                });
-            });
-
-            if series.is_empty() {
-                ui.label(
-                    RichText::new("No series included yet.")
-                        .color(CHROME_MUTED()),
-                );
-                ui.weak(
-                    "On a Graph sticky, tap the Combined icon to include it (off by default).",
-                );
-                return;
-            }
-
-            paint_multi_series_plot(ui, &series, plot_h);
-            ui.add_space(6.0);
-            draw_combined_legend(ui, &series);
-
-            // Drag handle under the chart — resize plot height, persist on release.
-            ui.add_space(2.0);
-            let full_w = ui.available_width().max(24.0);
-            let (sep, sep_r) =
-                ui.allocate_exact_size(egui::vec2(full_w, 8.0), Sense::click_and_drag());
-            let sep_r = sep_r.on_hover_cursor(CursorIcon::ResizeVertical);
-            let mid_y = sep.center().y;
-            ui.painter().hline(
-                sep.x_range().shrink(8.0),
-                mid_y,
-                Stroke::new(2.0_f32, Color32::from_rgb(70, 74, 84)),
-            );
-            // Grip dots.
-            for dx in [-6.0_f32, 0.0, 6.0] {
-                ui.painter().circle_filled(
-                    Pos2::new(sep.center().x + dx, mid_y),
-                    1.4,
-                    CHROME_MUTED(),
-                );
-            }
-            if sep_r.dragged() {
-                plot_h = AppSettings::clamp_combined_graph_height(
-                    plot_h + sep_r.drag_delta().y,
-                );
-                settings.combined_graph_height = plot_h;
-                ui.ctx().request_repaint();
-            }
-            if sep_r.drag_stopped() {
-                settings.combined_graph_height =
-                    AppSettings::clamp_combined_graph_height(plot_h);
-                let _ = settings.save();
-            }
-            sep_r.on_hover_text("Drag to resize Combined graph");
-        });
-    // Inset stroke (radius matches fill) — shrink so right curve clears content clip.
-    ui.painter().rect_stroke(
-        frame.response.rect.shrink(1.0),
-        4.0,
-        border,
-        egui::StrokeKind::Inside,
-    );
-}
-
-/// Shared Y auto-scale + Instant X; HH:MM clock labels; hover readout at cursor.
-fn paint_multi_series_plot(ui: &mut egui::Ui, series: &[(&StickyTopic, Color32)], height: f32) {
-    let Some(domain) = series_time_value_domain(series) else {
-        ui.weak("No numeric samples.");
-        return;
-    };
-    let SeriesDomain {
-        t0,
-        t1,
-        y_lo,
-        y_hi,
-        min_v,
-        max_v,
-    } = domain;
-    let y_span = (y_hi - y_lo).max(1e-9);
-    let dt = t1.saturating_duration_since(t0).as_secs_f32().max(1e-3);
-
-    let plot_h = height.max(48.0);
-    let avail = ui.available_width().max(Y_LABEL_W + 48.0);
-    let plot_w = (avail - Y_LABEL_W).max(48.0);
-
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 4.0;
-        let (label_rect, _) =
-            ui.allocate_exact_size(egui::vec2(Y_LABEL_W, plot_h), egui::Sense::hover());
-        let (rect, response) =
-            ui.allocate_exact_size(egui::vec2(plot_w, plot_h), egui::Sense::hover());
-
-        // Inset plot so top/bottom Y labels sit fully inside label_rect.
-        let font = egui::TextStyle::Small.resolve(ui.style());
-        let label_h = ui.fonts(|f| f.row_height(&font));
-        let y_inset = (label_h * 0.5 + 1.0).min(plot_h * 0.2);
-        let plot = egui::Rect::from_min_max(
-            Pos2::new(rect.left(), rect.top() + y_inset),
-            Pos2::new(rect.right(), rect.bottom() - y_inset),
-        );
-
-        let painter = ui.painter_at(rect.union(label_rect));
-        painter.rect_filled(rect, 2.0, ui.visuals().extreme_bg_color);
-
-        let grid = Stroke::new(1.0_f32, Color32::from_rgb(48, 52, 60));
-        for i in 0..Y_TICKS {
-            let frac = i as f32 / (Y_TICKS - 1) as f32;
-            let v = y_hi - f64::from(frac) * (y_hi - y_lo);
-            let y = plot.top() + frac * plot.height();
-            painter.hline(plot.x_range(), y, grid);
-            let text = fmt_scale(v);
-            let galley = ui.fonts(|f| f.layout_no_wrap(text, font.clone(), CHROME_MUTED()));
-            // Keep the full glyph box inside label_rect.
-            let mut ty = y - galley.size().y * 0.5;
-            ty = ty.clamp(label_rect.top(), label_rect.bottom() - galley.size().y);
-            let tx = (label_rect.right() - galley.size().x - 2.0).max(label_rect.left());
-            painter.galley(Pos2::new(tx, ty), galley, CHROME_MUTED());
-        }
-
-        for (pin, color) in series {
-            let mut points = Vec::new();
-            for s in &pin.history {
-                let Some(v) = s.numeric else { continue };
-                if !v.is_finite() {
-                    continue;
-                }
-                let x_t = s.at.saturating_duration_since(t0).as_secs_f32() / dt;
-                let x = plot.left() + x_t.clamp(0.0, 1.0) * plot.width();
-                let y = plot.bottom() - (((v - y_lo) / y_span) as f32) * plot.height();
-                points.push(Pos2::new(x, y));
-            }
-            if points.len() >= 2 {
-                painter.add(egui::Shape::line(points, Stroke::new(1.6_f32, *color)));
-            } else if let Some(p) = points.first() {
-                painter.circle_filled(*p, 3.0, *color);
-            }
-        }
-
-        // Hover: use ctx pointer over full plot rect (stable; not flicker-prone like
-        // response.hover_pos when idle frames throttle). Readout tracks the cursor.
-        let pointer = ui
-            .ctx()
-            .pointer_interact_pos()
-            .or_else(|| ui.ctx().pointer_hover_pos());
-        let over_plot = pointer.is_some_and(|p| rect.contains(p));
-        if over_plot {
-            ui.ctx().request_repaint(); // keep readout alive between MQTT frames
-        }
-        if let Some(pos) = pointer.filter(|p| rect.contains(*p)) {
-            let x = pos.x.clamp(plot.left(), plot.right());
-            let frac = ((x - plot.left()) / plot.width()).clamp(0.0, 1.0);
-            let at = t0 + Duration::from_secs_f32(frac * dt);
-            painter.vline(
-                x,
-                plot.y_range(),
-                Stroke::new(1.0_f32, Color32::from_rgb(120, 130, 150)),
-            );
-
-            let mut lines: Vec<(String, Color32)> = Vec::with_capacity(series.len() + 1);
-            lines.push((instant_hhmmss(at), CHROME_TEXT()));
-            for (pin, color) in series {
-                let short = sticky_short_label(&pin.topic);
-                let val = value_at_time(pin, at)
-                    .map(fmt_scale)
-                    .unwrap_or_else(|| "—".into());
-                lines.push((format!("{short}: {val}"), *color));
-                if let Some(v) = value_at_time(pin, at) {
-                    let y = plot.bottom()
-                        - (((v - y_lo) / y_span) as f32).clamp(0.0, 1.0) * plot.height();
-                    painter.circle_filled(Pos2::new(x, y), 3.5, *color);
-                    painter.circle_stroke(
-                        Pos2::new(x, y),
-                        3.5,
-                        Stroke::new(1.0_f32, Color32::from_rgb(20, 22, 26)),
-                    );
-                }
-            }
-
-            // Tip font: 3 ribbon-zoom steps (~10% each) larger than Small at default UI size.
-            let mut tip_font = font.clone();
-            tip_font.size = (tip_font.size * (1.0 + 3.0 * FONT_ZOOM_STEP_FACTOR)).max(8.0);
-            let pad = 8.0_f32;
-            let galleys: Vec<_> = lines
-                .iter()
-                .map(|(text, color)| {
-                    ui.fonts(|f| f.layout_no_wrap(text.clone(), tip_font.clone(), *color))
-                })
-                .collect();
-            let box_w = galleys
-                .iter()
-                .map(|g| g.size().x)
-                .fold(0.0_f32, f32::max)
-                + pad * 2.0;
-            let box_h = galleys.iter().map(|g| g.size().y).sum::<f32>()
-                + (galleys.len().saturating_sub(1) as f32) * 1.0
-                + pad * 2.0;
-
-            // Prefer right of crosshair; flip left if it would clip.
-            let mut bx = x + 12.0;
-            if bx + box_w > rect.right() - 2.0 {
-                bx = x - box_w - 12.0;
-            }
-            bx = bx.clamp(rect.left() + 2.0, (rect.right() - box_w - 2.0).max(rect.left() + 2.0));
-            let mut by = pos.y - box_h * 0.5;
-            by = by.clamp(rect.top() + 2.0, (rect.bottom() - box_h - 2.0).max(rect.top() + 2.0));
-            let tip_rect =
-                egui::Rect::from_min_size(Pos2::new(bx, by), egui::vec2(box_w, box_h));
-            painter.rect_filled(
-                tip_rect,
-                4.0,
-                Color32::from_rgba_unmultiplied(20, 22, 28, 235),
-            );
-            painter.rect_stroke(
-                tip_rect,
-                4.0,
-                Stroke::new(1.0_f32, CHROME_ACCENT_BORDER()),
-                egui::StrokeKind::Inside,
-            );
-            let mut ly = tip_rect.top() + pad;
-            for g in galleys {
-                let h = g.size().y;
-                painter.galley(Pos2::new(tip_rect.left() + pad, ly), g, CHROME_TEXT());
-                ly += h + 1.0;
-            }
-        } else if response.hovered() {
-            response.on_hover_text(format!(
-                "Y {} … {} · {} series — hover plot for values",
-                fmt_scale(min_v),
-                fmt_scale(max_v),
-                series.len()
-            ));
-        }
-    });
-
-    // X-axis: local clock HH:MM at left / mid / right.
-    let mid = t0 + Duration::from_secs_f32(dt * 0.5);
-    let left_l = instant_hhmm(t0);
-    let mid_l = instant_hhmm(mid);
-    let right_l = instant_hhmm(t1);
-    ui.horizontal(|ui| {
-        ui.add_space(Y_LABEL_W + 4.0);
-        let w = ui.available_width().max(1.0);
-        let (xr, _) = ui.allocate_exact_size(egui::vec2(w, X_LABEL_H), Sense::hover());
-        let font = egui::TextStyle::Small.resolve(ui.style());
-        let painter = ui.painter_at(xr);
-        for (frac, text) in [(0.0_f32, left_l), (0.5, mid_l), (1.0, right_l)] {
-            let galley = ui.fonts(|f| f.layout_no_wrap(text, font.clone(), CHROME_MUTED()));
-            let align = if frac <= 0.0 {
-                0.0
-            } else if frac >= 1.0 {
-                galley.size().x
-            } else {
-                galley.size().x * 0.5
-            };
-            let x = xr.left() + frac * xr.width() - align;
-            let y = xr.center().y - galley.size().y * 0.5;
-            painter.galley(Pos2::new(x, y), galley, CHROME_MUTED());
-        }
-    });
-}
-
-struct SeriesDomain {
-    t0: Instant,
-    t1: Instant,
-    y_lo: f64,
-    y_hi: f64,
-    min_v: f64,
-    max_v: f64,
-}
-
-fn series_time_value_domain(series: &[(&StickyTopic, Color32)]) -> Option<SeriesDomain> {
-    let mut t0: Option<Instant> = None;
-    let mut t1: Option<Instant> = None;
-    let mut min_v = f64::INFINITY;
-    let mut max_v = f64::NEG_INFINITY;
-    for (pin, _) in series {
-        for s in &pin.history {
-            let Some(v) = s.numeric else { continue };
-            if !v.is_finite() {
-                continue;
-            }
-            min_v = min_v.min(v);
-            max_v = max_v.max(v);
-            t0 = Some(t0.map_or(s.at, |t| t.min(s.at)));
-            t1 = Some(t1.map_or(s.at, |t| t.max(s.at)));
-        }
-    }
-    if !min_v.is_finite() || !max_v.is_finite() {
-        return None;
-    }
-    let (t0, t1) = (t0?, t1?);
-    let raw_span = (max_v - min_v).abs();
-    let (y_lo, y_hi) = if raw_span < 1e-12 {
-        let pad = (min_v.abs() * 0.05).max(1.0);
-        (min_v - pad, max_v + pad)
-    } else {
-        let pad = (raw_span * 0.04).max(raw_span * 1e-6);
-        (min_v - pad, max_v + pad)
-    };
-    Some(SeriesDomain {
-        t0,
-        t1,
-        y_lo,
-        y_hi,
-        min_v,
-        max_v,
-    })
-}
-
-/// Value at hover time: linear interpolate between bracketing samples, else hold-last.
-fn value_at_time(pin: &StickyTopic, at: Instant) -> Option<f64> {
-    let mut before: Option<(Instant, f64)> = None;
-    let mut after: Option<(Instant, f64)> = None;
-    for s in &pin.history {
-        let Some(v) = s.numeric else { continue };
-        if !v.is_finite() {
-            continue;
-        }
-        if s.at <= at {
-            if before.map(|(t, _)| s.at >= t).unwrap_or(true) {
-                before = Some((s.at, v));
-            }
-        } else if after.map(|(t, _)| s.at < t).unwrap_or(true) {
-            after = Some((s.at, v));
-        }
-    }
-    match (before, after) {
-        (Some((tb, vb)), Some((ta, va))) => {
-            let span = ta.saturating_duration_since(tb).as_secs_f64().max(1e-9);
-            let u = at.saturating_duration_since(tb).as_secs_f64() / span;
-            Some(vb + (va - vb) * u)
-        }
-        (Some((_, v)), None) | (None, Some((_, v))) => Some(v),
-        (None, None) => None,
-    }
-}
-
-/// Rasterize Combined chart + legend to PNG at `path` (dark chrome).
-fn write_combined_png(
-    path: &std::path::Path,
-    series: &[(&StickyTopic, Color32)],
-    plot_h: f32,
-) -> Result<String, String> {
-    let domain = series_time_value_domain(series).ok_or_else(|| "no numeric samples".to_string())?;
-    let w = 900u32;
-    let label_w = 70u32;
-    let x_h = 28u32;
-    let legend_row_h = 16u32;
-    let legend_pad = 10u32;
-    let legend_h = legend_pad * 2 + (series.len() as u32) * legend_row_h;
-    let plot_w = w.saturating_sub(label_w);
-    let plot_body = (plot_h.round() as u32).clamp(80, 800);
-    let h = plot_body + x_h + legend_h + 8;
-    let mut img = image::RgbaImage::from_pixel(w, h, image::Rgba([32, 34, 40, 255]));
-    let plot_top = 4u32;
-    let plot_bot = plot_top + plot_body;
-    let y_inset = 10u32;
-    let inner_top = plot_top + y_inset;
-    let inner_bot = plot_bot.saturating_sub(y_inset);
-    let inner_h = inner_bot.saturating_sub(inner_top).max(1);
-
-    // Plot background.
-    for y in plot_top..plot_bot {
-        for x in label_w..w {
-            img.put_pixel(x, y, image::Rgba([22, 24, 28, 255]));
-        }
-    }
-
-    let y_span = (domain.y_hi - domain.y_lo).max(1e-9);
-    let dt = domain
-        .t1
-        .saturating_duration_since(domain.t0)
-        .as_secs_f32()
-        .max(1e-3);
-
-    // Grid + Y ticks (values burned as simple marks; labels via digit blit).
-    for i in 0..Y_TICKS {
-        let frac = i as f32 / (Y_TICKS - 1) as f32;
-        let y = inner_top + ((frac * inner_h as f32) as u32).min(inner_h);
-        for x in label_w..w {
-            let p = img.get_pixel_mut(x, y);
-            p.0 = [48, 52, 60, 255];
-        }
-        let v = domain.y_hi - f64::from(frac) * (domain.y_hi - domain.y_lo);
-        blit_text(
-            &mut img,
-            4,
-            y.saturating_sub(4),
-            &fmt_scale(v),
-            [175, 182, 196],
-        );
-    }
-
-    for (pin, color) in series {
-        let rgb = [color.r(), color.g(), color.b()];
-        let mut prev: Option<(u32, u32)> = None;
-        for s in &pin.history {
-            let Some(v) = s.numeric else { continue };
-            if !v.is_finite() {
-                continue;
-            }
-            let x_t = s.at.saturating_duration_since(domain.t0).as_secs_f32() / dt;
-            let x = label_w + ((x_t.clamp(0.0, 1.0) * (plot_w.saturating_sub(1) as f32)) as u32);
-            let yf = 1.0 - (((v - domain.y_lo) / y_span) as f32).clamp(0.0, 1.0);
-            let y = inner_top + ((yf * inner_h as f32) as u32).min(inner_h);
-            if let Some((px, py)) = prev {
-                draw_line(&mut img, px, py, x, y, rgb);
-            }
-            prev = Some((x, y));
-        }
-    }
-
-    // X HH:MM labels.
-    let mid = domain.t0 + Duration::from_secs_f32(dt * 0.5);
-    let y_lab = plot_bot + 6;
-    blit_text(&mut img, label_w + 2, y_lab, &instant_hhmm(domain.t0), [175, 182, 196]);
-    let mid_s = instant_hhmm(mid);
-    blit_text(
-        &mut img,
-        label_w + plot_w / 2 - 12,
-        y_lab,
-        &mid_s,
-        [175, 182, 196],
-    );
-    let right_s = instant_hhmm(domain.t1);
-    blit_text(
-        &mut img,
-        w.saturating_sub(40),
-        y_lab,
-        &right_s,
-        [175, 182, 196],
-    );
-
-    // Legend: color swatch + short name + current value (matches on-screen legend).
-    let legend_top = plot_bot + x_h;
-    blit_text(
-        &mut img,
-        12,
-        legend_top,
-        "Legend",
-        [175, 182, 196],
-    );
-    for (i, (pin, color)) in series.iter().enumerate() {
-        let y = legend_top + legend_pad + (i as u32) * legend_row_h;
-        let rgb = [color.r(), color.g(), color.b()];
-        // Swatch circle.
-        fill_circle(&mut img, 16, y + 4, 4, rgb);
-        let short = sticky_short_label(&pin.topic);
-        let cur = pin
-            .history
-            .iter()
-            .rev()
-            .find_map(|s| s.numeric)
-            .map(fmt_scale)
-            .unwrap_or_else(|| "-".into());
-        let label = format!("{short}  {cur}");
-        blit_text(&mut img, 28, y, &label, rgb);
-    }
-
-    img.save(&path)
-        .map_err(|e| format!("write {}: {e}", path.display()))?;
-    Ok(path.display().to_string())
-}
-
-fn fill_circle(img: &mut image::RgbaImage, cx: u32, cy: u32, r: i32, rgb: [u8; 3]) {
-    let (w, h) = (img.width() as i32, img.height() as i32);
-    let (cx, cy) = (cx as i32, cy as i32);
-    for dy in -r..=r {
-        for dx in -r..=r {
-            if dx * dx + dy * dy <= r * r {
-                let x = cx + dx;
-                let y = cy + dy;
-                if x >= 0 && y >= 0 && x < w && y < h {
-                    img.put_pixel(
-                        x as u32,
-                        y as u32,
-                        image::Rgba([rgb[0], rgb[1], rgb[2], 255]),
-                    );
-                }
-            }
-        }
-    }
-}
-
-fn draw_line(img: &mut image::RgbaImage, x0: u32, y0: u32, x1: u32, y1: u32, rgb: [u8; 3]) {
-    let (w, h) = (img.width() as i32, img.height() as i32);
-    let (mut x0, mut y0, x1, y1) = (x0 as i32, y0 as i32, x1 as i32, y1 as i32);
-    let dx = (x1 - x0).abs();
-    let dy = -(y1 - y0).abs();
-    let sx = if x0 < x1 { 1 } else { -1 };
-    let sy = if y0 < y1 { 1 } else { -1 };
-    let mut err = dx + dy;
-    loop {
-        if x0 >= 0 && y0 >= 0 && x0 < w && y0 < h {
-            img.put_pixel(x0 as u32, y0 as u32, image::Rgba([rgb[0], rgb[1], rgb[2], 255]));
-        }
-        if x0 == x1 && y0 == y1 {
-            break;
-        }
-        let e2 = 2 * err;
-        if e2 >= dy {
-            err += dy;
-            x0 += sx;
-        }
-        if e2 <= dx {
-            err += dx;
-            y0 += sy;
-        }
-    }
-}
-
-/// Tiny 5×7 digit/punct blit for PNG axis labels (no font dependency).
-fn blit_text(img: &mut image::RgbaImage, x: u32, y: u32, text: &str, rgb: [u8; 3]) {
-    let mut cx = x;
-    for ch in text.chars() {
-        if let Some(glyph) = TINY_GLYPH.get(&ch) {
-            for (row, bits) in glyph.iter().enumerate() {
-                for col in 0..5 {
-                    if bits & (1 << (4 - col)) != 0 {
-                        let px = cx + col;
-                        let py = y + row as u32;
-                        if px < img.width() && py < img.height() {
-                            img.put_pixel(px, py, image::Rgba([rgb[0], rgb[1], rgb[2], 255]));
-                        }
-                    }
-                }
-            }
-            cx += 6;
-        } else {
-            cx += 4;
-        }
-    }
-}
-
-/// 5×7 glyphs for PNG export labels (MSB = left pixel).
-fn tiny_glyph_map() -> HashMap<char, [u8; 7]> {
-    let mut m = HashMap::new();
-    let put = |m: &mut HashMap<char, [u8; 7]>, c: char, g: [u8; 7]| {
-        m.insert(c, g);
-    };
-    put(&mut m, '0', [0x0E, 0x11, 0x13, 0x15, 0x19, 0x11, 0x0E]);
-    put(&mut m, '1', [0x04, 0x0C, 0x04, 0x04, 0x04, 0x04, 0x0E]);
-    put(&mut m, '2', [0x0E, 0x11, 0x01, 0x06, 0x08, 0x10, 0x1F]);
-    put(&mut m, '3', [0x0E, 0x11, 0x01, 0x06, 0x01, 0x11, 0x0E]);
-    put(&mut m, '4', [0x02, 0x06, 0x0A, 0x12, 0x1F, 0x02, 0x02]);
-    put(&mut m, '5', [0x1F, 0x10, 0x1E, 0x01, 0x01, 0x11, 0x0E]);
-    put(&mut m, '6', [0x06, 0x08, 0x10, 0x1E, 0x11, 0x11, 0x0E]);
-    put(&mut m, '7', [0x1F, 0x01, 0x02, 0x04, 0x08, 0x08, 0x08]);
-    put(&mut m, '8', [0x0E, 0x11, 0x11, 0x0E, 0x11, 0x11, 0x0E]);
-    put(&mut m, '9', [0x0E, 0x11, 0x11, 0x0F, 0x01, 0x02, 0x0C]);
-    put(&mut m, ':', [0x00, 0x04, 0x00, 0x00, 0x04, 0x00, 0x00]);
-    put(&mut m, '.', [0x00, 0x00, 0x00, 0x00, 0x00, 0x0C, 0x0C]);
-    put(&mut m, '-', [0x00, 0x00, 0x00, 0x1F, 0x00, 0x00, 0x00]);
-    put(&mut m, '_', [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x1F]);
-    put(&mut m, '/', [0x01, 0x02, 0x04, 0x04, 0x08, 0x10, 0x10]);
-    put(&mut m, ' ', [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]);
-    put(&mut m, '+', [0x00, 0x04, 0x04, 0x1F, 0x04, 0x04, 0x00]);
-    // Uppercase A–Z (compact 5×7).
-    put(&mut m, 'A', [0x0E, 0x11, 0x11, 0x1F, 0x11, 0x11, 0x11]);
-    put(&mut m, 'B', [0x1E, 0x11, 0x11, 0x1E, 0x11, 0x11, 0x1E]);
-    put(&mut m, 'C', [0x0E, 0x11, 0x10, 0x10, 0x10, 0x11, 0x0E]);
-    put(&mut m, 'D', [0x1E, 0x11, 0x11, 0x11, 0x11, 0x11, 0x1E]);
-    put(&mut m, 'E', [0x1F, 0x10, 0x10, 0x1E, 0x10, 0x10, 0x1F]);
-    put(&mut m, 'F', [0x1F, 0x10, 0x10, 0x1E, 0x10, 0x10, 0x10]);
-    put(&mut m, 'G', [0x0E, 0x11, 0x10, 0x17, 0x11, 0x11, 0x0E]);
-    put(&mut m, 'H', [0x11, 0x11, 0x11, 0x1F, 0x11, 0x11, 0x11]);
-    put(&mut m, 'I', [0x0E, 0x04, 0x04, 0x04, 0x04, 0x04, 0x0E]);
-    put(&mut m, 'J', [0x01, 0x01, 0x01, 0x01, 0x11, 0x11, 0x0E]);
-    put(&mut m, 'K', [0x11, 0x12, 0x14, 0x18, 0x14, 0x12, 0x11]);
-    put(&mut m, 'L', [0x10, 0x10, 0x10, 0x10, 0x10, 0x10, 0x1F]);
-    put(&mut m, 'M', [0x11, 0x1B, 0x15, 0x15, 0x11, 0x11, 0x11]);
-    put(&mut m, 'N', [0x11, 0x19, 0x15, 0x13, 0x11, 0x11, 0x11]);
-    put(&mut m, 'O', [0x0E, 0x11, 0x11, 0x11, 0x11, 0x11, 0x0E]);
-    put(&mut m, 'P', [0x1E, 0x11, 0x11, 0x1E, 0x10, 0x10, 0x10]);
-    put(&mut m, 'Q', [0x0E, 0x11, 0x11, 0x11, 0x15, 0x12, 0x0D]);
-    put(&mut m, 'R', [0x1E, 0x11, 0x11, 0x1E, 0x14, 0x12, 0x11]);
-    put(&mut m, 'S', [0x0E, 0x11, 0x10, 0x0E, 0x01, 0x11, 0x0E]);
-    put(&mut m, 'T', [0x1F, 0x04, 0x04, 0x04, 0x04, 0x04, 0x04]);
-    put(&mut m, 'U', [0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x0E]);
-    put(&mut m, 'V', [0x11, 0x11, 0x11, 0x11, 0x11, 0x0A, 0x04]);
-    put(&mut m, 'W', [0x11, 0x11, 0x11, 0x15, 0x15, 0x1B, 0x11]);
-    put(&mut m, 'X', [0x11, 0x11, 0x0A, 0x04, 0x0A, 0x11, 0x11]);
-    put(&mut m, 'Y', [0x11, 0x11, 0x0A, 0x04, 0x04, 0x04, 0x04]);
-    put(&mut m, 'Z', [0x1F, 0x01, 0x02, 0x04, 0x08, 0x10, 0x1F]);
-    // Lowercase — reuse uppercase bitmaps (legible at 5×7 for legend names).
-    for c in b'a'..=b'z' {
-        let up = (c - b'a' + b'A') as char;
-        if let Some(g) = m.get(&up).copied() {
-            m.insert(c as char, g);
-        }
-    }
-    m
-}
-
-static TINY_GLYPH: LazyLock<HashMap<char, [u8; 7]>> = LazyLock::new(tiny_glyph_map);
-
-/// Wrapping legend: color swatch + short name + current value; tooltip = full topic.
-fn draw_combined_legend(ui: &mut egui::Ui, series: &[(&StickyTopic, Color32)]) {
-    ui.horizontal_wrapped(|ui| {
-        ui.spacing_mut().item_spacing.x = 12.0;
-        ui.spacing_mut().item_spacing.y = 4.0;
-        for (pin, color) in series {
-            let short = sticky_short_label(&pin.topic);
-            let cur = pin
-                .history
-                .iter()
-                .rev()
-                .find_map(|s| s.numeric)
-                .map(|v| format!("{v}"))
-                .unwrap_or_else(|| "—".into());
-            let tip = if pin.profile_name.is_empty() {
-                pin.topic.clone()
-            } else {
-                format!("{} · {}", pin.topic, pin.profile_name)
-            };
-            let r = ui.horizontal(|ui| {
-                ui.spacing_mut().item_spacing.x = 4.0;
-                let (sw, _) = ui.allocate_exact_size(egui::vec2(8.0, 8.0), Sense::hover());
-                ui.painter().circle_filled(sw.center(), 3.5, *color);
-                let name = if short.len() > 18 {
-                    format!("{}…", &short[..17])
-                } else {
-                    short
-                };
-                ui.label(RichText::new(name).small().color(CHROME_TEXT()));
-                ui.label(RichText::new(cur).small().strong().monospace().color(*color));
-            });
-            r.response.on_hover_text(tip);
-        }
-    });
 }
 
 fn draw_graph_strip(ui: &mut egui::Ui, pin: &StickyTopic, height: f32) {
