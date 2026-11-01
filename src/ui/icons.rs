@@ -509,6 +509,7 @@ impl IconSet {
 
     /// Icon-only zoom cell (no caption). Fixed size — independent of font zoom.
     /// `fallback` is painted when the PNG is missing so the control never goes blank.
+    /// Glyph color matches other ribbon icons (no light-theme tint) — only the chip pad is themed.
     pub fn command_zoom_icon(
         &self,
         ui: &mut egui::Ui,
@@ -522,15 +523,10 @@ impl IconSet {
         if response.hovered() {
             ui.painter().rect_filled(rect, 3.0, CHROME_HOVER());
         }
-        // Light palettes: glyph PNGs are authored light — multiply by text so +/− stay visible.
-        let light_tint = chrome_is_light().then_some(CHROME_TEXT());
         if let Some(tex) = self.get(name) {
-            let mut img = egui::Image::new(tex)
+            let img = egui::Image::new(tex)
                 .fit_to_exact_size(Vec2::splat(ZOOM_ICON))
                 .maintain_aspect_ratio(true);
-            if let Some(t) = light_tint {
-                img = img.tint(t);
-            }
             img.paint_at(
                 ui,
                 egui::Rect::from_center_size(rect.center(), Vec2::splat(ZOOM_ICON)),

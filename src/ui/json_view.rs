@@ -1,5 +1,6 @@
 //! Pretty-print + light syntax highlight for sticky Value / tree JSON payloads.
 
+use crate::ui::icons::{chrome_is_light, CHROME_CAPTION, CHROME_TEXT};
 use eframe::egui::{self, Align, Color32, FontId, Layout, TextFormat};
 use eframe::epaint::text::{LayoutJob, LayoutSection};
 use std::hash::Hash;
@@ -12,12 +13,22 @@ const C_BOOL: Color32 = Color32::from_rgb(120, 200, 230);
 const C_NULL: Color32 = Color32::from_rgb(150, 150, 160);
 const C_PUNCT: Color32 = Color32::from_rgb(170, 176, 188);
 const C_DEFAULT: Color32 = Color32::from_rgb(220, 222, 228);
-/// Topic-name gray (matches ribbon `CHROME_CAPTION()`).
+/// Classic dark-chrome topic gray (fallback when tokens unavailable).
 pub const C_TOPIC: Color32 = Color32::from_rgb(190, 196, 208);
+
+/// Topic-path gray from active chrome — darker on Latte for contrast.
+pub fn topic_path_color() -> Color32 {
+    if chrome_is_light() {
+        // Caption alone is still soft on Latte cream — prefer body text.
+        CHROME_TEXT()
+    } else {
+        CHROME_CAPTION()
+    }
+}
 
 /// Topic path typography matching the topic-tree leaf list (mono, normal weight, gray).
 pub fn topic_path_text(topic: &str) -> egui::RichText {
-    egui::RichText::new(topic).monospace().color(C_TOPIC)
+    egui::RichText::new(topic).monospace().color(topic_path_color())
 }
 
 /// True when text looks like an intended JSON object/array (starts with `{` or `[`).
@@ -84,7 +95,7 @@ pub fn row_preview_job(label: &str, payload: &str, max_json_chars: usize, font_s
         ..Default::default()
     };
     // Topic segment in chrome gray so highlighted payload stands out.
-    push(&mut job, 0, prefix.len(), C_TOPIC, font.clone());
+    push(&mut job, 0, prefix.len(), topic_path_color(), font.clone());
     highlight_range(&mut job, &text, prefix.len(), text.len(), &font);
     job
 }
@@ -440,7 +451,7 @@ mod tests {
         let covered: usize = job.sections.iter().map(|s| s.byte_range.len()).sum();
         assert_eq!(covered, job.text.len());
         assert!(job.text.starts_with("definition = "));
-        assert_eq!(job.sections[0].format.color, C_TOPIC);
+        assert_eq!(job.sections[0].format.color, topic_path_color());
     }
 
     #[test]

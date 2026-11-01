@@ -197,7 +197,7 @@ fn paint_board(
     status: &mut Option<String>,
 ) {
     // Snapshot chrome fields so we can mutate the store freely afterward.
-    let (title, plot_h, time_range, series_count) = {
+    let (title, plot_h, time_range, series_count, y_min, y_max) = {
         let Some(board) = store.get(board_id) else {
             return;
         };
@@ -206,6 +206,8 @@ fn paint_board(
             clamp_height(board.plot_height),
             board.time_range,
             board.series.len(),
+            board.y_min,
+            board.y_max,
         )
     };
 
@@ -657,7 +659,19 @@ fn paint_board(
                 return;
             }
 
-            paint_multi_series_plot(ui, &series_refs, fill_plot_h, time_range);
+            if let Some(edit) =
+                paint_multi_series_plot(ui, &series_refs, fill_plot_h, time_range, board_id, y_min, y_max)
+            {
+                if let Some(b) = store.get_mut(board_id) {
+                    match edit {
+                        YLimitEdit::SetMax(v) => b.y_max = Some(v),
+                        YLimitEdit::SetMin(v) => b.y_min = Some(v),
+                        YLimitEdit::ClearMax => b.y_max = None,
+                        YLimitEdit::ClearMin => b.y_min = None,
+                    }
+                    *persist = true;
+                }
+            }
             ui.add_space(6.0);
             draw_combined_legend(ui, &series_refs, &mut remove);
         });
@@ -696,15 +710,25 @@ struct SeriesPaintOwned {
     offline: bool,
 }
 
+enum YLimitEdit {
+    SetMax(f64),
+    SetMin(f64),
+    ClearMax,
+    ClearMin,
+}
+
 fn paint_multi_series_plot(
     ui: &mut egui::Ui,
     series: &[SeriesPaint<'_>],
     height: f32,
     time_range: CombinedTimeRange,
-) {
-    let Some(domain) = series_time_value_domain(series, time_range) else {
+    board_id: &str,
+    y_min: Option<f64>,
+    y_max: Option<f64>,
+) -> Option<YLimitEdit> {
+    let Some(domain) = series_time_value_domain(series, time_range, y_min, y_max) else {
         ui.weak("No numeric samples in this timeline.");
-        return;
+        return None;
     };
     let SeriesDomain {
         t0,
@@ -722,6 +746,7 @@ fn paint_multi_series_plot(
     let avail = ui.available_width().max(Y_LABEL_W + 48.0);
     let plot_w = (avail - Y_LABEL_W).max(48.0);
 
+    let mut y_edit: Option<YLimitEdit> = None;
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 4.0;
         let (label_rect, _) =
@@ -742,17 +767,134 @@ fn paint_multi_series_plot(
         painter.rect_filled(rect, 2.0, CHROME_COMBO_BG());
 
         let grid = Stroke::new(1.0_f32, CHROME_SEP());
+        let edit_max_id = egui::Id::new(("combined_y_edit", board_id, "max"));
+        let edit_min_id = egui::Id::new(("combined_y_edit", board_id, "min"));
         for i in 0..Y_TICKS {
             let frac = i as f32 / (Y_TICKS - 1) as f32;
             let v = y_hi - f64::from(frac) * (y_hi - y_lo);
             let y = plot.top() + frac * plot.height();
             painter.hline(plot.x_range(), y, grid);
+            let is_max = i == 0;
+            let is_min = i + 1 == Y_TICKS;
+            let manual = (is_max && y_max.is_some()) || (is_min && y_min.is_some());
+            let color = if manual {
+                CHROME_ACCENT_BORDER()
+            } else {
+                CHROME_MUTED()
+            };
             let text = fmt_scale(v);
-            let galley = ui.fonts(|f| f.layout_no_wrap(text, font.clone(), CHROME_MUTED()));
+            let galley = ui.fonts(|f| f.layout_no_wrap(text.clone(), font.clone(), color));
             let mut ty = y - galley.size().y * 0.5;
             ty = ty.clamp(label_rect.top(), label_rect.bottom() - galley.size().y);
             let tx = (label_rect.right() - galley.size().x - 2.0).max(label_rect.left());
-            painter.galley(Pos2::new(tx, ty), galley, CHROME_MUTED());
+            let label_pos = Pos2::new(tx, ty);
+            painter.galley(label_pos, galley.clone(), color);
+            // Top/bottom ticks: click to set manual Y limit.
+            if is_max || is_min {
+                let hit = egui::Rect::from_min_size(
+                    Pos2::new(label_rect.left(), ty - 2.0),
+                    egui::vec2(label_rect.width(), galley.size().y + 4.0),
+                );
+                let tip = if is_max {
+                    if y_max.is_some() {
+                        "Y max (manual) — click to edit · right-click Auto"
+                    } else {
+                        "Y max (auto) — click to set manual range"
+                    }
+                } else if y_min.is_some() {
+                    "Y min (manual) — click to edit · right-click Auto"
+                } else {
+                    "Y min (auto) — click to set manual range"
+                };
+                let id = if is_max { edit_max_id } else { edit_min_id };
+                let r = ui.interact(hit, id.with("hit"), Sense::click());
+                r.clone().on_hover_text(tip);
+                if r.clicked() {
+                    ui.ctx().data_mut(|d| {
+                        d.insert_temp(id, text);
+                    });
+                }
+                if r.secondary_clicked() {
+                    y_edit = Some(if is_max {
+                        YLimitEdit::ClearMax
+                    } else {
+                        YLimitEdit::ClearMin
+                    });
+                }
+            }
+        }
+
+        // Popups to type a manual Y limit.
+        for (id, is_max, auto_v) in [
+            (edit_max_id, true, y_hi),
+            (edit_min_id, false, y_lo),
+        ] {
+            if let Some(mut draft) = ui.ctx().data(|d| d.get_temp::<String>(id)) {
+                let mut dismiss = false;
+                let title = if is_max { "Y max" } else { "Y min" };
+                egui::Window::new(format!("combined_y_{title}_{board_id}"))
+                    .id(id.with("win"))
+                    .title_bar(false)
+                    .collapsible(false)
+                    .resizable(false)
+                    .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+                    .frame(
+                        egui::Frame::NONE
+                            .fill(CHROME_BG())
+                            .stroke(egui::Stroke::new(1.0_f32, CHROME_SEP()))
+                            .corner_radius(8.0)
+                            .inner_margin(egui::Margin::symmetric(12, 10)),
+                    )
+                    .show(ui.ctx(), |ui| {
+                        ui.set_min_width(220.0);
+                        ui.label(RichText::new(title).strong().color(CHROME_TEXT()));
+                        ui.add_space(4.0);
+                        ui.add(
+                            egui::TextEdit::singleline(&mut draft)
+                                .desired_width(160.0)
+                                .text_color(CHROME_TEXT()),
+                        );
+                        ui.add_space(8.0);
+                        ui.horizontal(|ui| {
+                            if ui
+                                .add(
+                                    egui::Button::new(RichText::new("Set").strong())
+                                        .fill(CHROME_ACCENT_SOFT())
+                                        .stroke(egui::Stroke::new(1.0_f32, CHROME_ACCENT_BORDER())),
+                                )
+                                .clicked()
+                            {
+                                if let Ok(v) = draft.trim().parse::<f64>() {
+                                    if v.is_finite() {
+                                        y_edit = Some(if is_max {
+                                            YLimitEdit::SetMax(v)
+                                        } else {
+                                            YLimitEdit::SetMin(v)
+                                        });
+                                        dismiss = true;
+                                    }
+                                }
+                            }
+                            if ui.button("Auto").clicked() {
+                                y_edit = Some(if is_max {
+                                    YLimitEdit::ClearMax
+                                } else {
+                                    YLimitEdit::ClearMin
+                                });
+                                dismiss = true;
+                            }
+                            if ui.button("Cancel").clicked() {
+                                dismiss = true;
+                            }
+                        });
+                        ui.weak(format!("Auto suggests {}", fmt_scale(auto_v)));
+                    });
+                if dismiss {
+                    ui.ctx().data_mut(|d| d.remove_temp::<String>(id));
+                } else {
+                    ui.ctx().data_mut(|d| d.insert_temp(id, draft));
+                }
+            }
         }
 
         for s in series {
@@ -870,6 +1012,7 @@ fn paint_multi_series_plot(
             painter.galley(Pos2::new(x, y), galley, CHROME_MUTED());
         }
     });
+    y_edit
 }
 
 fn draw_combined_legend(
@@ -946,6 +1089,8 @@ struct SeriesDomain {
 fn series_time_value_domain(
     series: &[SeriesPaint<'_>],
     time_range: CombinedTimeRange,
+    y_min: Option<f64>,
+    y_max: Option<f64>,
 ) -> Option<SeriesDomain> {
     let cutoff = time_range.cutoff(Instant::now());
     let mut t0: Option<Instant> = None;
@@ -972,37 +1117,41 @@ fn series_time_value_domain(
     if !min_v.is_finite() || !max_v.is_finite() {
         return None;
     }
-    let now = Instant::now();
-    // Autofit X to data so far; expand until the span hits the selected timeline max.
-    // Avoid locking a full empty 15m/1h domain with a tiny blip at the end.
+    // Tip = last sample time (not Instant::now) — plot only advances when data arrives.
+    // Idle Combined boards do not get a timer; X stays put between series samples.
+    let data_t0 = t0?;
+    let data_t1 = t1?;
     let (t0, t1) = match time_range.max_span() {
         Some(max_span) => {
-            let data_t0 = t0?;
-            let data_t1 = t1.map(|t| t.max(now)).unwrap_or(now);
             let span = data_t1.saturating_duration_since(data_t0);
             if span < max_span {
+                // Autofit to data so far; expand as samples grow until the selected max.
                 (data_t0, data_t1)
             } else {
-                let capped_t0 = now.checked_sub(max_span).unwrap_or(data_t0);
-                (capped_t0, now)
+                let capped_t0 = data_t1.checked_sub(max_span).unwrap_or(data_t0);
+                (capped_t0, data_t1)
             }
         }
-        None => {
-            // All buffered — fit samples; tip follows live clock when we have data.
-            let data_t0 = t0?;
-            let data_t1 = t1.map(|t| t.max(now)).unwrap_or(now);
-            (data_t0, data_t1)
-        }
+        None => (data_t0, data_t1),
     };
     let _ = cutoff;
     let raw_span = (max_v - min_v).abs();
-    let (y_lo, y_hi) = if raw_span < 1e-12 {
+    let (auto_lo, auto_hi) = if raw_span < 1e-12 {
         let pad = (min_v.abs() * 0.05).max(1.0);
         (min_v - pad, max_v + pad)
     } else {
         let pad = (raw_span * 0.04).max(raw_span * 1e-6);
         (min_v - pad, max_v + pad)
     };
+    // Manual Y limits (click upper/lower labels); default auto from data.
+    let mut y_lo = y_min.unwrap_or(auto_lo);
+    let mut y_hi = y_max.unwrap_or(auto_hi);
+    if y_hi <= y_lo {
+        // Keep a usable span if the user set inverted/equal limits.
+        let pad = ((y_lo.abs() + y_hi.abs()) * 0.05).max(1.0);
+        y_lo = y_lo.min(y_hi) - pad;
+        y_hi = y_lo + pad * 2.0;
+    }
     Some(SeriesDomain {
         t0,
         t1,
@@ -1106,7 +1255,7 @@ fn write_combined_png(
     plot_h: f32,
     time_range: CombinedTimeRange,
 ) -> Result<String, String> {
-    let domain = series_time_value_domain(series, time_range)
+    let domain = series_time_value_domain(series, time_range, None, None)
         .ok_or_else(|| "no numeric samples".to_string())?;
     let cutoff = time_range.cutoff(Instant::now());
     let w = 900u32;
