@@ -972,27 +972,22 @@ fn series_time_value_domain(
     if !min_v.is_finite() || !max_v.is_finite() {
         return None;
     }
-    let now = Instant::now();
-    // Autofit X to data so far; expand until the span hits the selected timeline max.
-    // Avoid locking a full empty 15m/1h domain with a tiny blip at the end.
+    // Tip = last sample time (not Instant::now) — plot only advances when data arrives.
+    // Idle Combined boards do not get a timer; X stays put between series samples.
+    let data_t0 = t0?;
+    let data_t1 = t1?;
     let (t0, t1) = match time_range.max_span() {
         Some(max_span) => {
-            let data_t0 = t0?;
-            let data_t1 = t1.map(|t| t.max(now)).unwrap_or(now);
             let span = data_t1.saturating_duration_since(data_t0);
             if span < max_span {
+                // Autofit to data so far; expand as samples grow until the selected max.
                 (data_t0, data_t1)
             } else {
-                let capped_t0 = now.checked_sub(max_span).unwrap_or(data_t0);
-                (capped_t0, now)
+                let capped_t0 = data_t1.checked_sub(max_span).unwrap_or(data_t0);
+                (capped_t0, data_t1)
             }
         }
-        None => {
-            // All buffered — fit samples; tip follows live clock when we have data.
-            let data_t0 = t0?;
-            let data_t1 = t1.map(|t| t.max(now)).unwrap_or(now);
-            (data_t0, data_t1)
-        }
+        None => (data_t0, data_t1),
     };
     let _ = cutoff;
     let raw_span = (max_v - min_v).abs();
