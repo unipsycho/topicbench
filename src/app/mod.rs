@@ -118,6 +118,8 @@ pub struct MqttMonitorApp {
     simulation_floating: bool,
     /// HTTP client state for `topicbench-pro` `/sim`.
     sim_client: crate::pro::sim_client::SimClientState,
+    /// Pro UI themes (`/themes`) — None when unlicensed.
+    theme_client: Option<crate::pro::theme_client::ThemeClient>,
     /// Pro deep-history forwarder (None when HistoryScrubber not entitled).
     history_fwd: Option<crate::pro::history_client::HistoryForwarder>,
     /// Payload-panel history scrub (session-only).
@@ -234,6 +236,13 @@ impl MqttMonitorApp {
                 }
             })
             .collect();
+        let theme_client = if crate::pro::is_licensed() {
+            let tc = crate::pro::theme_client::ThemeClient::new();
+            tc.set_wanted(&settings.theme_id);
+            Some(tc)
+        } else {
+            None
+        };
         Self {
             profiles,
             sessions,
@@ -276,6 +285,7 @@ impl MqttMonitorApp {
             simulation_open,
             simulation_floating,
             sim_client: crate::pro::sim_client::SimClientState::new(),
+            theme_client,
             history_fwd: if crate::pro::has(crate::pro::Entitlement::HistoryScrubber) {
                 Some(crate::pro::history_client::HistoryForwarder::start())
             } else {
@@ -305,18 +315,22 @@ impl eframe::App for MqttMonitorApp {
         if self.splash.is_some() {
             #[cfg(windows)]
             {
-                CHROME_BG.to_normalized_gamma_f32()
+                CHROME_BG().to_normalized_gamma_f32()
             }
             #[cfg(not(windows))]
             {
                 [0.0, 0.0, 0.0, 0.0]
             }
         } else {
-            CHROME_BG.to_normalized_gamma_f32()
+            CHROME_BG().to_normalized_gamma_f32()
         }
     }
 
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // Apply Pro theme tokens when catalog/fetch updates (sidecar down → Classic).
+        if let Some(tc) = self.theme_client.as_mut() {
+            tc.pump(ctx);
+        }
         self.run_auto_reconnect(ctx);
 
         // Hyprland ANR = missed xdg_wm_base pings (misc:anr_missed_pings=3).

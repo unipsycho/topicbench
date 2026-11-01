@@ -32,7 +32,7 @@ fn match_current_fill() -> Color32 {
 /// Top→bottom fade wash behind a scrubbed (non-Live) payload body.
 fn paint_historical_payload_wash(painter: &egui::Painter, rect: egui::Rect) {
     const STEPS: i32 = 28;
-    let rgb = CHROME_ROW;
+    let rgb = CHROME_ROW();
     for i in 0..STEPS {
         let t0 = i as f32 / STEPS as f32;
         let t1 = (i + 1) as f32 / STEPS as f32;
@@ -56,7 +56,7 @@ fn paint_historical_payload_wash(painter: &egui::Painter, rect: egui::Rect) {
 
 /// Dashed outline for historical payload (solid stroke reads too “live”).
 fn paint_dashed_rect_border(painter: &egui::Painter, rect: egui::Rect) {
-    let stroke = egui::Stroke::new(1.25_f32, CHROME_MUTED);
+    let stroke = egui::Stroke::new(1.25_f32, CHROME_MUTED());
     let dash = 5.0;
     let gap = 4.0;
     let r = rect.shrink(0.5);
@@ -1154,7 +1154,7 @@ fn payload_graph_pin(ui: &mut egui::Ui, icons: &IconSet, tip: &str) -> egui::Res
     let response = hover_tip::attach(response, tip);
     if response.hovered() {
         ui.painter()
-            .rect_filled(rect, 2.0, icons::CHROME_HOVER);
+            .rect_filled(rect, 2.0, icons::CHROME_HOVER());
     }
     if let Some(tex) = icons.get("line_graph") {
         egui::Image::new(tex)
