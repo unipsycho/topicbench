@@ -30,16 +30,19 @@ TopicBench Pro is the paid companion — a standalone download for licensed cust
 
 ## Why TopicBench
 
-- **100% Rust** — built entirely in Rust to handle massive topic trees and topic lists with very efficient memory and CPU use
+I use MQTT brokers every day for apps and controls. Existing tools never quite delivered easy navigation, multi-broker handling, data simulation, highlighting and searching content, or flexible windowing — moving panels around and keeping multiple topic trees in view. TopicBench’s features grew from those daily needs.
+
 - **Simultaneous multi-broker** — connect to several brokers at once and monitor or search their topics in a single window
 - **Multi-broker profiles** — save hosts, TLS/WSS options, and credentials (passwords in the OS keyring)
-- **Live topic tree** — subscribe with wildcards and browse traffic as it arrives
+- **Live topic tree** — subscribe with wildcards and browse traffic as it arrives; keep multiple trees in view
+- **Flexible windowing** — move panels and arrange the layout for how you work
+- **Search & highlight** — find topics and payloads without leaving the desktop UI
 - **Publish & recent** — send messages quickly and keep recent payloads handy
 - **Payload inspect** — clear views for JSON and plain text
 - **Stickies & graphs** — pin important topics and watch values over time
-- **Search** — find topics and payloads without leaving the desktop UI
-- **Free & open source** — use it, report issues, contribute.
+- **Free & open source** — use it, report issues, contribute
 - **Updates via GitHub Releases** — in-app check when releases are published
+- **100% Rust** — built entirely in Rust for efficient memory and CPU use on large topic trees and lists
 
 ## Features
 
