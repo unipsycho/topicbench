@@ -51,7 +51,14 @@ impl UpdateStatus {
         match self {
             Self::Idle => "Not checked yet.".into(),
             Self::Checking => "Checking…".into(),
-            Self::UpToDate { latest } => format!("Up to date (latest {latest})."),
+            // Running builds (e.g. 1.2.6) can be ahead of GitHub latest (v1.2.5).
+            Self::UpToDate { latest } => {
+                if strip_v(latest) == strip_v(current_version()) {
+                    format!("Up to date (latest {latest}).")
+                } else {
+                    format!("Up to date (newer than GitHub {latest}).")
+                }
+            }
             Self::Available(info) => format!("Update available: {}.", info.tag),
             Self::Error(msg) => format!("Couldn't check: {msg}"),
             Self::Installing => "Installing update…".into(),
@@ -191,5 +198,18 @@ mod tests {
         let t = truncate_notes(&long);
         assert!(t.ends_with('…'));
         assert_eq!(t.chars().count(), NOTES_MAX_CHARS + 1);
+    }
+
+    #[test]
+    fn settings_line_when_running_ahead_of_github() {
+        let line = UpdateStatus::UpToDate {
+            latest: "v1.2.5".into(),
+        }
+        .settings_line();
+        if strip_v("v1.2.5") == strip_v(current_version()) {
+            assert_eq!(line, "Up to date (latest v1.2.5).");
+        } else {
+            assert_eq!(line, "Up to date (newer than GitHub v1.2.5).");
+        }
     }
 }
