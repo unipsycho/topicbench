@@ -1,6 +1,8 @@
 //! Fetch / cache Pro UI themes from the sidecar (`GET /themes`, `GET /themes/:id`).
 //!
-//! UI thread never blocks on ureq — background poller; sidecar down → Classic.
+//! UI thread never blocks on the poller. [`ThemeClient::preview`] applies from cache
+//! (or a short sync fetch) so Settings ComboBox changes show immediately.
+//! Sidecar down → Classic.
 
 use crate::ui::theme::{self, ChromeTokens, CLASSIC_ID};
 use eframe::egui::Context;
@@ -30,12 +32,12 @@ struct Shared {
     catalog: Vec<ThemeInfo>,
     /// Cached full tokens by id (Pro presets only).
     tokens: HashMap<String, ChromeTokens>,
-    /// Last requested theme id (from settings).
+    /// Last requested theme id (from settings / preview).
     wanted_id: String,
     /// Tokens currently applied (id + payload).
     applied_id: String,
     applied: ChromeTokens,
-    /// Bumped when applied tokens change — UI re-calls apply_theme.
+    /// Bumped when applied tokens change — UI re-calls apply_theme via [`ThemeClient::pump`].
     gen: u64,
 }
 
@@ -72,7 +74,7 @@ pub struct ThemeClient {
 impl ThemeClient {
     pub fn new() -> Self {
         let shared = Arc::new(Mutex::new(Shared::new()));
-        let (tx, rx) = mpsc::sync_channel::<Cmd>(8);
+        let (tx, rx) = mpsc::sync_channel::<Cmd>(32);
         let shared_bg = Arc::clone(&shared);
         thread::Builder::new()
             .name("tb-theme-poll".into())
@@ -89,18 +91,66 @@ impl ThemeClient {
 
     /// Prefer this theme id (persisted settings). Classic when empty / unknown.
     pub fn set_wanted(&self, id: &str) {
-        let id = if id.trim().is_empty() {
-            CLASSIC_ID.to_string()
-        } else {
-            id.trim().to_string()
-        };
+        let id = normalize_id(id);
         if let Ok(mut g) = self.shared.lock() {
             if g.wanted_id == id {
                 return;
             }
             g.wanted_id = id.clone();
         }
+        // Wake poller; ignore full channel (preview already applied on UI thread).
         let _ = self.tx.try_send(Cmd::SetWanted(id));
+    }
+
+    /// Apply `id` immediately (Settings ComboBox preview / Save / Cancel revert).
+    ///
+    /// Classic is always available. Pro ids use cache, else a short sync GET; on
+    /// failure falls back to Classic look while keeping `wanted_id` for retry.
+    pub fn preview(&mut self, ctx: &Context, id: &str) {
+        let id = normalize_id(id);
+        if let Ok(mut g) = self.shared.lock() {
+            g.wanted_id = id.clone();
+        }
+        let _ = self.tx.try_send(Cmd::SetWanted(id.clone()));
+
+        let resolved = if id == CLASSIC_ID {
+            Some((CLASSIC_ID.to_string(), theme::classic()))
+        } else {
+            let cached = self
+                .shared
+                .lock()
+                .ok()
+                .and_then(|g| g.tokens.get(&id).cloned());
+            if let Some(t) = cached {
+                Some((id.clone(), t))
+            } else {
+                // One-shot sync fetch so first ComboBox pick isn't delayed on poller.
+                match fetch_theme_tokens(&id) {
+                    Ok(t) => {
+                        if let Ok(mut g) = self.shared.lock() {
+                            g.tokens.insert(id.clone(), t);
+                            g.sidecar_up = true;
+                        }
+                        Some((id.clone(), t))
+                    }
+                    Err(_) => None,
+                }
+            }
+        };
+
+        // Missing Pro tokens → Classic look (wanted_id still set for poller retry).
+        let (applied_id, apply) =
+            resolved.unwrap_or_else(|| (CLASSIC_ID.to_string(), theme::classic()));
+        if let Ok(mut g) = self.shared.lock() {
+            if g.applied_id != applied_id || g.applied != apply {
+                g.applied_id = applied_id;
+                g.applied = apply;
+                g.gen = g.gen.wrapping_add(1);
+            }
+            self.last_applied_gen = g.gen;
+        }
+        theme::apply_theme(ctx, &apply);
+        ctx.request_repaint();
     }
 
     /// Pro catalog when sidecar is up; empty otherwise.
@@ -118,7 +168,7 @@ impl ThemeClient {
             .unwrap_or(false)
     }
 
-    /// Apply pending theme changes to egui (call once per frame when licensed).
+    /// Apply pending poller updates (e.g. prefetch finished after preview miss).
     pub fn pump(&mut self, ctx: &Context) {
         let (gen, tokens) = match self.shared.lock() {
             Ok(g) => (g.gen, g.applied),
@@ -129,8 +179,15 @@ impl ThemeClient {
             self.last_applied_gen = gen;
             ctx.request_repaint();
         }
-        // Keep poller awake.
-        let _ = self.tx.try_send(Cmd::Tick);
+    }
+}
+
+fn normalize_id(id: &str) -> String {
+    let id = id.trim();
+    if id.is_empty() {
+        CLASSIC_ID.to_string()
+    } else {
+        id.to_string()
     }
 }
 
@@ -141,8 +198,21 @@ fn poll_loop(shared: Arc<Mutex<Shared>>, rx: Receiver<Cmd>) {
     let base = sidecar_base();
 
     loop {
-        // Drain commands (non-blocking burst).
+        // Block until a command or a short timeout so we don't need UI Tick spam.
         let mut force = false;
+        let wait = next_ok_at.saturating_duration_since(Instant::now());
+        match rx.recv_timeout(wait.max(Duration::from_millis(50))) {
+            Ok(Cmd::Tick) => {}
+            Ok(Cmd::SetWanted(id)) => {
+                if let Ok(mut g) = shared.lock() {
+                    g.wanted_id = id;
+                }
+                force = true;
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+            Err(mpsc::RecvTimeoutError::Disconnected) => return,
+        }
+        // Drain burst.
         while let Ok(cmd) = rx.try_recv() {
             match cmd {
                 Cmd::Tick => {}
@@ -157,7 +227,6 @@ fn poll_loop(shared: Arc<Mutex<Shared>>, rx: Receiver<Cmd>) {
 
         let now = Instant::now();
         if !force && now < next_ok_at {
-            thread::sleep(Duration::from_millis(200));
             continue;
         }
 
@@ -167,7 +236,7 @@ fn poll_loop(shared: Arc<Mutex<Shared>>, rx: Receiver<Cmd>) {
                 next_ok_at = Instant::now() + POLL_INTERVAL;
             }
             Err(_) => {
-                // Sidecar down → Classic.
+                // Sidecar down → Classic look (keep wanted_id for retry).
                 if let Ok(mut g) = shared.lock() {
                     if g.sidecar_up || g.applied_id != CLASSIC_ID {
                         g.sidecar_up = false;
@@ -179,7 +248,6 @@ fn poll_loop(shared: Arc<Mutex<Shared>>, rx: Receiver<Cmd>) {
                 backoff = (backoff * 2).min(BACKOFF_MAX);
             }
         }
-        thread::sleep(Duration::from_millis(100));
     }
 }
 
@@ -192,41 +260,41 @@ fn refresh_once(
     let catalog: Vec<ThemeInfo> = serde_json::from_value(catalog_v)
         .map_err(|e| format!("themes catalog json: {e}"))?;
 
+    // Prefetch every Pro palette so Settings ComboBox preview is instant.
+    let mut fetched_all: HashMap<String, ChromeTokens> = HashMap::new();
+    for info in &catalog {
+        let path = format!("/themes/{}", info.id);
+        match http_get(base, token, &path) {
+            Ok(v) => {
+                if let Ok(t) = serde_json::from_value::<ChromeTokens>(v) {
+                    fetched_all.insert(info.id.clone(), t);
+                }
+            }
+            Err(_) => continue,
+        }
+    }
+
     let wanted = shared
         .lock()
         .map(|g| g.wanted_id.clone())
         .unwrap_or_else(|_| CLASSIC_ID.to_string());
 
-    let mut fetched: Option<(String, ChromeTokens)> = None;
-    if wanted != CLASSIC_ID {
-        // Use cache if present.
-        let cached = shared
-            .lock()
-            .ok()
-            .and_then(|g| g.tokens.get(&wanted).cloned());
-        if let Some(t) = cached {
-            fetched = Some((wanted.clone(), t));
-        } else {
-            let path = format!("/themes/{wanted}");
-            let v = http_get(base, token, &path)?;
-            let t: ChromeTokens =
-                serde_json::from_value(v).map_err(|e| format!("theme tokens json: {e}"))?;
-            fetched = Some((wanted.clone(), t));
-        }
-    }
-
     if let Ok(mut g) = shared.lock() {
         g.sidecar_up = true;
         g.catalog = catalog;
-        if let Some((id, t)) = fetched {
-            g.tokens.insert(id.clone(), t);
-            if g.applied_id != id || g.applied != t {
-                g.applied_id = id;
+        for (id, t) in fetched_all {
+            g.tokens.insert(id, t);
+        }
+        if wanted == CLASSIC_ID {
+            apply_classic(&mut g);
+        } else if let Some(t) = g.tokens.get(&wanted).cloned() {
+            if g.applied_id != wanted || g.applied != t {
+                g.applied_id = wanted;
                 g.applied = t;
                 g.gen = g.gen.wrapping_add(1);
             }
         } else {
-            // Classic wanted (or Pro id unavailable).
+            // Wanted Pro id missing — keep Classic until it appears.
             apply_classic(&mut g);
         }
     }
@@ -242,11 +310,17 @@ fn apply_classic(g: &mut Shared) {
     }
 }
 
+fn fetch_theme_tokens(id: &str) -> Result<ChromeTokens, String> {
+    let base = sidecar_base();
+    let mut token = None;
+    let v = http_get(&base, &mut token, &format!("/themes/{id}"))?;
+    serde_json::from_value(v).map_err(|e| format!("theme tokens json: {e}"))
+}
+
 fn sidecar_base() -> String {
     std::env::var("TOPICBENCH_MCP_URL")
         .ok()
         .and_then(|u| {
-            // Strip trailing /mcp if present.
             let u = u.trim_end_matches('/').to_string();
             if let Some(stripped) = u.strip_suffix("/mcp") {
                 Some(stripped.to_string())

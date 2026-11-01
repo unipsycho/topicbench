@@ -72,6 +72,8 @@ pub struct ThemeSection<'a> {
     pub pro_catalog: &'a [crate::pro::theme_client::ThemeInfo],
     pub pro_up: bool,
     pub licensed: bool,
+    /// Set when the Theme ComboBox selection changes (live preview).
+    pub changed_id: &'a mut Option<String>,
 }
 
 /// Draw settings body into `draft` (caller commits on Save / discards on Cancel).
@@ -126,6 +128,7 @@ pub fn draw(
     ui.horizontal(|ui| {
         ui.label("Theme");
         let selected_label = theme_label(&draft.theme_id, theme.pro_catalog);
+        let before = draft.theme_id.clone();
         egui::ComboBox::from_id_salt("ui_theme_id")
             .selected_text(selected_label)
             .show_ui(ui, |ui| {
@@ -140,6 +143,10 @@ pub fn draw(
                     }
                 }
             });
+        // Live preview as soon as the ComboBox selection changes.
+        if draft.theme_id != before {
+            *theme.changed_id = Some(draft.theme_id.clone());
+        }
     });
     if theme.licensed && !theme.pro_up {
         ui.weak("Pro themes appear when TopicBench Pro is running.");
