@@ -158,6 +158,11 @@ pub fn CHROME_MUTED() -> Color32 {
 pub fn CHROME_TEXT() -> Color32 {
     chrome().text
 }
+/// True when the active Pro/Classic palette is light (e.g. Latte).
+#[inline]
+pub fn chrome_is_light() -> bool {
+    chrome().is_light
+}
 #[allow(non_snake_case)]
 #[inline]
 pub fn STATUS_BG() -> Color32 {
@@ -517,10 +522,15 @@ impl IconSet {
         if response.hovered() {
             ui.painter().rect_filled(rect, 3.0, CHROME_HOVER());
         }
+        // Light palettes: glyph PNGs are authored light — multiply by text so +/− stay visible.
+        let light_tint = chrome_is_light().then_some(CHROME_TEXT());
         if let Some(tex) = self.get(name) {
-            let img = egui::Image::new(tex)
+            let mut img = egui::Image::new(tex)
                 .fit_to_exact_size(Vec2::splat(ZOOM_ICON))
                 .maintain_aspect_ratio(true);
+            if let Some(t) = light_tint {
+                img = img.tint(t);
+            }
             img.paint_at(
                 ui,
                 egui::Rect::from_center_size(rect.center(), Vec2::splat(ZOOM_ICON)),
