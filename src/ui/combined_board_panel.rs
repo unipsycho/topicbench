@@ -8,10 +8,11 @@ use crate::pro::combined_boards::{
 };
 use crate::ui::flash;
 use crate::ui::icons::{
-    self, IconSet, CHROME_ACCENT_BORDER, CHROME_BG, CHROME_MUTED, CHROME_TEXT,
+    self, IconSet, CHROME_ACCENT_BORDER, CHROME_ACCENT_SOFT, CHROME_BG, CHROME_CAPTION,
+    CHROME_COMBO_BG, CHROME_MUTED, CHROME_SEP, CHROME_TEXT, TINY_ICON,
 };
 use eframe::egui::{
-    self, Align, Color32, CursorIcon, Pos2, RichText, Sense, Stroke, ViewportBuilder,
+    self, Align, Color32, Pos2, RichText, Sense, Stroke, ViewportBuilder,
     ViewportClass,
 };
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -208,14 +209,17 @@ fn paint_board(
         )
     };
 
-    // Chrome header.
-    ui.horizontal(|ui| {
-        ui.label(RichText::new(format!("Combined: {title}")).strong().color(CHROME_TEXT()));
+    // Section chrome header (matches Simulation / Export panels).
+    let save_id = egui::Id::new(("combined_save_open", board_id));
+    let open_id = egui::Id::new(("combined_lib_open", board_id));
+    icons::section_header_bar(ui, |ui| {
+        icons::section_icon(ui, icons, "node_graph");
+        icons::section_title(ui, &format!("Combined: {title}"));
         if series_count > 0 {
             ui.label(
                 RichText::new(format!("{series_count} series"))
                     .small()
-                    .color(CHROME_MUTED()),
+                    .color(CHROME_CAPTION()),
             );
         }
         ui.add_space(8.0);
@@ -236,6 +240,7 @@ fn paint_board(
         }
 
         ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
+            ui.spacing_mut().item_spacing.x = 4.0;
             if icons
                 .tiny_header(ui, "close_red", false, "Close board")
                 .clicked()
@@ -249,7 +254,9 @@ fn paint_board(
                     .tiny_header(ui, "export", false, "Save Combined graph as PNG")
                     .clicked()
             {
-                ui.ctx().data_mut(|d| d.insert_temp(png_h_key, plot_h));
+                // Export uses on-screen plot height (fills the pop-out).
+                let export_h = ui.available_height().max(120.0);
+                ui.ctx().data_mut(|d| d.insert_temp(png_h_key, export_h));
                 let name = combined_export_filename();
                 crate::ui::native_dialog::begin_path(
                     ui.ctx(),
@@ -262,26 +269,21 @@ fn paint_board(
                     },
                 );
             }
-            if ui
-                .small_button("Clear")
-                .on_hover_text("Clear display buffer (keep series)")
+            if icons
+                .tiny_header(ui, "delete", false, "Clear display buffer (keep series)")
                 .clicked()
             {
                 store.clear_display_buffer(board_id);
                 *status = Some("Combined display buffer cleared".into());
             }
-            let save_id = egui::Id::new(("combined_save_open", board_id));
-            let open_id = egui::Id::new(("combined_lib_open", board_id));
-            if ui
-                .small_button("Open")
-                .on_hover_text("Recall a saved board")
+            if icons
+                .tiny_header(ui, "import", false, "Recall a saved board")
                 .clicked()
             {
                 ui.ctx().data_mut(|d| d.insert_temp(open_id, true));
             }
-            if ui
-                .small_button("Save")
-                .on_hover_text("Save board to library")
+            if icons
+                .tiny_header(ui, "save", false, "Save board to library")
                 .clicked()
             {
                 let draft = store
@@ -293,33 +295,98 @@ fn paint_board(
         });
     });
 
-    // Save-name popup.
-    let save_id = egui::Id::new(("combined_save_open", board_id));
+    // Save-name popup — Export / Playback section chrome.
     if let Some(mut name) = ui.ctx().data(|d| d.get_temp::<String>(save_id)) {
         let mut dismiss = false;
-        egui::Window::new("Save Combined board")
+        let mut do_save = false;
+        egui::Window::new("combined_save_chrome")
             .id(egui::Id::new(("combined_save_win", board_id)))
+            .title_bar(false)
             .collapsible(false)
             .resizable(false)
-            .anchor(egui::Align2::CENTER_TOP, [0.0, 40.0])
+            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+            .frame(
+                egui::Frame::NONE
+                    .fill(CHROME_BG())
+                    .stroke(egui::Stroke::new(1.0_f32, CHROME_SEP()))
+                    .corner_radius(8.0)
+                    .inner_margin(egui::Margin::symmetric(16, 14)),
+            )
             .show(ui.ctx(), |ui| {
-                ui.label("Library name:");
-                ui.text_edit_singleline(&mut name);
+                ui.set_min_width(360.0);
+                ui.set_max_width(420.0);
+                icons::section_header_bar(ui, |ui| {
+                    icons::section_icon(ui, icons, "save");
+                    icons::section_title(ui, "Save Combined board");
+                });
+                ui.add_space(6.0);
+                let bar_w = ui.available_width();
+                let (bar, _) =
+                    ui.allocate_exact_size(egui::vec2(bar_w, 3.0), Sense::hover());
+                ui.painter().rect_filled(bar, 1.5, CHROME_ACCENT_BORDER());
+                ui.add_space(12.0);
+                ui.label(RichText::new("Library name").strong().color(CHROME_TEXT()));
+                ui.add_space(4.0);
+                ui.add(
+                    egui::TextEdit::singleline(&mut name)
+                        .desired_width(ui.available_width())
+                        .text_color(CHROME_TEXT()),
+                );
+                ui.add_space(14.0);
+                ui.separator();
+                ui.add_space(8.0);
                 ui.horizontal(|ui| {
-                    if ui.button("Save").clicked() {
-                        match store.save_board_as(board_id, &name) {
-                            Ok(()) => {
-                                *status = Some(format!("Saved Combined board “{name}”"));
-                                dismiss = true;
-                            }
-                            Err(e) => *status = Some(format!("Save failed: {e}")),
+                    ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
+                        ui.spacing_mut().item_spacing.x = 8.0;
+                        let save_btn = if let Some(tex) = icons.get("save") {
+                            ui.add(
+                                egui::Button::image_and_text(
+                                    egui::Image::new(tex)
+                                        .fit_to_exact_size(egui::vec2(TINY_ICON, TINY_ICON)),
+                                    RichText::new("Save").strong(),
+                                )
+                                .fill(CHROME_ACCENT_SOFT())
+                                .stroke(egui::Stroke::new(1.0_f32, CHROME_ACCENT_BORDER()))
+                                .min_size(egui::vec2(120.0, 32.0)),
+                            )
+                        } else {
+                            ui.add(
+                                egui::Button::new(RichText::new("Save").strong())
+                                    .fill(CHROME_ACCENT_SOFT())
+                                    .stroke(egui::Stroke::new(1.0_f32, CHROME_ACCENT_BORDER()))
+                                    .min_size(egui::vec2(120.0, 32.0)),
+                            )
+                        };
+                        if save_btn.clicked() {
+                            do_save = true;
                         }
-                    }
-                    if ui.button("Cancel").clicked() {
-                        dismiss = true;
-                    }
+                        let cancel_btn = if let Some(tex) = icons.get("close_red") {
+                            ui.add(
+                                egui::Button::image_and_text(
+                                    egui::Image::new(tex)
+                                        .fit_to_exact_size(egui::vec2(TINY_ICON, TINY_ICON)),
+                                    "Cancel",
+                                )
+                                .min_size(egui::vec2(104.0, 32.0)),
+                            )
+                        } else {
+                            ui.add(egui::Button::new("Cancel").min_size(egui::vec2(104.0, 32.0)))
+                        };
+                        if cancel_btn.clicked() {
+                            dismiss = true;
+                        }
+                    });
                 });
             });
+        if do_save {
+            match store.save_board_as(board_id, &name) {
+                Ok(()) => {
+                    *status = Some(format!("Saved Combined board “{name}”"));
+                    dismiss = true;
+                }
+                Err(e) => *status = Some(format!("Save failed: {e}")),
+            }
+        }
         if dismiss {
             ui.ctx().data_mut(|d| d.remove_temp::<String>(save_id));
         } else {
@@ -327,8 +394,7 @@ fn paint_board(
         }
     }
 
-    // Open / recall popup.
-    let open_id = egui::Id::new(("combined_lib_open", board_id));
+    // Open / recall popup — same chrome as Save.
     let show_open = ui
         .ctx()
         .data(|d| d.get_temp::<bool>(open_id))
@@ -341,46 +407,141 @@ fn paint_board(
             .data(|d| d.get_temp::<String>(pick_id))
             .unwrap_or_else(|| names.first().cloned().unwrap_or_default());
         let mut dismiss = false;
-        egui::Window::new("Open Combined board")
+        let mut do_open = false;
+        let mut do_delete = false;
+        egui::Window::new("combined_open_chrome")
             .id(egui::Id::new(("combined_open_win", board_id)))
+            .title_bar(false)
             .collapsible(false)
             .resizable(false)
-            .anchor(egui::Align2::CENTER_TOP, [0.0, 40.0])
+            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+            .frame(
+                egui::Frame::NONE
+                    .fill(CHROME_BG())
+                    .stroke(egui::Stroke::new(1.0_f32, CHROME_SEP()))
+                    .corner_radius(8.0)
+                    .inner_margin(egui::Margin::symmetric(16, 14)),
+            )
             .show(ui.ctx(), |ui| {
+                ui.set_min_width(360.0);
+                ui.set_max_width(420.0);
+                icons::section_header_bar(ui, |ui| {
+                    icons::section_icon(ui, icons, "import");
+                    icons::section_title(ui, "Open Combined board");
+                });
+                ui.add_space(6.0);
+                let bar_w = ui.available_width();
+                let (bar, _) =
+                    ui.allocate_exact_size(egui::vec2(bar_w, 3.0), Sense::hover());
+                ui.painter().rect_filled(bar, 1.5, CHROME_ACCENT_BORDER());
+                ui.add_space(12.0);
                 if names.is_empty() {
-                    ui.weak("No saved boards yet — use Save first.");
+                    ui.label(
+                        RichText::new("No saved boards yet — use Save first.")
+                            .color(CHROME_MUTED()),
+                    );
                 } else {
+                    ui.label(RichText::new("Saved board").strong().color(CHROME_TEXT()));
+                    ui.add_space(4.0);
                     egui::ComboBox::from_id_salt(("combined_lib_cb", board_id))
                         .selected_text(&pick)
-                        .width(220.0)
+                        .width(ui.available_width().min(280.0))
                         .show_ui(ui, |ui| {
                             for n in &names {
                                 ui.selectable_value(&mut pick, n.clone(), n);
                             }
                         });
                 }
+                ui.add_space(14.0);
+                ui.separator();
+                ui.add_space(8.0);
                 ui.horizontal(|ui| {
-                    if !names.is_empty() && ui.button("Open").clicked() {
-                        if store.recall_library(&pick).is_some() {
-                            *status = Some(format!("Opened Combined board “{pick}”"));
-                            *persist = true;
+                    ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
+                        ui.spacing_mut().item_spacing.x = 8.0;
+                        let can = !names.is_empty();
+                        let open_btn = if let Some(tex) = icons.get("import") {
+                            ui.add_enabled(
+                                can,
+                                egui::Button::image_and_text(
+                                    egui::Image::new(tex)
+                                        .fit_to_exact_size(egui::vec2(TINY_ICON, TINY_ICON)),
+                                    RichText::new("Open").strong(),
+                                )
+                                .fill(CHROME_ACCENT_SOFT())
+                                .stroke(egui::Stroke::new(1.0_f32, CHROME_ACCENT_BORDER()))
+                                .min_size(egui::vec2(120.0, 32.0)),
+                            )
+                        } else {
+                            ui.add_enabled(
+                                can,
+                                egui::Button::new(RichText::new("Open").strong())
+                                    .fill(CHROME_ACCENT_SOFT())
+                                    .stroke(egui::Stroke::new(1.0_f32, CHROME_ACCENT_BORDER()))
+                                    .min_size(egui::vec2(120.0, 32.0)),
+                            )
+                        };
+                        if open_btn.clicked() {
+                            do_open = true;
                         }
-                        dismiss = true;
-                    }
-                    if !names.is_empty() && ui.button("Delete").clicked() {
-                        let _ = store.delete_library_entry(&pick);
-                        *status = Some(format!("Deleted library entry “{pick}”"));
-                        pick = store
-                            .library
-                            .first()
-                            .map(|e| e.name.clone())
-                            .unwrap_or_default();
-                    }
-                    if ui.button("Cancel").clicked() {
-                        dismiss = true;
-                    }
+                        if can
+                            && icons
+                                .get("delete_red")
+                                .map(|tex| {
+                                    ui.add(
+                                        egui::Button::image_and_text(
+                                            egui::Image::new(tex).fit_to_exact_size(
+                                                egui::vec2(TINY_ICON, TINY_ICON),
+                                            ),
+                                            "Delete",
+                                        )
+                                        .min_size(egui::vec2(104.0, 32.0)),
+                                    )
+                                    .clicked()
+                                })
+                                .unwrap_or_else(|| {
+                                    ui.add(
+                                        egui::Button::new("Delete")
+                                            .min_size(egui::vec2(104.0, 32.0)),
+                                    )
+                                    .clicked()
+                                })
+                        {
+                            do_delete = true;
+                        }
+                        let cancel_btn = if let Some(tex) = icons.get("close_red") {
+                            ui.add(
+                                egui::Button::image_and_text(
+                                    egui::Image::new(tex)
+                                        .fit_to_exact_size(egui::vec2(TINY_ICON, TINY_ICON)),
+                                    "Cancel",
+                                )
+                                .min_size(egui::vec2(104.0, 32.0)),
+                            )
+                        } else {
+                            ui.add(egui::Button::new("Cancel").min_size(egui::vec2(104.0, 32.0)))
+                        };
+                        if cancel_btn.clicked() {
+                            dismiss = true;
+                        }
+                    });
                 });
             });
+        if do_open {
+            if store.recall_library(&pick).is_some() {
+                *status = Some(format!("Opened Combined board “{pick}”"));
+                *persist = true;
+            }
+            dismiss = true;
+        }
+        if do_delete {
+            let _ = store.delete_library_entry(&pick);
+            *status = Some(format!("Deleted library entry “{pick}”"));
+            pick = store
+                .library
+                .first()
+                .map(|e| e.name.clone())
+                .unwrap_or_default();
+        }
         if dismiss {
             ui.ctx().data_mut(|d| {
                 d.remove_temp::<bool>(open_id);
@@ -466,56 +627,39 @@ fn paint_board(
     }
 
     let mut remove: Option<(String, String)> = None;
-    let mut new_plot_h = plot_h;
-    let mut height_persist = false;
+
+    // Plot fills the pop-out: reserve legend + x-labels, use the rest (no short resize strip).
+    let avail_h = ui.available_height().max(80.0);
+    let legend_reserve = if series_refs.is_empty() {
+        0.0
+    } else {
+        36.0 + (series_refs.len() as f32 * 4.0).min(48.0)
+    };
+    let fill_plot_h = (avail_h - legend_reserve - X_LABEL_H - 16.0).max(80.0);
 
     let border = Stroke::new(1.0_f32, CHROME_ACCENT_BORDER());
     let frame = egui::Frame::NONE
-        .fill(Color32::from_rgb(32, 34, 40))
+        .fill(CHROME_COMBO_BG())
         .corner_radius(4.0)
         .inner_margin(egui::Margin::symmetric(10, 8))
         .show(ui, |ui| {
             let w = (ui.available_width() - flash::ITEM_CLIP_CLEAR).max(48.0);
             ui.set_min_width(w);
             ui.set_max_width(w);
+            ui.set_min_height((avail_h - 4.0).max(72.0));
 
             if series_refs.is_empty() {
                 ui.label(RichText::new("No series yet.").color(CHROME_MUTED()));
-                ui.weak("Use “Add to Combined” on a Payload field or Graph sticky.");
+                ui.label(
+                    RichText::new("Use “Add to Combined” on a Payload field or Graph sticky.")
+                        .color(CHROME_MUTED()),
+                );
                 return;
             }
 
-            paint_multi_series_plot(ui, &series_refs, plot_h, time_range);
+            paint_multi_series_plot(ui, &series_refs, fill_plot_h, time_range);
             ui.add_space(6.0);
             draw_combined_legend(ui, &series_refs, &mut remove);
-
-            ui.add_space(2.0);
-            let full_w = ui.available_width().max(24.0);
-            let (sep, sep_r) =
-                ui.allocate_exact_size(egui::vec2(full_w, 8.0), Sense::click_and_drag());
-            let sep_r = sep_r.on_hover_cursor(CursorIcon::ResizeVertical);
-            let mid_y = sep.center().y;
-            ui.painter().hline(
-                sep.x_range().shrink(8.0),
-                mid_y,
-                Stroke::new(2.0_f32, Color32::from_rgb(70, 74, 84)),
-            );
-            for dx in [-6.0_f32, 0.0, 6.0] {
-                ui.painter().circle_filled(
-                    Pos2::new(sep.center().x + dx, mid_y),
-                    1.4,
-                    CHROME_MUTED(),
-                );
-            }
-            if sep_r.dragged() {
-                new_plot_h = clamp_height(plot_h + sep_r.drag_delta().y);
-                ui.ctx().request_repaint();
-            }
-            if sep_r.drag_stopped() {
-                new_plot_h = clamp_height(new_plot_h);
-                height_persist = true;
-            }
-            sep_r.on_hover_text("Drag to resize Combined graph");
         });
     ui.painter().rect_stroke(
         frame.response.rect.shrink(1.0),
@@ -532,14 +676,15 @@ fn paint_board(
         *persist = true;
         *status = Some(format!("Removed series · {topic}"));
     }
-    if new_plot_h != plot_h || height_persist {
-        if let Some(b) = store.get_mut(board_id) {
-            b.plot_height = clamp_height(new_plot_h);
-        }
-        if height_persist {
+    // Persist last on-screen height for PNG export defaults / session restore.
+    if let Some(b) = store.get_mut(board_id) {
+        let h = clamp_height(fill_plot_h);
+        if (b.plot_height - h).abs() > 0.5 {
+            b.plot_height = h;
             *persist = true;
         }
     }
+    let _ = plot_h;
 }
 
 struct SeriesPaintOwned {
@@ -593,9 +738,10 @@ fn paint_multi_series_plot(
         );
 
         let painter = ui.painter_at(rect.union(label_rect));
-        painter.rect_filled(rect, 2.0, ui.visuals().extreme_bg_color);
+        // Plot well tracks chrome status (Latte-safe — not a baked charcoal).
+        painter.rect_filled(rect, 2.0, CHROME_COMBO_BG());
 
-        let grid = Stroke::new(1.0_f32, Color32::from_rgb(48, 52, 60));
+        let grid = Stroke::new(1.0_f32, CHROME_SEP());
         for i in 0..Y_TICKS {
             let frac = i as f32 / (Y_TICKS - 1) as f32;
             let v = y_hi - f64::from(frac) * (y_hi - y_lo);
@@ -823,21 +969,32 @@ fn series_time_value_domain(
             t1 = Some(t1.map_or(sample.at, |t| t.max(sample.at)));
         }
     }
-    // Live follow: when filtering, extend t1 to now so the window stays at the tip.
-    if let Some(c) = cutoff {
-        let now = Instant::now();
-        t1 = Some(t1.map_or(now, |t| t.max(now)));
-        t0 = Some(t0.map_or(c, |t| t.min(c).max(c)));
-        // Prefer fixed window [now-span, now] when we have any samples.
-        if min_v.is_finite() {
-            t0 = Some(c);
-            t1 = Some(now);
-        }
-    }
     if !min_v.is_finite() || !max_v.is_finite() {
         return None;
     }
-    let (t0, t1) = (t0?, t1?);
+    let now = Instant::now();
+    // Autofit X to data so far; expand until the span hits the selected timeline max.
+    // Avoid locking a full empty 15m/1h domain with a tiny blip at the end.
+    let (t0, t1) = match time_range.max_span() {
+        Some(max_span) => {
+            let data_t0 = t0?;
+            let data_t1 = t1.map(|t| t.max(now)).unwrap_or(now);
+            let span = data_t1.saturating_duration_since(data_t0);
+            if span < max_span {
+                (data_t0, data_t1)
+            } else {
+                let capped_t0 = now.checked_sub(max_span).unwrap_or(data_t0);
+                (capped_t0, now)
+            }
+        }
+        None => {
+            // All buffered — fit samples; tip follows live clock when we have data.
+            let data_t0 = t0?;
+            let data_t1 = t1.map(|t| t.max(now)).unwrap_or(now);
+            (data_t0, data_t1)
+        }
+    };
+    let _ = cutoff;
     let raw_span = (max_v - min_v).abs();
     let (y_lo, y_hi) = if raw_span < 1e-12 {
         let pad = (min_v.abs() * 0.05).max(1.0);

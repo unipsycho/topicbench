@@ -12,7 +12,7 @@ use crate::ui::clipboard;
 use crate::ui::flash;
 use crate::ui::icons::{
     self, IconSet, CHROME_ACCENT_BORDER, CHROME_ACCENT_SOFT, CHROME_CAPTION, CHROME_HOVER,
-    CHROME_ROW, CHROME_SECTION, TINY_ICON,
+    CHROME_HEADING, CHROME_ROW, CHROME_SECTION, CHROME_TEXT, TINY_ICON,
 };
 use eframe::egui::{self, Color32, CursorIcon, RichText, Sense};
 use std::path::Path;
@@ -63,10 +63,11 @@ fn paint_profile_row_body(
     } else {
         "connection_status"
     };
+    // Themed text — hardcoded near-white was unreadable on Latte / light palettes.
     let name_color = if selected {
-        Color32::from_rgb(210, 225, 255)
+        CHROME_HEADING()
     } else {
-        Color32::from_rgb(230, 232, 238)
+        CHROME_TEXT()
     };
     let fonts = ui.fonts(|f| f.clone());
     let name_galley = fonts.layout_no_wrap(
@@ -83,7 +84,7 @@ fn paint_profile_row_body(
         Some(fonts.layout_no_wrap(
             format!("#{msg_count}"),
             egui::FontId::proportional(14.0),
-            Color32::from_rgb(230, 232, 238),
+            CHROME_TEXT(),
         ))
     } else {
         None

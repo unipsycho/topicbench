@@ -53,14 +53,19 @@ impl CombinedTimeRange {
 
     /// Oldest Instant to keep when filtering samples; None = no filter.
     pub fn cutoff(self, now: Instant) -> Option<Instant> {
-        let secs = match self {
-            Self::Min1 => 60,
-            Self::Min5 => 5 * 60,
-            Self::Min15 => 15 * 60,
-            Self::Hour1 => 60 * 60,
-            Self::All => return None,
-        };
-        Some(now.checked_sub(Duration::from_secs(secs)).unwrap_or(now))
+        self.max_span()
+            .map(|span| now.checked_sub(span).unwrap_or(now))
+    }
+
+    /// Selected timeline cap; `None` = All buffered (no fixed max).
+    pub fn max_span(self) -> Option<Duration> {
+        match self {
+            Self::Min1 => Some(Duration::from_secs(60)),
+            Self::Min5 => Some(Duration::from_secs(5 * 60)),
+            Self::Min15 => Some(Duration::from_secs(15 * 60)),
+            Self::Hour1 => Some(Duration::from_secs(60 * 60)),
+            Self::All => None,
+        }
     }
 }
 
@@ -691,5 +696,17 @@ mod tests {
         assert!(added);
         assert_eq!(store.get(&a).unwrap().series.len(), 0);
         assert_eq!(store.get(&b).unwrap().series.len(), 1);
+    }
+
+    #[test]
+    fn timeline_max_span_caps_presets() {
+        assert_eq!(
+            CombinedTimeRange::Min15.max_span(),
+            Some(Duration::from_secs(15 * 60))
+        );
+        assert_eq!(CombinedTimeRange::All.max_span(), None);
+        let now = Instant::now();
+        let c = CombinedTimeRange::Min5.cutoff(now).unwrap();
+        assert_eq!(now.saturating_duration_since(c), Duration::from_secs(5 * 60));
     }
 }

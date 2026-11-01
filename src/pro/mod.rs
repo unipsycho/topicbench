@@ -20,6 +20,7 @@ pub mod sim_client;
 pub mod theme_client;
 pub mod topic_tree_io;
 pub mod tree_client;
+pub mod update_client;
 
 use std::sync::OnceLock;
 
