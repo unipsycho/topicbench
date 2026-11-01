@@ -17,7 +17,7 @@ impl MqttMonitorApp {
     }
 
     /// Commit draft to live settings + disk, then close.
-    fn save_settings_modal(&mut self) {
+    fn save_settings_modal(&mut self, ctx: &egui::Context) {
         if let Some(draft) = self.settings_draft.take() {
             // Keep update prefs from live settings (edited outside the draft).
             let last_update_check = self.settings.last_update_check;
@@ -27,11 +27,13 @@ impl MqttMonitorApp {
             self.settings.last_update_check = last_update_check;
             self.settings.skipped_update_version = skipped_update_version;
             self.settings.remind_later_until = remind_later_until;
-            if let Some(tc) = self.theme_client.as_ref() {
-                tc.set_wanted(&self.settings.theme_id);
+            if let Some(tc) = self.theme_client.as_mut() {
+                // Persist + ensure chrome matches (preview may already have applied).
+                tc.preview(ctx, &self.settings.theme_id);
             } else {
                 // Unlicensed installs only persist Classic.
                 self.settings.theme_id = crate::ui::theme::CLASSIC_ID.to_string();
+                crate::ui::theme::apply_theme(ctx, &crate::ui::theme::classic());
             }
             match self.settings.save() {
                 Ok(()) => {
@@ -43,8 +45,14 @@ impl MqttMonitorApp {
         self.settings_open = false;
     }
 
-    /// Discard draft and close without applying.
-    fn cancel_settings_modal(&mut self) {
+    /// Discard draft, revert theme preview to saved id, then close.
+    fn cancel_settings_modal(&mut self, ctx: &egui::Context) {
+        let revert = self.settings.theme_id.clone();
+        if let Some(tc) = self.theme_client.as_mut() {
+            tc.preview(ctx, &revert);
+        } else {
+            crate::ui::theme::apply_theme(ctx, &crate::ui::theme::classic());
+        }
         self.settings_draft = None;
         self.settings_open = false;
     }
@@ -182,6 +190,7 @@ impl MqttMonitorApp {
                 .map(|t| t.sidecar_up())
                 .unwrap_or(false);
             let licensed = crate::pro::is_licensed();
+            let mut theme_changed: Option<String> = None;
             let modal = egui::Modal::new(egui::Id::new("mqtt_master_settings")).show(ctx, |ui| {
                 // Wide enough for narrow Updates + Pro with one-line machine ID (~68 chars).
                 ui.set_min_width(760.0);
@@ -204,6 +213,7 @@ impl MqttMonitorApp {
                                     pro_catalog: &pro_catalog,
                                     pro_up,
                                     licensed,
+                                    changed_id: &mut theme_changed,
                                 },
                             );
                         }
@@ -247,6 +257,14 @@ impl MqttMonitorApp {
                     });
                 });
             });
+            // Live theme preview while Settings is open (try / switch back without Save).
+            if let Some(id) = theme_changed {
+                if let Some(tc) = self.theme_client.as_mut() {
+                    tc.preview(ctx, &id);
+                } else {
+                    crate::ui::theme::apply_theme(ctx, &crate::ui::theme::classic());
+                }
+            }
             if open_shortcuts {
                 self.shortcuts_open = true;
             }
@@ -254,9 +272,9 @@ impl MqttMonitorApp {
                 self.request_update_check(false);
             }
             if save_clicked {
-                self.save_settings_modal();
+                self.save_settings_modal(ctx);
             } else if cancel_clicked || modal.should_close() {
-                self.cancel_settings_modal();
+                self.cancel_settings_modal(ctx);
             }
         }
     }
