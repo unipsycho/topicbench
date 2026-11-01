@@ -6,7 +6,8 @@ use crate::mqtt::settings::{
 };
 use crate::pro::{self, machine_id};
 use crate::ui::icons::{
-    self, IconSet, CHROME_ACCENT_BORDER, CHROME_ACCENT_SOFT, CHROME_MUTED, CHROME_TEXT,
+    self, IconSet, CHROME_ACCENT_BORDER, CHROME_ACCENT_SOFT, CHROME_MUTED, CHROME_SECTION,
+    CHROME_TEXT,
 };
 use crate::ui::shortcuts;
 use crate::update::{self, UpdateStatus};
@@ -60,11 +61,36 @@ impl StickyLayoutChoice {
     }
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SettingsTab {
+    General,
+    Pro,
+    Updates,
+}
+
+impl SettingsTab {
+    const ALL: [Self; 3] = [Self::General, Self::Pro, Self::Updates];
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::General => "General",
+            Self::Pro => "Pro",
+            Self::Updates => "Updates",
+        }
+    }
+}
+
 /// Live Updates section inputs (not part of the Save draft).
 pub struct UpdatesSection<'a> {
     pub status: &'a UpdateStatus,
     pub checking: bool,
     pub check_now: &'a mut bool,
+    /// Pro sidecar version lines — `None` when Pro does not answer (hide entirely unless licensed).
+    pub pro: Option<&'a crate::pro::update_client::ProUpdateInfo>,
+    /// True when a Pro license is installed (show Pro version slot even if sidecar quiet).
+    pub pro_enabled: bool,
+    /// Set when user clicks Update Pro (only shown if `pro.update_available`).
+    pub update_pro: &'a mut bool,
 }
 
 /// Theme ComboBox extras — Pro catalog only when licensed + sidecar up.
@@ -98,6 +124,67 @@ pub fn draw(
     ui.painter().rect_filled(bar, 1.5, CHROME_ACCENT_BORDER());
     ui.add_space(10.0);
 
+    let tab_id = egui::Id::new("settings_tab");
+    let mut tab = ui
+        .ctx()
+        .data(|d| d.get_temp::<SettingsTab>(tab_id))
+        .unwrap_or(SettingsTab::General);
+    draw_settings_tabs(ui, &mut tab);
+    ui.ctx().data_mut(|d| d.insert_temp(tab_id, tab));
+    ui.add_space(10.0);
+
+    match tab {
+        SettingsTab::General => draw_general_tab(ui, draft, open_shortcuts, theme),
+        SettingsTab::Pro => draw_pro_tab(ui),
+        SettingsTab::Updates => draw_updates_tab(ui, updates),
+    }
+}
+
+/// Marketing page for TopicBench Pro (from README / Agile Automation site).
+pub const TOPICBENCH_PRO_URL: &str = "https://www.agileautomation.ca/products/topic-bench";
+
+fn draw_settings_tabs(ui: &mut egui::Ui, tab: &mut SettingsTab) {
+    // Reasonable tab font — Body-ish, not heading-sized.
+    const TAB_SZ: f32 = 14.0;
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 6.0;
+        for t in SettingsTab::ALL {
+            let selected = *tab == t;
+            let label = RichText::new(t.label()).size(TAB_SZ).strong();
+            let btn = if selected {
+                egui::Button::new(label)
+                    .fill(CHROME_ACCENT_SOFT())
+                    .stroke(egui::Stroke::new(1.0_f32, CHROME_ACCENT_BORDER()))
+                    .min_size(egui::vec2(88.0, 28.0))
+            } else {
+                egui::Button::new(label)
+                    .fill(CHROME_SECTION())
+                    .min_size(egui::vec2(88.0, 28.0))
+            };
+            if ui.add(btn).clicked() {
+                *tab = t;
+            }
+        }
+    });
+}
+
+fn theme_label(id: &str, catalog: &[crate::pro::theme_client::ThemeInfo]) -> String {
+    if id == crate::ui::theme::CLASSIC_ID || id.is_empty() {
+        return "Classic".into();
+    }
+    catalog
+        .iter()
+        .find(|t| t.id == id)
+        .map(|t| t.name.clone())
+        .unwrap_or_else(|| id.to_string())
+}
+
+fn draw_general_tab(
+    ui: &mut egui::Ui,
+    draft: &mut AppSettings,
+    open_shortcuts: &mut bool,
+    theme: ThemeSection<'_>,
+) {
     ui.checkbox(
         &mut draft.auto_reconnect_on_reload,
         "Auto Reconnect on Reload",
@@ -212,100 +299,97 @@ pub fn draw(
         *open_shortcuts = true;
     }
     ui.weak("Also F1 or ? when not typing.");
-
-    // Updates | Pro — narrow Updates; Pro claims remaining width for one-line machine ID.
-    ui.add_space(12.0);
-    const UPDATES_W: f32 = 168.0;
-    const GAP: f32 = 16.0;
-    ui.horizontal(|ui| {
-        // Nested verticals required — children of `horizontal` inherit row layout.
-        ui.vertical(|ui| {
-            ui.set_width(UPDATES_W);
-            draw_updates_column(ui, updates);
-        });
-        ui.add_space(GAP);
-        let pro_w = ui.available_width();
-        ui.vertical(|ui| {
-            ui.set_min_width(pro_w);
-            ui.set_max_width(pro_w);
-            draw_pro_interest_column(ui);
-        });
-    });
 }
 
-/// Marketing page for TopicBench Pro (from README / Agile Automation site).
-pub const TOPICBENCH_PRO_URL: &str = "https://www.agileautomation.ca/products/topic-bench";
-
-fn theme_label(id: &str, catalog: &[crate::pro::theme_client::ThemeInfo]) -> String {
-    if id == crate::ui::theme::CLASSIC_ID || id.is_empty() {
-        return "Classic".into();
-    }
-    catalog
-        .iter()
-        .find(|t| t.id == id)
-        .map(|t| t.name.clone())
-        .unwrap_or_else(|| id.to_string())
-}
-
-fn draw_updates_column(ui: &mut egui::Ui, updates: UpdatesSection<'_>) {
-    ui.strong("Updates");
-    ui.label(
-        RichText::new(format!("Current version: {}", update::current_version())).color(CHROME_TEXT()),
-    );
-    ui.label(RichText::new(updates.status.settings_line()).color(CHROME_MUTED()));
-    ui.add_space(4.0);
-    let check_btn = ui.add_enabled(
-        !updates.checking,
-        egui::Button::new(if updates.checking {
-            "Checking…"
-        } else {
-            "Check now"
-        })
-        .min_size(egui::vec2(96.0, 28.0)),
-    );
-    if check_btn.clicked() {
-        *updates.check_now = true;
-    }
-}
-
-/// Pro interest column (OSS alone — no Pro sidecar). Collapsed = one button; expand in place.
-fn draw_pro_interest_column(ui: &mut egui::Ui) {
-    let reveal_id = egui::Id::new("settings_pro_reveal_mid");
-    // Screenshot / demo: TOPICBENCH_EXPAND_PRO=1 starts expanded (no Pro install needed).
-    if std::env::var_os("TOPICBENCH_EXPAND_PRO").is_some() {
-        ui.memory_mut(|m| {
-            m.data.insert_temp(reveal_id, true);
-        });
-    }
-    let revealed = ui.memory(|m| m.data.get_temp::<bool>(reveal_id).unwrap_or(false));
-
-    if !revealed {
-        // Collapsed: only the interest button — no Pro copy / machine ID yet.
-        if ui
-            .add(
-                egui::Button::new(RichText::new("Interested in TopicBench Pro?").strong())
-                    .fill(CHROME_ACCENT_SOFT())
-                    .stroke(egui::Stroke::new(1.0_f32, CHROME_ACCENT_BORDER()))
-                    .min_size(egui::vec2(0.0, 28.0)),
-            )
-            .on_hover_text("Show TopicBench Pro details and this PC’s machine ID")
-            .clicked()
-        {
-            // First click expands only — website opens from the link inside.
-            ui.memory_mut(|m| {
-                m.data.insert_temp(reveal_id, true);
-            });
-        }
-        return;
-    }
-
+fn draw_pro_tab(ui: &mut egui::Ui) {
     ui.strong("TopicBench Pro");
     ui.hyperlink_to(
         RichText::new("Learn about TopicBench Pro").color(CHROME_ACCENT_BORDER()),
         TOPICBENCH_PRO_URL,
     );
-    ui.add_space(6.0);
+    ui.add_space(8.0);
     draw_machine_id_controls(ui);
+}
+
+fn draw_updates_tab(ui: &mut egui::Ui, updates: UpdatesSection<'_>) {
+    ui.strong("TopicBench");
+    ui.label(
+        RichText::new(format!("Current version: {}", update::current_version())).color(CHROME_TEXT()),
+    );
+    ui.label(RichText::new(updates.status.settings_line()).color(CHROME_MUTED()));
+
+    // Pro lines when licensed / sidecar answers (no Pro URLs/creds in free paths).
+    if updates.pro_enabled || updates.pro.is_some() {
+        ui.add_space(10.0);
+        ui.strong("TopicBench Pro");
+        if let Some(pro) = updates.pro {
+            let pro_cur = if pro.current.is_empty() {
+                "Running (version unknown)".to_string()
+            } else {
+                format!("Current version: {}", pro.current)
+            };
+            ui.label(RichText::new(pro_cur).color(CHROME_TEXT()));
+            let pro_line = if pro.installing {
+                "Installing update…".to_string()
+            } else if pro.checking {
+                "Checking…".to_string()
+            } else if pro.update_available {
+                match &pro.latest {
+                    Some(v) => format!("Update available: {v}."),
+                    None => "Update available.".to_string(),
+                }
+            } else if let Some(err) = &pro.error {
+                format!("Couldn't check: {err}")
+            } else if let Some(latest) = &pro.latest {
+                format!("Up to date (latest {latest}).")
+            } else {
+                "Not checked yet.".to_string()
+            };
+            ui.label(RichText::new(pro_line).color(CHROME_MUTED()));
+            if pro.update_available && !pro.installing {
+                ui.add_space(2.0);
+                if ui
+                    .add(egui::Button::new("Update Pro").min_size(egui::vec2(96.0, 24.0)))
+                    .clicked()
+                {
+                    *updates.update_pro = true;
+                }
+            }
+        } else {
+            ui.label(
+                RichText::new("Pro is licensed but not answering on localhost.")
+                    .color(CHROME_MUTED()),
+            );
+        }
+    }
+
+    ui.add_space(10.0);
+    let check_label = if updates.checking {
+        "Checking…"
+    } else if updates.pro_enabled {
+        "Check updates"
+    } else {
+        "Check now"
+    };
+    let check_btn = {
+        let r = ui.add_enabled(
+            !updates.checking,
+            egui::Button::new(check_label).min_size(egui::vec2(120.0, 28.0)),
+        );
+        if updates.pro_enabled {
+            r.on_hover_text("Check free GitHub releases and ask Pro to check its channel")
+        } else {
+            r
+        }
+    };
+    if check_btn.clicked() {
+        *updates.check_now = true;
+    }
+    if updates.pro_enabled {
+        ui.weak("Probes TopicBench and TopicBench Pro; reports both when up to date.");
+    } else {
+        ui.weak("Checks the free TopicBench GitHub release channel.");
+    }
 }
 
 /// Monospace ID + Copy / Save license-request (and license-installed note when present).

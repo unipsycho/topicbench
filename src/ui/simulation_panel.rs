@@ -1143,9 +1143,9 @@ fn draw_gutter(
         ui.allocate_exact_size(Vec2::new(COL_GUTTER, ROW_H), egui::Sense::click_and_drag());
     // Quiet well so the marquee hit area reads as chrome, not empty void.
     let gut_fill = if selected {
-        Color32::from_rgb(40, 64, 92)
+        CHROME_ACCENT_SOFT()
     } else {
-        Color32::from_rgb(40, 43, 50)
+        icons::CHROME_COMBO_BG()
     };
     ui.painter().rect_filled(rect.shrink2(Vec2::new(1.0, 1.0)), 2.0, gut_fill);
     // Painter circles — ● often tofu/squares in egui's font; ○/● must stay circular.
