@@ -1,11 +1,28 @@
 //! OS window geometry helpers for session restore (main + pop-out viewports).
 
-use eframe::egui::{self, Pos2, Vec2, ViewportBuilder};
+use eframe::egui::{self, IconData, Pos2, Vec2, ViewportBuilder};
 use serde::{Deserialize, Serialize};
+use std::sync::{Arc, OnceLock};
 
 /// Wayland app_id / X11 WM_CLASS — root + every child viewport must share this
 /// so Hyprland `class` and OmaFloat (`class::title`) can key pop-outs.
 pub const APP_ID: &str = "topicbench";
+
+/// Window/taskbar icon (PNG from Mike’s `assets/icons/app.ico`) — shared by root + pop-outs.
+pub fn app_icon() -> Option<Arc<IconData>> {
+    static ICON: OnceLock<Option<Arc<IconData>>> = OnceLock::new();
+    ICON.get_or_init(|| {
+        let bytes = include_bytes!("../../assets/icons/topicbench-app-icon-256.png");
+        let img = image::load_from_memory(bytes).ok()?.into_rgba8();
+        let (width, height) = img.dimensions();
+        Some(Arc::new(IconData {
+            rgba: img.into_raw(),
+            width,
+            height,
+        }))
+    })
+    .clone()
+}
 
 /// Outer position + inner size for a native / immediate viewport.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -56,10 +73,13 @@ impl WinGeom {
 
     /// Apply saved size/pos to a builder. Call with a **session-frozen** geom so
     /// egui's patch does not fight live user resize/move.
-    /// Always stamps [`APP_ID`] so immediate viewports match the root window class.
+    /// Always stamps [`APP_ID`] + app icon so immediate viewports match the root.
     pub fn apply(self, builder: ViewportBuilder, min: [f32; 2]) -> ViewportBuilder {
         let g = self.sane(Vec2::new(min[0], min[1]));
         let mut b = builder.with_app_id(APP_ID).with_inner_size([g.w, g.h]);
+        if let Some(icon) = app_icon() {
+            b = b.with_icon(icon);
+        }
         if let (Some(x), Some(y)) = (g.x, g.y) {
             b = b.with_position(Pos2::new(x, y));
         }
