@@ -1,7 +1,8 @@
 //! Thin HTTP client + background forwarder for Pro `/history/*`.
 //!
-//! Deep store lives only in topicbench-pro. OSS enqueues topic payloads
-//! without blocking MQTT ingest (bounded channel; drop + backoff if Pro is down).
+//! Deep store lives only in topicbench-pro. OSS enqueues sticky / Combined
+//! topic payloads only (not every live leaf) without blocking MQTT ingest
+//! (bounded channel; drop + backoff if Pro is down).
 //!
 //! **Paint path never calls ureq.** `query_cached` / `meta` return cache (or empty)
 //! and schedule a background fetch; critical on Windows where a down sidecar

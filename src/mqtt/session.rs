@@ -24,8 +24,8 @@ pub const BACKGROUND_UI_HZ_INTERVAL: Duration = Duration::from_secs(1);
 const INBOX_FLUSH_INTERVAL: Duration = Duration::from_millis(16);
 /// Cap pending UI-apply batches if paint stalls (merge beyond this).
 const PENDING_APPLY_CAP: usize = 90;
-/// Per-topic timed samples retained while UI apply lags (≈10 min at 1 Hz).
-const INBOX_SAMPLE_CAP: usize = 600;
+/// Per-topic timed samples while UI apply lags (covers sticky HISTORY_CAP).
+const INBOX_SAMPLE_CAP: usize = 2_000;
 /// Unfocused: floor sample spacing so Combined spans minutes under flood.
 const INBOX_SAMPLE_GAP_BACKGROUND: Duration = Duration::from_millis(50);
 
