@@ -38,7 +38,7 @@ pub(super) struct TopChromeRects {
 impl MqttMonitorApp {
     /// Profiles ribbon group (full captions or compact 2-high icons).
     fn draw_ribbon_profiles(&mut self, ui: &mut egui::Ui, mode: SectionMode) {
-        icons::ribbon_group(ui, "Profiles", TINT_PROFILES, |ui| {
+        icons::ribbon_group(ui, "Profiles", TINT_PROFILES(), |ui| {
             let tip_new = shortcuts::tip("New profile", "Ctrl+N");
             let tip_save = shortcuts::tip("Save profiles", "Ctrl+S");
             let tip_del = shortcuts::tip("Delete selected profile", "Delete / Ctrl+Backspace");
@@ -141,7 +141,7 @@ impl MqttMonitorApp {
     /// Panels ribbon group (full or compact).
     /// Order mirrors layout: center panels left, then Payload / Publish on the right.
     fn draw_ribbon_panels(&mut self, ui: &mut egui::Ui, mode: SectionMode) {
-        icons::ribbon_group(ui, "Panels", TINT_PANELS, |ui| {
+        icons::ribbon_group(ui, "Panels", TINT_PANELS(), |ui| {
             let tips = [
                 shortcuts::tip("Live traffic", "Ctrl+Shift+T"),
                 shortcuts::tip("Sticky topics", "Ctrl+Shift+K"),
@@ -206,7 +206,7 @@ impl MqttMonitorApp {
     /// Pro ribbon group: Simulate + Bookmarks + Color Rules.
     /// Caller must only invoke when [`crate::pro::is_licensed`] — never draw an empty/locked strip.
     fn draw_ribbon_pro(&mut self, ui: &mut egui::Ui, mode: SectionMode) {
-        icons::ribbon_group(ui, "Pro", TINT_PRO, |ui| {
+        icons::ribbon_group(ui, "Pro", TINT_PRO(), |ui| {
             let tip = shortcuts::tip(
                 "Open Simulation panel (topic / payload generators)",
                 "Ctrl+Shift+M",
@@ -291,7 +291,7 @@ impl MqttMonitorApp {
 
     /// App ribbon group: Settings only (zoom lives far-right of Stats).
     fn draw_ribbon_app(&mut self, ui: &mut egui::Ui, _ctx: &egui::Context, mode: SectionMode) {
-        icons::ribbon_group(ui, "App", TINT_APP, |ui| {
+        icons::ribbon_group(ui, "App", TINT_APP(), |ui| {
             let tip_set = shortcuts::tip("Open settings window", "Ctrl+,");
             let clicked = if mode == SectionMode::Full {
                 self.icons
@@ -363,8 +363,8 @@ impl MqttMonitorApp {
             .show_separator_line(false)
             .frame(
                 egui::Frame::NONE
-                    .fill(CHROME_BG)
-                    .stroke(egui::Stroke::new(1.0_f32, CHROME_SEP)),
+                    .fill(CHROME_BG())
+                    .stroke(egui::Stroke::new(1.0_f32, CHROME_SEP())),
             )
             .show(ctx, |ui| {
                 reserve_side_panel_space(ui);
@@ -373,7 +373,7 @@ impl MqttMonitorApp {
         let status = egui::TopBottomPanel::top("status_strip")
             .exact_height(STATUS_STRIP_H)
             .show_separator_line(false)
-            .frame(egui::Frame::NONE.fill(CHROME_BG))
+            .frame(egui::Frame::NONE.fill(CHROME_BG()))
             .show(ctx, |ui| {
                 reserve_side_panel_space(ui);
             });
@@ -400,7 +400,7 @@ impl MqttMonitorApp {
 
     /// Ribbon command bar body (drawn inside the Middle overlay).
     fn paint_ribbon_bar(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
-        ui.visuals_mut().override_text_color = Some(CHROME_TEXT);
+        ui.visuals_mut().override_text_color = Some(CHROME_TEXT());
         ui.spacing_mut().item_spacing.y = 0.0;
 
         // Fixed brand/group band — never grow the ribbon for the logo.
@@ -441,7 +441,7 @@ impl MqttMonitorApp {
         const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
         let ver_font = FontId::new(10.0, FontFamily::Proportional);
         let ver_g = ui.fonts(|f| {
-            f.layout_no_wrap(format!("v{APP_VERSION}"), ver_font, CHROME_MUTED)
+            f.layout_no_wrap(format!("v{APP_VERSION}"), ver_font, CHROME_MUTED())
         });
         let ver_gap = 6.0;
         // Brand cluster: logo + version to its right (not over the mark).
@@ -489,7 +489,7 @@ impl MqttMonitorApp {
                                 logo_rect.center().y + logo_size.y * 0.5 - ver_g.size().y,
                             ),
                             ver_g,
-                            CHROME_MUTED,
+                            CHROME_MUTED(),
                         );
                     },
                 );
@@ -527,7 +527,7 @@ impl MqttMonitorApp {
 
     /// Status strip body (drawn inside the Middle overlay).
     fn paint_status_strip(&mut self, ui: &mut egui::Ui) {
-        ui.visuals_mut().override_text_color = Some(CHROME_TEXT);
+        ui.visuals_mut().override_text_color = Some(CHROME_TEXT());
         let connected = self
             .sessions
             .open
@@ -545,29 +545,29 @@ impl MqttMonitorApp {
         ui.horizontal_centered(|ui| {
             ui.label(RichText::new(broker_label).color(broker_green));
             ui.add_space(8.0);
-            ui.label(RichText::new("·").color(CHROME_MUTED));
+            ui.label(RichText::new("·").color(CHROME_MUTED()));
             ui.add_space(8.0);
-            ui.label(RichText::new(msgs).color(CHROME_CAPTION));
+            ui.label(RichText::new(msgs).color(CHROME_CAPTION()));
 
             // Compact Simulation summary (no per-topic publish spam).
             if let Some(sim_label) = self.sim_client.status_strip_label() {
                 ui.add_space(12.0);
-                ui.label(RichText::new("·").color(CHROME_MUTED));
+                ui.label(RichText::new("·").color(CHROME_MUTED()));
                 ui.add_space(12.0);
-                ui.label(RichText::new(sim_label).color(CHROME_CAPTION));
+                ui.label(RichText::new(sim_label).color(CHROME_CAPTION()));
             }
 
             let alpha = status_strip_fade_alpha(self.status_changed_at, Instant::now());
             if alpha > 0.01 && !self.status.is_empty() {
                 ui.add_space(12.0);
-                ui.label(RichText::new("·").color(CHROME_MUTED));
+                ui.label(RichText::new("·").color(CHROME_MUTED()));
                 ui.add_space(12.0);
                 let a = (255.0 * alpha) as u8;
                 ui.label(
                     RichText::new(&self.status).color(Color32::from_rgba_unmultiplied(
-                        CHROME_TEXT.r(),
-                        CHROME_TEXT.g(),
-                        CHROME_TEXT.b(),
+                        CHROME_TEXT().r(),
+                        CHROME_TEXT().g(),
+                        CHROME_TEXT().b(),
                         a,
                     )),
                 );
@@ -643,7 +643,7 @@ impl MqttMonitorApp {
         egui::CentralPanel::default()
             .frame(
                 egui::Frame::NONE
-                    .fill(CHROME_BG)
+                    .fill(CHROME_BG())
                     .inner_margin(egui::Margin::symmetric(8, 2)),
             )
             .show(ctx, |ui| {
@@ -1063,7 +1063,7 @@ fn side_panel_overlay(
             ui.set_max_size(rect.size());
             ui.set_clip_rect(rect);
             egui::Frame::side_top_panel(ui.style())
-                .fill(CHROME_BG)
+                .fill(CHROME_BG())
                 .show(ui, |ui| {
                     ui.set_min_height(ui.available_height());
                     add_contents(ui);
@@ -1096,10 +1096,10 @@ fn top_chrome_overlay(
             ui.set_max_size(rect.size());
             ui.set_clip_rect(rect);
             let mut frame = egui::Frame::NONE
-                .fill(CHROME_BG)
+                .fill(CHROME_BG())
                 .inner_margin(inner);
             if !is_status {
-                frame = frame.stroke(egui::Stroke::new(1.0_f32, CHROME_SEP));
+                frame = frame.stroke(egui::Stroke::new(1.0_f32, CHROME_SEP()));
             }
             frame.show(ui, |ui| {
                 ui.set_min_height(ui.available_height());

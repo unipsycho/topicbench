@@ -67,6 +67,15 @@ pub struct UpdatesSection<'a> {
     pub check_now: &'a mut bool,
 }
 
+/// Theme ComboBox extras — Pro catalog only when licensed + sidecar up.
+pub struct ThemeSection<'a> {
+    pub pro_catalog: &'a [crate::pro::theme_client::ThemeInfo],
+    pub pro_up: bool,
+    pub licensed: bool,
+    /// Set when the Theme ComboBox selection changes (live preview).
+    pub changed_id: &'a mut Option<String>,
+}
+
 /// Draw settings body into `draft` (caller commits on Save / discards on Cancel).
 pub fn draw(
     ui: &mut egui::Ui,
@@ -74,6 +83,7 @@ pub fn draw(
     icons: &IconSet,
     open_shortcuts: &mut bool,
     updates: UpdatesSection<'_>,
+    theme: ThemeSection<'_>,
 ) {
     icons::section_header_bar(ui, |ui| {
         icons::section_icon(ui, icons, "configuration_sliders");
@@ -85,7 +95,7 @@ pub fn draw(
     ui.add_space(6.0);
     let bar_w = ui.available_width();
     let (bar, _) = ui.allocate_exact_size(egui::vec2(bar_w, 3.0), Sense::hover());
-    ui.painter().rect_filled(bar, 1.5, CHROME_ACCENT_BORDER);
+    ui.painter().rect_filled(bar, 1.5, CHROME_ACCENT_BORDER());
     ui.add_space(10.0);
 
     ui.checkbox(
@@ -112,6 +122,39 @@ pub fn draw(
             });
     });
     ui.weak("Initial expand depth when topics appear.");
+
+    ui.add_space(12.0);
+    ui.strong("Appearance");
+    ui.horizontal(|ui| {
+        ui.label("Theme");
+        let selected_label = theme_label(&draft.theme_id, theme.pro_catalog);
+        let before = draft.theme_id.clone();
+        egui::ComboBox::from_id_salt("ui_theme_id")
+            .selected_text(selected_label)
+            .show_ui(ui, |ui| {
+                ui.selectable_value(
+                    &mut draft.theme_id,
+                    crate::ui::theme::CLASSIC_ID.to_string(),
+                    "Classic",
+                );
+                if theme.licensed && theme.pro_up {
+                    for t in theme.pro_catalog {
+                        ui.selectable_value(&mut draft.theme_id, t.id.clone(), &t.name);
+                    }
+                }
+            });
+        // Live preview as soon as the ComboBox selection changes.
+        if draft.theme_id != before {
+            *theme.changed_id = Some(draft.theme_id.clone());
+        }
+    });
+    if theme.licensed && !theme.pro_up {
+        ui.weak("Pro themes appear when TopicBench Pro is running.");
+    } else if !theme.licensed {
+        ui.weak("Classic only — Pro unlocks Nord, Tokyo Night, Everforest, Latte.");
+    } else {
+        ui.weak("Pro presets from the sidecar; falls back to Classic if Pro is down.");
+    }
 
     ui.add_space(12.0);
     ui.strong("Sticky topics");
@@ -193,12 +236,23 @@ pub fn draw(
 /// Marketing page for TopicBench Pro (from README / Agile Automation site).
 pub const TOPICBENCH_PRO_URL: &str = "https://www.agileautomation.ca/products/topic-bench";
 
+fn theme_label(id: &str, catalog: &[crate::pro::theme_client::ThemeInfo]) -> String {
+    if id == crate::ui::theme::CLASSIC_ID || id.is_empty() {
+        return "Classic".into();
+    }
+    catalog
+        .iter()
+        .find(|t| t.id == id)
+        .map(|t| t.name.clone())
+        .unwrap_or_else(|| id.to_string())
+}
+
 fn draw_updates_column(ui: &mut egui::Ui, updates: UpdatesSection<'_>) {
     ui.strong("Updates");
     ui.label(
-        RichText::new(format!("Current version: {}", update::current_version())).color(CHROME_TEXT),
+        RichText::new(format!("Current version: {}", update::current_version())).color(CHROME_TEXT()),
     );
-    ui.label(RichText::new(updates.status.settings_line()).color(CHROME_MUTED));
+    ui.label(RichText::new(updates.status.settings_line()).color(CHROME_MUTED()));
     ui.add_space(4.0);
     let check_btn = ui.add_enabled(
         !updates.checking,
@@ -230,8 +284,8 @@ fn draw_pro_interest_column(ui: &mut egui::Ui) {
         if ui
             .add(
                 egui::Button::new(RichText::new("Interested in TopicBench Pro?").strong())
-                    .fill(CHROME_ACCENT_SOFT)
-                    .stroke(egui::Stroke::new(1.0_f32, CHROME_ACCENT_BORDER))
+                    .fill(CHROME_ACCENT_SOFT())
+                    .stroke(egui::Stroke::new(1.0_f32, CHROME_ACCENT_BORDER()))
                     .min_size(egui::vec2(0.0, 28.0)),
             )
             .on_hover_text("Show TopicBench Pro details and this PC’s machine ID")
@@ -247,7 +301,7 @@ fn draw_pro_interest_column(ui: &mut egui::Ui) {
 
     ui.strong("TopicBench Pro");
     ui.hyperlink_to(
-        RichText::new("Learn about TopicBench Pro").color(CHROME_ACCENT_BORDER),
+        RichText::new("Learn about TopicBench Pro").color(CHROME_ACCENT_BORDER()),
         TOPICBENCH_PRO_URL,
     );
     ui.add_space(6.0);
@@ -261,7 +315,7 @@ fn draw_machine_id_controls(ui: &mut egui::Ui) {
             "Paste this into the Machine ID field when you order TopicBench Pro. \
              After payment you’ll get the Pro download and a license.json for this PC.",
         )
-        .color(CHROME_MUTED),
+        .color(CHROME_MUTED()),
     );
     ui.add_space(4.0);
 
@@ -269,7 +323,7 @@ fn draw_machine_id_controls(ui: &mut egui::Ui) {
         ui.label(
             RichText::new("License installed for this PC.")
                 .small()
-                .color(CHROME_TEXT),
+                .color(CHROME_TEXT()),
         );
         ui.add_space(2.0);
     }
@@ -279,7 +333,7 @@ fn draw_machine_id_controls(ui: &mut egui::Ui) {
         Ok(id) => {
             // One horizontal row: label + monospace ID + Copy (ID never wraps).
             ui.horizontal(|ui| {
-                ui.label(RichText::new("Machine ID").color(CHROME_TEXT));
+                ui.label(RichText::new("Machine ID").color(CHROME_TEXT()));
                 let mut id_view = id.clone();
                 let id_w = (ui.available_width() - 56.0).max(120.0);
                 ui.add(
@@ -288,7 +342,7 @@ fn draw_machine_id_controls(ui: &mut egui::Ui) {
                         .desired_width(id_w)
                         .frame(false)
                         .interactive(false)
-                        .text_color(CHROME_TEXT),
+                        .text_color(CHROME_TEXT()),
                 );
                 if ui
                     .button("Copy")
@@ -306,12 +360,12 @@ fn draw_machine_id_controls(ui: &mut egui::Ui) {
                     .get_temp::<bool>(egui::Id::new("settings_mid_copied"))
                     .unwrap_or(false)
             }) {
-                ui.label(RichText::new("Copied.").small().color(CHROME_MUTED));
+                ui.label(RichText::new("Copied.").small().color(CHROME_MUTED()));
             }
         }
         Err(e) => {
             ui.label(
-                RichText::new(format!("Could not read machine ID: {e}")).color(CHROME_MUTED),
+                RichText::new(format!("Could not read machine ID: {e}")).color(CHROME_MUTED()),
             );
         }
     }
@@ -352,6 +406,6 @@ fn draw_machine_id_controls(ui: &mut egui::Ui) {
         m.data
             .get_temp::<String>(egui::Id::new("settings_mid_save_msg"))
     }) {
-        ui.label(RichText::new(msg).small().color(CHROME_MUTED));
+        ui.label(RichText::new(msg).small().color(CHROME_MUTED()));
     }
 }

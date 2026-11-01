@@ -147,12 +147,12 @@ pub fn draw(
 
     // Filter sits above the list, visually distinct (chrome strip, not a list row).
     egui::Frame::NONE
-        .fill(CHROME_SECTION)
+        .fill(CHROME_SECTION())
         .corner_radius(3.0)
         .inner_margin(egui::Margin::symmetric(8, 5))
         .show(ui, |ui| {
             ui.horizontal(|ui| {
-                ui.label(RichText::new("Show").small().color(CHROME_CAPTION));
+                ui.label(RichText::new("Show").small().color(CHROME_CAPTION()));
                 ui.selectable_value(list_filter, ProfileListFilter::All, "All");
                 ui.selectable_value(list_filter, ProfileListFilter::ConnectedOnly, "Connected");
             });
@@ -162,8 +162,8 @@ pub fn draw(
     // Selectable full-width list rows; drag-reorder only from the left grip handle.
     let now = Instant::now();
     let ids: Vec<String> = profiles.ids_in_order();
-    let row_bg = CHROME_ROW;
-    let row_bg_sel = CHROME_ACCENT_SOFT;
+    let row_bg = CHROME_ROW();
+    let row_bg_sel = CHROME_ACCENT_SOFT();
     let mut pending_reorder: Option<(String, String, bool)> = None;
     for id in &ids {
         let Some(profile) = profiles.profiles.get(id) else {
@@ -214,9 +214,9 @@ pub fn draw(
                 let preview = egui::Rect::from_center_size(pos, egui::vec2(GRIP_W, ROW_H));
                 ui.ctx()
                     .layer_painter(layer)
-                    .rect_filled(preview, 2.0, CHROME_HOVER);
+                    .rect_filled(preview, 2.0, CHROME_HOVER());
                 // Grip dots on the floating preview.
-                let color = icons::CHROME_MUTED;
+                let color = icons::CHROME_MUTED();
                 let r = 1.2_f32;
                 let cx = preview.center().x;
                 let cy = preview.center().y;
@@ -255,15 +255,15 @@ pub fn draw(
                 ui.painter().hline(
                     drop_response.rect.x_range(),
                     y,
-                    egui::Stroke::new(2.0, CHROME_ACCENT_BORDER),
+                    egui::Stroke::new(2.0, CHROME_ACCENT_BORDER()),
                 );
                 ui.painter().rect_filled(
                     drop_response.rect,
                     2.0,
                     Color32::from_rgba_unmultiplied(
-                        CHROME_HOVER.r(),
-                        CHROME_HOVER.g(),
-                        CHROME_HOVER.b(),
+                        CHROME_HOVER().r(),
+                        CHROME_HOVER().g(),
+                        CHROME_HOVER().b(),
                         80,
                     ),
                 );
@@ -521,7 +521,7 @@ pub fn draw(
 
             // Topic filters as a Profiles-style list (row strip + centered red trash).
             let mut remove_at: Option<usize> = None;
-            let sub_row_bg = CHROME_ROW;
+            let sub_row_bg = CHROME_ROW();
             if let Some(profile) = profiles.profiles.get(&id) {
                 if profile.subscriptions.is_empty() {
                     ui.weak("No filters yet.");
@@ -558,7 +558,7 @@ pub fn draw(
                             "Remove filter",
                         );
                         if rm_resp.hovered() {
-                            ui.painter().rect_filled(remove_rect, 2.0, CHROME_HOVER);
+                            ui.painter().rect_filled(remove_rect, 2.0, CHROME_HOVER());
                         }
                         if let Some(tex) = icons.get("delete_red") {
                             egui::Image::new(tex)

@@ -83,79 +83,128 @@ const SECTION_RAIL_W: f32 = 18.0;
 /// Pull rotated section text left so it clears the first command on hover.
 const SECTION_LABEL_NUDGE_X: f32 = 14.0;
 
-/// Dark chrome tokens (cool charcoal — ribbon + panels share `CHROME_BG`).
-pub const CHROME_BG: Color32 = Color32::from_rgb(34, 36, 42);
-pub const CHROME_SEP: Color32 = Color32::from_rgb(70, 74, 84);
-pub const CHROME_HOVER: Color32 = Color32::from_rgb(58, 62, 72);
-/// Stronger hover fill for icon buttons sitting on [`CHROME_SECTION`] header bars.
-pub const CHROME_HEADER_HOVER: Color32 = Color32::from_rgb(78, 96, 128);
-pub const CHROME_HEADER_SELECTED: Color32 = Color32::from_rgb(56, 92, 140);
-pub const CHROME_ACCENT_SOFT: Color32 = Color32::from_rgb(48, 78, 112);
-pub const CHROME_ACCENT_BORDER: Color32 = Color32::from_rgb(100, 160, 220);
-/// Selectable list-row idle fill — clearly lifted from [`CHROME_BG`] (was nearly invisible).
-pub const CHROME_ROW: Color32 = Color32::from_rgb(46, 50, 58);
-/// Quiet strip behind section icon+title rows (stronger than list rows).
-pub const CHROME_SECTION: Color32 = Color32::from_rgb(52, 56, 66);
-/// Shared accent for all section heading labels (Profiles / Topic tree / …).
-pub const CHROME_HEADING: Color32 = Color32::from_rgb(130, 185, 245);
-/// Ribbon captions + topic-path gray (readable on CHROME_BG).
-pub const CHROME_CAPTION: Color32 = Color32::from_rgb(190, 196, 208);
-/// Secondary chrome labels / counts (`#n`, hints) — brighter than egui default `.weak()`.
-pub const CHROME_MUTED: Color32 = Color32::from_rgb(175, 182, 196);
-pub const CHROME_TEXT: Color32 = Color32::from_rgb(230, 232, 238);
-pub const STATUS_BG: Color32 = Color32::from_rgb(26, 28, 34);
-/// ComboBox / egui button well fill — same cool charcoal as TextEdit (`STATUS_BG`).
-pub const CHROME_COMBO_BG: Color32 = STATUS_BG;
-/// Subtle per-section ribbon tints (solid, slightly lifted from chrome bg).
-pub const TINT_PROFILES: Color32 = Color32::from_rgb(48, 56, 70);
-pub const TINT_PANELS: Color32 = Color32::from_rgb(46, 60, 52);
-pub const TINT_APP: Color32 = Color32::from_rgb(62, 52, 48);
-/// Pro ribbon group (cool teal, distinct from Panels green).
-pub const TINT_PRO: Color32 = Color32::from_rgb(40, 58, 62);
-/// Cool steel tint for the Stats ribbon group (right edge).
-pub const TINT_STATS: Color32 = Color32::from_rgb(42, 54, 64);
+/// Active chrome tokens (Classic in-tree; Pro palettes via sidecar).
+pub use crate::ui::theme::chrome;
 
-/// Retheme ComboBox / default egui button fills to TopicBench charcoal wells.
-/// Call once from `apply_dark_chrome` so every popup panel inherits the same selectors.
-pub fn apply_selector_widget_visuals(visuals: &mut egui::Visuals) {
-    let stroke = Stroke::new(1.0_f32, CHROME_SEP);
-    // Idle well matches TextEdit extreme_bg; hover/open lift to chrome hover/section.
-    visuals.widgets.inactive.weak_bg_fill = CHROME_COMBO_BG;
-    visuals.widgets.inactive.bg_stroke = stroke;
-    visuals.widgets.hovered.weak_bg_fill = CHROME_HOVER;
-    visuals.widgets.hovered.bg_stroke = Stroke::new(1.0_f32, CHROME_ACCENT_BORDER);
-    visuals.widgets.active.weak_bg_fill = CHROME_SECTION;
-    visuals.widgets.active.bg_stroke = Stroke::new(1.0_f32, CHROME_ACCENT_BORDER);
-    visuals.widgets.open.weak_bg_fill = CHROME_SECTION;
-    visuals.widgets.open.bg_stroke = Stroke::new(1.0_f32, CHROME_ACCENT_BORDER);
+/// Active-token accessors — same names as the old Classic consts.
+#[allow(non_snake_case)]
+#[inline]
+pub fn CHROME_BG() -> Color32 {
+    chrome().bg
+}
+#[allow(non_snake_case)]
+#[inline]
+pub fn CHROME_SEP() -> Color32 {
+    chrome().sep
+}
+#[allow(non_snake_case)]
+#[inline]
+pub fn CHROME_HOVER() -> Color32 {
+    chrome().hover
+}
+/// Stronger hover fill for icon buttons sitting on section header bars.
+#[allow(non_snake_case)]
+#[inline]
+pub fn CHROME_HEADER_HOVER() -> Color32 {
+    chrome().header_hover
+}
+#[allow(non_snake_case)]
+#[inline]
+pub fn CHROME_HEADER_SELECTED() -> Color32 {
+    chrome().header_selected
+}
+#[allow(non_snake_case)]
+#[inline]
+pub fn CHROME_ACCENT_SOFT() -> Color32 {
+    chrome().accent_soft
+}
+#[allow(non_snake_case)]
+#[inline]
+pub fn CHROME_ACCENT_BORDER() -> Color32 {
+    chrome().accent_border
+}
+/// Selectable list-row idle fill — clearly lifted from bg.
+#[allow(non_snake_case)]
+#[inline]
+pub fn CHROME_ROW() -> Color32 {
+    chrome().row
+}
+/// Quiet strip behind section icon+title rows.
+#[allow(non_snake_case)]
+#[inline]
+pub fn CHROME_SECTION() -> Color32 {
+    chrome().section
+}
+/// Shared accent for all section heading labels.
+#[allow(non_snake_case)]
+#[inline]
+pub fn CHROME_HEADING() -> Color32 {
+    chrome().heading
+}
+/// Ribbon captions + topic-path gray.
+#[allow(non_snake_case)]
+#[inline]
+pub fn CHROME_CAPTION() -> Color32 {
+    chrome().caption
+}
+/// Secondary chrome labels / counts.
+#[allow(non_snake_case)]
+#[inline]
+pub fn CHROME_MUTED() -> Color32 {
+    chrome().muted
+}
+#[allow(non_snake_case)]
+#[inline]
+pub fn CHROME_TEXT() -> Color32 {
+    chrome().text
+}
+#[allow(non_snake_case)]
+#[inline]
+pub fn STATUS_BG() -> Color32 {
+    chrome().status
+}
+/// ComboBox / egui button well fill — same as status.
+#[allow(non_snake_case)]
+#[inline]
+pub fn CHROME_COMBO_BG() -> Color32 {
+    chrome().status
+}
+#[allow(non_snake_case)]
+#[inline]
+pub fn TINT_PROFILES() -> Color32 {
+    chrome().tint_profiles
+}
+#[allow(non_snake_case)]
+#[inline]
+pub fn TINT_PANELS() -> Color32 {
+    chrome().tint_panels
+}
+#[allow(non_snake_case)]
+#[inline]
+pub fn TINT_APP() -> Color32 {
+    chrome().tint_app
+}
+/// Pro ribbon group tint.
+#[allow(non_snake_case)]
+#[inline]
+pub fn TINT_PRO() -> Color32 {
+    chrome().tint_pro
+}
+/// Stats ribbon group tint.
+#[allow(non_snake_case)]
+#[inline]
+pub fn TINT_STATS() -> Color32 {
+    chrome().tint_stats
 }
 
-/// Checkbox / slider chrome that reads on dark panels and [`CHROME_ROW`] gray strips.
-/// Idle rail/box is a sunk charcoal well (darker than the row); filled track / check uses a
-/// brighter blue than [`CHROME_ACCENT_SOFT`] so it does not melt into the strip.
+/// Retheme ComboBox / default egui button fills from active chrome.
+pub fn apply_selector_widget_visuals(visuals: &mut egui::Visuals) {
+    crate::ui::theme::apply_selector_widget_visuals(visuals, &chrome());
+}
+
+/// Checkbox / slider chrome from active tokens (light + dark).
 pub fn apply_control_accent_visuals(visuals: &mut egui::Visuals) {
-    // egui paints checkbox box + slider rail with `bg_fill` (not weak_bg_fill).
-    let idle = STATUS_BG; // 26,28,34 — clearly below CHROME_ROW (46,50,58)
-    let hover = Color32::from_rgb(38, 48, 64);
-    let active = Color32::from_rgb(64, 118, 178); // brighter checked / trailing fill
-    let edge = Stroke::new(1.0_f32, Color32::from_rgb(118, 168, 220));
-    // Handle / checkmark outline — rail and handle share bg_fill when idle, so stroke must carry contrast.
-    let handle = Stroke::new(1.5_f32, Color32::from_rgb(186, 196, 212));
-    visuals.widgets.inactive.bg_fill = idle;
-    visuals.widgets.inactive.bg_stroke = Stroke::new(1.0_f32, CHROME_SEP);
-    visuals.widgets.inactive.fg_stroke = handle;
-    visuals.widgets.hovered.bg_fill = hover;
-    visuals.widgets.hovered.bg_stroke = edge;
-    visuals.widgets.hovered.fg_stroke = Stroke::new(1.5_f32, CHROME_ACCENT_BORDER);
-    visuals.widgets.active.bg_fill = active;
-    visuals.widgets.active.bg_stroke = edge;
-    visuals.widgets.active.fg_stroke = Stroke::new(2.0_f32, Color32::from_rgb(210, 225, 245));
-    visuals.widgets.open.bg_fill = active;
-    visuals.widgets.open.bg_stroke = edge;
-    // Filled checkbox + slider trailing segment.
-    visuals.selection.bg_fill = active;
-    visuals.selection.stroke = Stroke::new(1.0_f32, CHROME_ACCENT_BORDER);
-    visuals.slider_trailing_fill = true;
+    crate::ui::theme::apply_control_accent_visuals(visuals, &chrome());
 }
 
 /// Body/Small sizes matching Profiles list painting (14 / 12 × font zoom).
@@ -239,15 +288,15 @@ impl IconSet {
         );
 
         if enabled && selected {
-            ui.painter().rect_filled(rect, 3.0, CHROME_ACCENT_SOFT);
+            ui.painter().rect_filled(rect, 3.0, CHROME_ACCENT_SOFT());
             ui.painter().rect_stroke(
                 rect,
                 3.0,
-                Stroke::new(1.0_f32, CHROME_ACCENT_BORDER),
+                Stroke::new(1.0_f32, CHROME_ACCENT_BORDER()),
                 egui::StrokeKind::Inside,
             );
         } else if enabled && response.hovered() {
-            ui.painter().rect_filled(rect, 3.0, CHROME_HOVER);
+            ui.painter().rect_filled(rect, 3.0, CHROME_HOVER());
         }
 
         // Caption with a few px clearance above the cell bottom (avoids section chrome collision).
@@ -257,7 +306,7 @@ impl IconSet {
         } else if selected {
             Color32::from_rgb(180, 210, 255)
         } else {
-            CHROME_TEXT
+            CHROME_TEXT()
         };
         let font = FontId::proportional(zoomed_font_size(ui, 11.0));
         let lines: Vec<&str> = label.lines().filter(|l| !l.is_empty()).collect();
@@ -368,16 +417,16 @@ impl IconSet {
         let response = crate::ui::hover_tip::attach(response, tip);
         if selected {
             let fill = if on_header {
-                CHROME_HEADER_SELECTED
+                CHROME_HEADER_SELECTED()
             } else {
-                CHROME_ACCENT_SOFT
+                CHROME_ACCENT_SOFT()
             };
             ui.painter().rect_filled(rect, 2.0, fill);
         } else if response.hovered() {
             let fill = if on_header {
-                CHROME_HEADER_HOVER
+                CHROME_HEADER_HOVER()
             } else {
-                CHROME_HOVER
+                CHROME_HOVER()
             };
             ui.painter().rect_filled(rect, 2.0, fill);
         }
@@ -427,15 +476,15 @@ impl IconSet {
         );
 
         if enabled && selected {
-            ui.painter().rect_filled(rect, 3.0, CHROME_ACCENT_SOFT);
+            ui.painter().rect_filled(rect, 3.0, CHROME_ACCENT_SOFT());
             ui.painter().rect_stroke(
                 rect,
                 3.0,
-                Stroke::new(1.0_f32, CHROME_ACCENT_BORDER),
+                Stroke::new(1.0_f32, CHROME_ACCENT_BORDER()),
                 egui::StrokeKind::Inside,
             );
         } else if enabled && response.hovered() {
-            ui.painter().rect_filled(rect, 3.0, CHROME_HOVER);
+            ui.painter().rect_filled(rect, 3.0, CHROME_HOVER());
         }
 
         if let Some(tex) = self.get(name) {
@@ -466,7 +515,7 @@ impl IconSet {
         let (rect, response) = ui.allocate_exact_size(cell, Sense::click());
         let response = crate::ui::hover_tip::attach(response, tip.to_owned());
         if response.hovered() {
-            ui.painter().rect_filled(rect, 3.0, CHROME_HOVER);
+            ui.painter().rect_filled(rect, 3.0, CHROME_HOVER());
         }
         if let Some(tex) = self.get(name) {
             let img = egui::Image::new(tex)
@@ -482,7 +531,7 @@ impl IconSet {
                 egui::Align2::CENTER_CENTER,
                 fallback,
                 FontId::proportional(22.0),
-                CHROME_TEXT,
+                CHROME_TEXT(),
             );
         }
         response
@@ -492,7 +541,7 @@ impl IconSet {
 /// Full-width chrome bar behind a section icon+title row (and optional trailing widgets).
 pub fn section_header_bar(ui: &mut egui::Ui, add_contents: impl FnOnce(&mut egui::Ui)) {
     egui::Frame::NONE
-        .fill(CHROME_SECTION)
+        .fill(CHROME_SECTION())
         .corner_radius(3.0)
         // Tight around 36px icons — was (8,5) and looked oversized.
         .inner_margin(egui::Margin::symmetric(4, 1))
@@ -510,7 +559,7 @@ pub fn section_title(ui: &mut egui::Ui, text: &str) {
         egui::RichText::new(text)
             .heading()
             .strong()
-            .color(CHROME_HEADING),
+            .color(CHROME_HEADING()),
     );
 }
 
@@ -538,7 +587,7 @@ pub fn tiny_image(ui: &mut egui::Ui, icons: &IconSet, name: &str) {
 
 /// Paint a 2×3 grip (drag handle) centered in `rect`.
 pub fn paint_drag_grip(ui: &mut egui::Ui, rect: egui::Rect) {
-    let color = CHROME_MUTED;
+    let color = CHROME_MUTED();
     let r = 1.2_f32;
     let cx = rect.center().x;
     let cy = rect.center().y;
@@ -653,7 +702,7 @@ fn paint_rotated_section_label(ui: &mut egui::Ui, rect: egui::Rect, caption: &st
         f.layout_no_wrap(
             caption.to_owned(),
             FontId::proportional(zoomed_font_size(ui, 11.0)),
-            CHROME_CAPTION,
+            CHROME_CAPTION(),
         )
     });
     // Pivot near rail center; rotate CCW so text runs bottom→top. Nudge left so
@@ -663,7 +712,7 @@ fn paint_rotated_section_label(ui: &mut egui::Ui, rect: egui::Rect, caption: &st
         rect.center().y + galley.size().x * 0.5,
     );
     ui.painter().add(
-        TextShape::new(pos, galley, CHROME_CAPTION).with_angle(-FRAC_PI_2),
+        TextShape::new(pos, galley, CHROME_CAPTION()).with_angle(-FRAC_PI_2),
     );
 }
 
@@ -673,7 +722,7 @@ pub fn ribbon_separator(ui: &mut egui::Ui) {
     let (rect, _) = ui.allocate_exact_size(Vec2::new(1.0, RIBBON_ROW_H), Sense::hover());
     ui.painter().line_segment(
         [rect.center_top(), rect.center_bottom()],
-        Stroke::new(1.0_f32, CHROME_SEP),
+        Stroke::new(1.0_f32, CHROME_SEP()),
     );
     ui.add_space(4.0);
 }

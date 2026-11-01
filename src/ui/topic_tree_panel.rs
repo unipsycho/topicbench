@@ -771,7 +771,7 @@ fn revision_count_label(ui: &mut egui::Ui, count: u64) {
     }
     let text = format!("#{count}");
     let font = egui::TextStyle::Small.resolve(ui.style());
-    let color = CHROME_MUTED;
+    let color = CHROME_MUTED();
     let text_w = ui.fonts(|f| f.layout_no_wrap(text.clone(), font.clone(), color).size().x);
     let pad_r = 5.0_f32; // glyph overhang at content edge
     let pad_l = 4.0_f32;
@@ -1208,7 +1208,7 @@ pub fn draw_export_modal(
         ui.add_space(6.0);
         let bar_w = ui.available_width();
         let (bar, _) = ui.allocate_exact_size(egui::vec2(bar_w, 3.0), egui::Sense::hover());
-        ui.painter().rect_filled(bar, 1.5, CHROME_ACCENT_BORDER);
+        ui.painter().rect_filled(bar, 1.5, CHROME_ACCENT_BORDER());
         ui.add_space(12.0);
 
         let mut scope = ui
@@ -1235,7 +1235,7 @@ pub fn draw_export_modal(
             ui.label(
                 RichText::new("Select a node in the tree")
                     .small()
-                    .color(CHROME_MUTED),
+                    .color(CHROME_MUTED()),
             );
         }
         ui.radio_value(
@@ -1264,16 +1264,16 @@ pub fn draw_export_modal(
                                 .fit_to_exact_size(egui::vec2(TINY_ICON, TINY_ICON)),
                             RichText::new("Export…").strong(),
                         )
-                        .fill(CHROME_ACCENT_SOFT)
-                        .stroke(egui::Stroke::new(1.0_f32, CHROME_ACCENT_BORDER))
+                        .fill(CHROME_ACCENT_SOFT())
+                        .stroke(egui::Stroke::new(1.0_f32, CHROME_ACCENT_BORDER()))
                         .min_size(egui::vec2(120.0, 32.0)),
                     )
                 } else {
                     ui.add_enabled(
                         can_sel,
                         egui::Button::new(RichText::new("Export…").strong())
-                            .fill(CHROME_ACCENT_SOFT)
-                            .stroke(egui::Stroke::new(1.0_f32, CHROME_ACCENT_BORDER))
+                            .fill(CHROME_ACCENT_SOFT())
+                            .stroke(egui::Stroke::new(1.0_f32, CHROME_ACCENT_BORDER()))
                             .min_size(egui::vec2(120.0, 32.0)),
                     )
                 };
@@ -1541,13 +1541,13 @@ pub fn draw_import_modal(
         ui.add_space(6.0);
         let bar_w = ui.available_width();
         let (bar, _) = ui.allocate_exact_size(egui::vec2(bar_w, 3.0), egui::Sense::hover());
-        ui.painter().rect_filled(bar, 1.5, CHROME_ACCENT_BORDER);
+        ui.painter().rect_filled(bar, 1.5, CHROME_ACCENT_BORDER());
         ui.add_space(12.0);
 
         ui.label(RichText::new("File").strong());
         ui.add_space(4.0);
         if !state.file_label.is_empty() {
-            ui.label(RichText::new(&state.file_label).color(CHROME_MUTED));
+            ui.label(RichText::new(&state.file_label).color(CHROME_MUTED()));
             ui.add_space(4.0);
         }
         ui.horizontal(|ui| {
@@ -1579,7 +1579,7 @@ pub fn draw_import_modal(
                     .height(CTRL_H)
                     .show_ui(ui, |ui| {
                         if recent_empty {
-                            ui.label(RichText::new("No recent imports").color(CHROME_MUTED));
+                            ui.label(RichText::new("No recent imports").color(CHROME_MUTED()));
                         } else {
                             for p in &state.recent.paths {
                                 let path = std::path::PathBuf::from(p);
@@ -1591,7 +1591,7 @@ pub fn draw_import_modal(
                                 let text = if exists {
                                     RichText::new(label)
                                 } else {
-                                    RichText::new(format!("{label} (missing)")).color(CHROME_MUTED)
+                                    RichText::new(format!("{label} (missing)")).color(CHROME_MUTED())
                                 };
                                 if ui
                                     .add_enabled(exists, egui::Button::new(text).frame(false))
@@ -1612,14 +1612,14 @@ pub fn draw_import_modal(
         }
         if busy {
             ui.add_space(6.0);
-            ui.label(RichText::new("Importing… bridge publishing retained topics.").color(CHROME_MUTED));
+            ui.label(RichText::new("Importing… bridge publishing retained topics.").color(CHROME_MUTED()));
         }
 
         if state.doc.is_none() {
             ui.add_space(10.0);
             ui.label(
                 RichText::new("Choose a topic-tree export JSON to map and republish.")
-                    .color(CHROME_MUTED),
+                    .color(CHROME_MUTED()),
             );
         } else {
             ui.add_space(12.0);
@@ -1627,7 +1627,7 @@ pub fn draw_import_modal(
             ui.add_space(4.0);
             if connected.is_empty() {
                 ui.label(
-                    RichText::new("Connect a broker first to import.").color(CHROME_MUTED),
+                    RichText::new("Connect a broker first to import.").color(CHROME_MUTED()),
                 );
             } else {
                 let selected_name = profiles
@@ -1691,7 +1691,7 @@ pub fn draw_import_modal(
                                 };
                                 // Same Body size for segment, Under label, and path field.
                                 ui.label(RichText::new(label));
-                                ui.label(RichText::new("Under").color(CHROME_MUTED));
+                                ui.label(RichText::new("Under").color(CHROME_MUTED()));
                                 ui.add(
                                     egui::TextEdit::singleline(&mut row.under_path)
                                         .desired_width(150.0)
@@ -1706,7 +1706,7 @@ pub fn draw_import_modal(
             ui.add_space(10.0);
             ui.label(
                 RichText::new("Leaves publish with retain (may overwrite on broker).")
-                    .color(CHROME_MUTED),
+                    .color(CHROME_MUTED()),
             );
         }
 
@@ -1725,16 +1725,16 @@ pub fn draw_import_modal(
                                 .fit_to_exact_size(egui::vec2(TINY_ICON, TINY_ICON)),
                             RichText::new(import_label).strong(),
                         )
-                        .fill(CHROME_ACCENT_SOFT)
-                        .stroke(egui::Stroke::new(1.0_f32, CHROME_ACCENT_BORDER))
+                        .fill(CHROME_ACCENT_SOFT())
+                        .stroke(egui::Stroke::new(1.0_f32, CHROME_ACCENT_BORDER()))
                         .min_size(egui::vec2(128.0, CTRL_H)),
                     )
                 } else {
                     ui.add_enabled(
                         can_import,
                         egui::Button::new(RichText::new(import_label).strong())
-                            .fill(CHROME_ACCENT_SOFT)
-                            .stroke(egui::Stroke::new(1.0_f32, CHROME_ACCENT_BORDER))
+                            .fill(CHROME_ACCENT_SOFT())
+                            .stroke(egui::Stroke::new(1.0_f32, CHROME_ACCENT_BORDER()))
                             .min_size(egui::vec2(128.0, CTRL_H)),
                     )
                 };

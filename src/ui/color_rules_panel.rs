@@ -119,7 +119,7 @@ pub fn draw_popup(
                         "First match wins · drag ↕ to reorder · nested fields use dotted paths (meta.channel)",
                     )
                     .text_style(TextStyle::Body)
-                    .color(CHROME_CAPTION),
+                    .color(CHROME_CAPTION()),
                 );
                 ui.add_space(4.0);
                 ui.separator();
@@ -168,14 +168,14 @@ pub fn draw_popup(
                         .resizable(true)
                         .default_width(520.0)
                         .default_height(320.0)
-                        .frame(egui::Frame::window(&ctx.style()).fill(CHROME_BG))
+                        .frame(egui::Frame::window(&ctx.style()).fill(CHROME_BG()))
                         .show(ctx, |ui| paint(ui));
                 }
                 _ => {
                     egui::CentralPanel::default()
                         .frame(
                             egui::Frame::central_panel(&ctx.style())
-                                .fill(CHROME_BG)
+                                .fill(CHROME_BG())
                                 .inner_margin(egui::Margin::same(8)),
                         )
                         .show(ctx, |ui| paint(ui));
@@ -225,7 +225,7 @@ fn draw_column_header(ui: &mut egui::Ui, row_w: f32) {
     ui.painter().hline(
         rect.x_range(),
         rect.bottom(),
-        egui::Stroke::new(1.0_f32, CHROME_SEP),
+        egui::Stroke::new(1.0_f32, CHROME_SEP()),
     );
     let y = rect.center().y;
     let font = TextStyle::Body.resolve(ui.style());
@@ -243,7 +243,7 @@ fn draw_column_header(ui: &mut egui::Ui, row_w: f32) {
             egui::Align2::CENTER_CENTER,
             lab,
             font.clone(),
-            CHROME_CAPTION,
+            CHROME_CAPTION(),
         );
         cx += COL_CHIP + gap_after;
     }
@@ -256,7 +256,7 @@ fn draw_column_header(ui: &mut egui::Ui, row_w: f32) {
             egui::Align2::LEFT_CENTER,
             label,
             font.clone(),
-            CHROME_CAPTION,
+            CHROME_CAPTION(),
         );
         *x += col_w + 4.0;
     };
@@ -267,7 +267,7 @@ fn draw_column_header(ui: &mut egui::Ui, row_w: f32) {
         egui::Align2::LEFT_CENTER,
         "Match",
         font,
-        CHROME_CAPTION,
+        CHROME_CAPTION(),
     );
 }
 
@@ -282,10 +282,10 @@ fn draw_rule_row(
     force_open_topic_pop: bool,
 ) {
     let rule_id = rule.id.clone();
-    // Profiles-style list strip — rounded CHROME_ROW, no hairline card border.
+    // Profiles-style list strip — rounded CHROME_ROW(), no hairline card border.
     let (row_rect, drop_response) =
         ui.allocate_exact_size(egui::vec2(row_w, ROW_H), Sense::hover());
-    ui.painter().rect_filled(row_rect, 2.0, CHROME_ROW);
+    ui.painter().rect_filled(row_rect, 2.0, CHROME_ROW());
 
     let grip_rect = egui::Rect::from_min_size(
         egui::pos2(row_rect.left() + 2.0, row_rect.top()),
@@ -320,9 +320,9 @@ fn draw_rule_row(
             let layer = egui::LayerId::new(egui::Order::Tooltip, grip_id);
             let preview = egui::Rect::from_center_size(pos, egui::vec2(GRIP_W, ROW_H));
             let painter = ui.ctx().layer_painter(layer);
-            painter.rect_filled(preview, 2.0, CHROME_HOVER);
+            painter.rect_filled(preview, 2.0, CHROME_HOVER());
             // Grip dots on the floating preview (same geometry as paint_drag_grip).
-            let color = CHROME_MUTED;
+            let color = CHROME_MUTED();
             let r = 1.2_f32;
             let cx = preview.center().x;
             let cy = preview.center().y;
@@ -349,15 +349,15 @@ fn draw_rule_row(
             ui.painter().hline(
                 drop_response.rect.x_range(),
                 y,
-                egui::Stroke::new(2.0_f32, CHROME_ACCENT_BORDER),
+                egui::Stroke::new(2.0_f32, CHROME_ACCENT_BORDER()),
             );
             ui.painter().rect_filled(
                 drop_response.rect,
                 0.0,
                 Color32::from_rgba_unmultiplied(
-                    CHROME_HOVER.r(),
-                    CHROME_HOVER.g(),
-                    CHROME_HOVER.b(),
+                    CHROME_HOVER().r(),
+                    CHROME_HOVER().g(),
+                    CHROME_HOVER().b(),
                     80,
                 ),
             );
@@ -711,7 +711,7 @@ fn color_swatch_popover(ui: &mut egui::Ui, slot: &mut Option<[u8; 4]>, dirty: &m
         ui.label(
             RichText::new("Pick color")
                 .text_style(TextStyle::Body)
-                .color(CHROME_MUTED),
+                .color(CHROME_MUTED()),
         );
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             if ui
