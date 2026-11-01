@@ -8,19 +8,19 @@ Free, open-source MQTT explorer and monitor for builders and testers.
 
 ## Download
 
-Latest free release: **[v1.2.5](https://github.com/unipsycho/topicbench/releases/tag/v1.2.5)**
+Latest free release: **[v1.2.5](https://github.com/unipsycho/topicbench/releases/tag/v1.2.5)** — typical asset sizes below (from that release).
 
-| | |
-|:--|:--|
-| **Windows** portable (x64) | [TopicBench-windows-x64-portable.zip](https://github.com/unipsycho/topicbench/releases/download/v1.2.5/TopicBench-windows-x64-portable.zip) |
-| **Linux** binary (x64) | [topicbench-linux-x64](https://github.com/unipsycho/topicbench/releases/download/v1.2.5/topicbench-linux-x64) |
-| **Debian / Ubuntu** (.deb) | [topicbench_1.2.5_amd64.deb](https://github.com/unipsycho/topicbench/releases/download/v1.2.5/topicbench_1.2.5_amd64.deb) |
-| **Arch / Omarchy** (AUR) | [`topicbench-bin`](packaging/aur/topicbench-bin) — `yay -S topicbench-bin` |
-| SHA-256 checksums | [SHA256SUMS](https://github.com/unipsycho/topicbench/releases/download/v1.2.5/SHA256SUMS) |
+| | | Typical size |
+|:--|:--|:--|
+| **Windows** portable (x64) | [TopicBench-windows-x64-portable.zip](https://github.com/unipsycho/topicbench/releases/download/v1.2.5/TopicBench-windows-x64-portable.zip) | ~16 MB |
+| **Windows** exe (x64) | [topicbench-windows-x64.exe](https://github.com/unipsycho/topicbench/releases/download/v1.2.5/topicbench-windows-x64.exe) | ~32 MB |
+| **Linux** binary (x64) | [topicbench-linux-x64](https://github.com/unipsycho/topicbench/releases/download/v1.2.5/topicbench-linux-x64) | ~28 MB |
+| **Debian / Ubuntu** (.deb) | [topicbench_1.2.5_amd64.deb](https://github.com/unipsycho/topicbench/releases/download/v1.2.5/topicbench_1.2.5_amd64.deb) | ~15 MB |
+| **Arch / Omarchy** (AUR) | [`topicbench-bin`](packaging/aur/topicbench-bin) — `yay -S topicbench-bin` | same as Linux binary |
+| SHA-256 checksums | [SHA256SUMS](https://github.com/unipsycho/topicbench/releases/download/v1.2.5/SHA256SUMS) | |
 
-Windows: unzip and run `TopicBench.exe`.
+Windows: unzip the portable zip and run `TopicBench.exe`, or use the standalone `.exe`.
 Linux binaries target **glibc 2.35+** (Ubuntu 22.04 / Debian 12 and newer).
-
 
 Arch: AUR package installs the Release binary + desktop entry (OSS only). PKGBUILD lives in-tree; publish steps in [`packaging/aur/README.md`](packaging/aur/README.md).
 
@@ -31,6 +31,12 @@ TopicBench Pro is the paid companion — a standalone download for licensed cust
 ## Why TopicBench
 
 I use MQTT brokers every day for apps and controls. Existing tools never quite delivered easy navigation, multi-broker handling, data simulation, highlighting and searching content, or flexible windowing — moving panels around and keeping multiple topic trees in view. TopicBench’s features grew from those daily needs.
+
+I'm happy with the performance: among the MQTT desktop tools I've tried, TopicBench stays ahead on CPU, memory, and small download size — a native Rust app that keeps large topic trees responsive without a heavy footprint.
+
+<p align="center">
+  <img src="docs/images/topicbench-xray.png" alt="TopicBench process footprint in X-Ray: 0.1% CPU, 138.6 MiB, 23 threads" width="780">
+</p>
 
 - **Simultaneous multi-broker** — connect to several brokers at once and monitor or search their topics in a single window
 - **Multi-broker profiles** — save hosts, TLS/WSS options, and credentials (passwords in the OS keyring)
