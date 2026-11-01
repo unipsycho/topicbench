@@ -124,6 +124,8 @@ pub struct MqttMonitorApp {
     history_fwd: Option<crate::pro::history_client::HistoryForwarder>,
     /// Payload-panel history scrub (session-only).
     payload_scrub: crate::pro::history_client::PayloadScrub,
+    /// Pro Combined graph boards (MultiGraph pop-outs).
+    combined_boards: crate::pro::combined_boards::CombinedBoardsStore,
     /// Pro topic bookmarks.
     bookmarks: crate::pro::bookmarks::BookmarksStore,
     bookmarks_open: bool,
@@ -155,6 +157,7 @@ struct ViewportSeeds {
     color_rules: Option<WinGeom>,
     topic_trees: HashMap<String, WinGeom>,
     payload_pops: HashMap<String, WinGeom>,
+    combined_boards: HashMap<String, WinGeom>,
 }
 
 impl MqttMonitorApp {
@@ -243,6 +246,10 @@ impl MqttMonitorApp {
         } else {
             None
         };
+        // Combined boards: load session + one-shot migrate from docked Combined / in_combined.
+        let mut combined_boards = crate::pro::combined_boards::CombinedBoardsStore::load();
+        let mut settings = settings;
+        combined_boards.migrate_from_legacy(&mut settings, &profiles);
         Self {
             profiles,
             sessions,
@@ -292,6 +299,7 @@ impl MqttMonitorApp {
                 None
             },
             payload_scrub: crate::pro::history_client::PayloadScrub::default(),
+            combined_boards,
             bookmarks: crate::pro::bookmarks::BookmarksStore::load(),
             bookmarks_open,
             pending_bookmark_jump: None,
@@ -343,7 +351,9 @@ impl eframe::App for MqttMonitorApp {
             .store(focused, Ordering::Relaxed);
 
         // Always apply a capped inbox batch so Stats/counts stay alive (even off-workspace).
-        let poll = self.sessions.poll_events(&mut self.pins);
+        let combined = crate::pro::has(crate::pro::Entitlement::MultiGraph)
+            .then_some(&mut self.combined_boards);
+        let poll = self.sessions.poll_events(&mut self.pins, combined);
         let need_repaint = poll.need_repaint();
         if let Some(msg) = poll.status {
             self.status = msg;
@@ -449,8 +459,8 @@ impl eframe::App for MqttMonitorApp {
         let status_fade = status_strip_fade_alpha(self.status_changed_at, now);
         // Combined live monitor: while open + entitled, keep ~1 Hz paints even when idle /
         // unfocused so series advance; rest of UI still follows the throttle below.
-        let combined_live = self.settings.combined_graph_open
-            && crate::pro::has(crate::pro::Entitlement::MultiGraph);
+        let combined_live = crate::pro::has(crate::pro::Entitlement::MultiGraph)
+            && self.combined_boards.any_open();
         let hz = crate::mqtt::session::BACKGROUND_UI_HZ_INTERVAL;
         if focused {
             if need_repaint || flashing || (status_fade > 0.0 && status_fade < 1.0) {
@@ -527,6 +537,7 @@ impl eframe::App for MqttMonitorApp {
         self.draw_top_chrome_overlays(ctx, top_chrome);
         self.draw_undocked_topic_trees(ctx);
         self.draw_undocked_payloads(ctx);
+        self.draw_combined_boards(ctx);
         self.draw_simulation_panel(ctx);
         self.draw_pro_chrome_popups(ctx);
         self.draw_overlays(ctx);
@@ -557,6 +568,7 @@ impl eframe::App for MqttMonitorApp {
         // Flush panel / pop-out / geometry into settings.json on eframe autosave + quit.
         self.geometry_dirty = false;
         self.persist_panels();
+        self.combined_boards.save_session_if_dirty();
     }
 }
 

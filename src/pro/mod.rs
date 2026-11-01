@@ -12,6 +12,7 @@ pub mod bookmarks;
 pub mod bridge;
 pub mod bridge_pro_tools;
 pub mod color_rules;
+pub mod combined_boards;
 pub mod history_client;
 pub mod recording;
 pub mod sidecar_launch;
