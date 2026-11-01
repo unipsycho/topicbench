@@ -421,7 +421,7 @@ fn draw_sticky(
                                 ui.label(
                                     RichText::new(format!("#{}", pin.message_count))
                                         .small()
-                                        .color(CHROME_MUTED),
+                                        .color(CHROME_MUTED()),
                                 );
                             }
                             if icons
@@ -518,9 +518,9 @@ fn draw_sticky(
                 let preview =
                     egui::Rect::from_center_size(pos, egui::vec2(GRIP_W, GRIP_W + 8.0));
                 let painter = ui.ctx().layer_painter(layer);
-                painter.rect_filled(preview, 2.0, CHROME_HOVER);
+                painter.rect_filled(preview, 2.0, CHROME_HOVER());
                 // Same 2×3 grip dots as Profiles floating preview.
-                let color = CHROME_MUTED;
+                let color = CHROME_MUTED();
                 let r = 1.2_f32;
                 let cx = preview.center().x;
                 let cy = preview.center().y;
@@ -556,15 +556,15 @@ fn draw_sticky(
                 ui.painter().hline(
                     drop_response.rect.x_range(),
                     y,
-                    egui::Stroke::new(2.0, CHROME_ACCENT_BORDER),
+                    egui::Stroke::new(2.0, CHROME_ACCENT_BORDER()),
                 );
                 ui.painter().rect_filled(
                     drop_response.rect,
                     2.0,
                     Color32::from_rgba_unmultiplied(
-                        CHROME_HOVER.r(),
-                        CHROME_HOVER.g(),
-                        CHROME_HOVER.b(),
+                        CHROME_HOVER().r(),
+                        CHROME_HOVER().g(),
+                        CHROME_HOVER().b(),
                         80,
                     ),
                 );
@@ -753,7 +753,7 @@ fn draw_combined_graph(
         AppSettings::clamp_combined_graph_height(settings.combined_graph_height);
 
     // Fill+corners (no Frame::stroke); width uses ITEM_CLIP_CLEAR so inset border clears clip.
-    let border = Stroke::new(1.0_f32, CHROME_ACCENT_BORDER);
+    let border = Stroke::new(1.0_f32, CHROME_ACCENT_BORDER());
     let frame = egui::Frame::NONE
         .fill(Color32::from_rgb(32, 34, 40))
         .corner_radius(4.0)
@@ -763,12 +763,12 @@ fn draw_combined_graph(
             ui.set_min_width(w);
             ui.set_max_width(w);
             ui.horizontal(|ui| {
-                ui.label(RichText::new("Combined graph").strong().color(CHROME_TEXT));
+                ui.label(RichText::new("Combined graph").strong().color(CHROME_TEXT()));
                 if !series.is_empty() {
                     ui.label(
                         RichText::new(format!("{} series", series.len()))
                             .small()
-                            .color(CHROME_MUTED),
+                            .color(CHROME_MUTED()),
                     );
                 }
                 ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
@@ -817,7 +817,7 @@ fn draw_combined_graph(
             if series.is_empty() {
                 ui.label(
                     RichText::new("No series included yet.")
-                        .color(CHROME_MUTED),
+                        .color(CHROME_MUTED()),
                 );
                 ui.weak(
                     "On a Graph sticky, tap the Combined icon to include it (off by default).",
@@ -846,7 +846,7 @@ fn draw_combined_graph(
                 ui.painter().circle_filled(
                     Pos2::new(sep.center().x + dx, mid_y),
                     1.4,
-                    CHROME_MUTED,
+                    CHROME_MUTED(),
                 );
             }
             if sep_r.dragged() {
@@ -919,12 +919,12 @@ fn paint_multi_series_plot(ui: &mut egui::Ui, series: &[(&StickyTopic, Color32)]
             let y = plot.top() + frac * plot.height();
             painter.hline(plot.x_range(), y, grid);
             let text = fmt_scale(v);
-            let galley = ui.fonts(|f| f.layout_no_wrap(text, font.clone(), CHROME_MUTED));
+            let galley = ui.fonts(|f| f.layout_no_wrap(text, font.clone(), CHROME_MUTED()));
             // Keep the full glyph box inside label_rect.
             let mut ty = y - galley.size().y * 0.5;
             ty = ty.clamp(label_rect.top(), label_rect.bottom() - galley.size().y);
             let tx = (label_rect.right() - galley.size().x - 2.0).max(label_rect.left());
-            painter.galley(Pos2::new(tx, ty), galley, CHROME_MUTED);
+            painter.galley(Pos2::new(tx, ty), galley, CHROME_MUTED());
         }
 
         for (pin, color) in series {
@@ -967,7 +967,7 @@ fn paint_multi_series_plot(ui: &mut egui::Ui, series: &[(&StickyTopic, Color32)]
             );
 
             let mut lines: Vec<(String, Color32)> = Vec::with_capacity(series.len() + 1);
-            lines.push((instant_hhmmss(at), CHROME_TEXT));
+            lines.push((instant_hhmmss(at), CHROME_TEXT()));
             for (pin, color) in series {
                 let short = sticky_short_label(&pin.topic);
                 let val = value_at_time(pin, at)
@@ -1023,13 +1023,13 @@ fn paint_multi_series_plot(ui: &mut egui::Ui, series: &[(&StickyTopic, Color32)]
             painter.rect_stroke(
                 tip_rect,
                 4.0,
-                Stroke::new(1.0_f32, CHROME_ACCENT_BORDER),
+                Stroke::new(1.0_f32, CHROME_ACCENT_BORDER()),
                 egui::StrokeKind::Inside,
             );
             let mut ly = tip_rect.top() + pad;
             for g in galleys {
                 let h = g.size().y;
-                painter.galley(Pos2::new(tip_rect.left() + pad, ly), g, CHROME_TEXT);
+                painter.galley(Pos2::new(tip_rect.left() + pad, ly), g, CHROME_TEXT());
                 ly += h + 1.0;
             }
         } else if response.hovered() {
@@ -1054,7 +1054,7 @@ fn paint_multi_series_plot(ui: &mut egui::Ui, series: &[(&StickyTopic, Color32)]
         let font = egui::TextStyle::Small.resolve(ui.style());
         let painter = ui.painter_at(xr);
         for (frac, text) in [(0.0_f32, left_l), (0.5, mid_l), (1.0, right_l)] {
-            let galley = ui.fonts(|f| f.layout_no_wrap(text, font.clone(), CHROME_MUTED));
+            let galley = ui.fonts(|f| f.layout_no_wrap(text, font.clone(), CHROME_MUTED()));
             let align = if frac <= 0.0 {
                 0.0
             } else if frac >= 1.0 {
@@ -1064,7 +1064,7 @@ fn paint_multi_series_plot(ui: &mut egui::Ui, series: &[(&StickyTopic, Color32)]
             };
             let x = xr.left() + frac * xr.width() - align;
             let y = xr.center().y - galley.size().y * 0.5;
-            painter.galley(Pos2::new(x, y), galley, CHROME_MUTED);
+            painter.galley(Pos2::new(x, y), galley, CHROME_MUTED());
         }
     });
 }
@@ -1432,7 +1432,7 @@ fn draw_combined_legend(ui: &mut egui::Ui, series: &[(&StickyTopic, Color32)]) {
                 } else {
                     short
                 };
-                ui.label(RichText::new(name).small().color(CHROME_TEXT));
+                ui.label(RichText::new(name).small().color(CHROME_TEXT()));
                 ui.label(RichText::new(cur).small().strong().monospace().color(*color));
             });
             r.response.on_hover_text(tip);

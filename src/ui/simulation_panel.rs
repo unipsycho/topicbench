@@ -234,14 +234,14 @@ pub fn draw(
                         .default_size([1100.0, 360.0])
                         .min_width(900.0)
                         .min_height(220.0)
-                        .frame(egui::Frame::window(&ctx.style()).fill(CHROME_BG))
+                        .frame(egui::Frame::window(&ctx.style()).fill(CHROME_BG()))
                         .show(ctx, |ui| paint(ui));
                 }
                 _ => {
                     egui::CentralPanel::default()
                         .frame(
                             egui::Frame::central_panel(&ctx.style())
-                                .fill(CHROME_BG)
+                                .fill(CHROME_BG())
                                 .inner_margin(egui::Margin::same(8)),
                         )
                         .show(ctx, |ui| paint(ui));
@@ -343,7 +343,7 @@ fn header_bar(
             (
                 "Stopped",
                 "No generators or playback active".into(),
-                CHROME_MUTED,
+                CHROME_MUTED(),
                 Color32::from_rgb(46, 48, 54),
                 Color32::from_rgb(78, 82, 92),
             )
@@ -366,7 +366,7 @@ fn header_bar(
             ui.label(
                 RichText::new(format!("Loops: {}", pb.loops_completed))
                     .size(12.0)
-                    .color(CHROME_CAPTION),
+                    .color(CHROME_CAPTION()),
             )
             .on_hover_text(
                 "Loops completed — increments each time the CSV finishes and restarts. \
@@ -419,14 +419,14 @@ fn body(
         ui.label(
             RichText::new("TopicBench Pro required")
                 .strong()
-                .color(CHROME_TEXT),
+                .color(CHROME_TEXT()),
         );
         ui.label(
             RichText::new(
                 "Simulation publishes scripted payloads through your live sessions. \
                  Unlock Pro to add rows and start/stop generators.",
             )
-            .color(CHROME_MUTED),
+            .color(CHROME_MUTED()),
         );
         return;
     }
@@ -436,11 +436,11 @@ fn body(
         ui.label(
             RichText::new("TopicBench Pro is not running — start it and try again.")
                 .small()
-                .color(CHROME_MUTED),
+                .color(CHROME_MUTED()),
         );
     } else if !client.sidecar_up && client.rows.is_empty() {
         ui.label(
-            RichText::new("Connecting to TopicBench Pro…").color(CHROME_MUTED),
+            RichText::new("Connecting to TopicBench Pro…").color(CHROME_MUTED()),
         );
     }
 
@@ -537,7 +537,7 @@ fn body(
             ui.label(
                 RichText::new(format!("{sel_n} selected"))
                     .small()
-                    .color(CHROME_CAPTION),
+                    .color(CHROME_CAPTION()),
             );
         }
 
@@ -905,7 +905,7 @@ fn handle_marquee(
                     rect,
                     2.0,
                     Color32::from_rgba_unmultiplied(80, 140, 200, 40),
-                    egui::Stroke::new(1.0, CHROME_ACCENT_BORDER),
+                    egui::Stroke::new(1.0, CHROME_ACCENT_BORDER()),
                     egui::StrokeKind::Outside,
                 );
                 let mut hit = m.base.clone();
@@ -978,7 +978,7 @@ fn header_cell(ui: &mut egui::Ui, width: f32, label: &str) {
         |ui| {
             ui.set_min_width(width);
             if !label.is_empty() {
-                ui.label(RichText::new(label).strong().color(CHROME_CAPTION));
+                ui.label(RichText::new(label).strong().color(CHROME_CAPTION()));
             }
         },
     );
@@ -1007,9 +1007,9 @@ fn draw_row(
     let mods = ui.input(|i| i.modifiers);
 
     let fill = if selected {
-        CHROME_ACCENT_SOFT
+        CHROME_ACCENT_SOFT()
     } else {
-        CHROME_ROW
+        CHROME_ROW()
     };
     // No Frame stroke — a 1px selected stroke widens the row and walks trash right.
 
@@ -1107,7 +1107,7 @@ fn draw_row(
         ui.painter().rect_stroke(
             inner.response.rect,
             2.0,
-            egui::Stroke::new(1.0_f32, CHROME_ACCENT_BORDER),
+            egui::Stroke::new(1.0_f32, CHROME_ACCENT_BORDER()),
             egui::StrokeKind::Inside,
         );
     }
@@ -1153,12 +1153,12 @@ fn draw_gutter(
     let radius = 4.0;
     if selected {
         ui.painter()
-            .circle_filled(center, radius, CHROME_ACCENT_BORDER);
+            .circle_filled(center, radius, CHROME_ACCENT_BORDER());
     } else {
         ui.painter().circle_stroke(
             center,
             radius,
-            egui::Stroke::new(1.25_f32, CHROME_MUTED),
+            egui::Stroke::new(1.25_f32, CHROME_MUTED()),
         );
     }
     if resp.clicked() {
@@ -1300,7 +1300,7 @@ fn draw_refresh_cell(ui: &mut egui::Ui, draft: &mut SimRow, dirty: &mut bool) {
                     RichText::new(format_interval_ms(draft.interval_ms))
                         .small()
                         .monospace()
-                        .color(CHROME_TEXT),
+                        .color(CHROME_TEXT()),
                 ),
             );
         },
@@ -1350,7 +1350,7 @@ fn draw_value_cell(
     let color = if running {
         Color32::from_rgb(140, 210, 160)
     } else {
-        CHROME_TEXT
+        CHROME_TEXT()
     };
     ui.allocate_new_ui(egui::UiBuilder::new().max_rect(rect), |ui| {
         ui.set_clip_rect(rect);
@@ -1470,7 +1470,7 @@ fn settings_slot(ui: &mut egui::Ui, width: f32, add_contents: impl FnOnce(&mut e
 fn settings_label(ui: &mut egui::Ui, text: &str) {
     ui.add_sized(
         [SET_LABEL_W, ROW_H],
-        egui::Label::new(RichText::new(text).small().color(CHROME_MUTED)),
+        egui::Label::new(RichText::new(text).small().color(CHROME_MUTED())),
     );
 }
 
@@ -1540,7 +1540,7 @@ fn edit_generator_inline(
                     RichText::new(format!("{noise:.0}%"))
                         .small()
                         .monospace()
-                        .color(CHROME_TEXT),
+                        .color(CHROME_TEXT()),
                 );
             });
             if dirty {
@@ -1619,7 +1619,7 @@ fn edit_generator_inline(
         }
         "iso_timestamp" => {
             settings_slot(ui, SET_A, |ui| {
-                ui.label(RichText::new("UTC").small().color(CHROME_MUTED));
+                ui.label(RichText::new("UTC").small().color(CHROME_MUTED()));
             });
             settings_slot(ui, SET_B, |_| {});
             settings_slot(ui, SET_C, |_| {});
@@ -2030,12 +2030,12 @@ fn draw_open_playback_modal(
                     let bar_w = ui.available_width();
                     let (bar, _) =
                         ui.allocate_exact_size(egui::vec2(bar_w, 3.0), egui::Sense::hover());
-                    ui.painter().rect_filled(bar, 1.5, CHROME_ACCENT_BORDER);
+                    ui.painter().rect_filled(bar, 1.5, CHROME_ACCENT_BORDER());
                     ui.add_space(12.0);
 
                     ui.label(
                         RichText::new(format!("File: {}", draft.file_label))
-                            .color(CHROME_CAPTION),
+                            .color(CHROME_CAPTION()),
                     );
                     ui.add_space(10.0);
                     ui.checkbox(&mut draft.play, "Play it back")
@@ -2068,10 +2068,10 @@ fn draw_open_playback_modal(
                                             ),
                                             RichText::new("OK").strong(),
                                         )
-                                        .fill(CHROME_ACCENT_SOFT)
+                                        .fill(CHROME_ACCENT_SOFT())
                                         .stroke(egui::Stroke::new(
                                             1.0_f32,
-                                            CHROME_ACCENT_BORDER,
+                                            CHROME_ACCENT_BORDER(),
                                         ))
                                         .min_size(egui::vec2(120.0, 32.0)),
                                     )
@@ -2079,10 +2079,10 @@ fn draw_open_playback_modal(
                                     ui.add_enabled(
                                         can,
                                         egui::Button::new(RichText::new("OK").strong())
-                                            .fill(CHROME_ACCENT_SOFT)
+                                            .fill(CHROME_ACCENT_SOFT())
                                             .stroke(egui::Stroke::new(
                                                 1.0_f32,
-                                                CHROME_ACCENT_BORDER,
+                                                CHROME_ACCENT_BORDER(),
                                             ))
                                             .min_size(egui::vec2(120.0, 32.0)),
                                     )
