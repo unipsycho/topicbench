@@ -346,7 +346,7 @@ fn draw_sticky(
                             if let Some(live) = pins.items.get_mut(key) {
                                 let before = live.view_mode;
                                 egui::Frame::NONE
-                                    .fill(Color32::from_rgb(32, 34, 40))
+                                    .fill(icons::CHROME_COMBO_BG())
                                     .corner_radius(3.0)
                                     .inner_margin(egui::Margin::symmetric(3, 2))
                                     .show(ui, |ui| {
