@@ -3,6 +3,10 @@
 use eframe::egui::{self, Pos2, Vec2, ViewportBuilder};
 use serde::{Deserialize, Serialize};
 
+/// Wayland app_id / X11 WM_CLASS — root + every child viewport must share this
+/// so Hyprland `class` and OmaFloat (`class::title`) can key pop-outs.
+pub const APP_ID: &str = "topicbench";
+
 /// Outer position + inner size for a native / immediate viewport.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct WinGeom {
@@ -52,9 +56,10 @@ impl WinGeom {
 
     /// Apply saved size/pos to a builder. Call with a **session-frozen** geom so
     /// egui's patch does not fight live user resize/move.
+    /// Always stamps [`APP_ID`] so immediate viewports match the root window class.
     pub fn apply(self, builder: ViewportBuilder, min: [f32; 2]) -> ViewportBuilder {
         let g = self.sane(Vec2::new(min[0], min[1]));
-        let mut b = builder.with_inner_size([g.w, g.h]);
+        let mut b = builder.with_app_id(APP_ID).with_inner_size([g.w, g.h]);
         if let (Some(x), Some(y)) = (g.x, g.y) {
             b = b.with_position(Pos2::new(x, y));
         }
