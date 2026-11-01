@@ -1,0 +1,36 @@
+# nfpm config — Fedora / RHEL / openSUSE .rpm (and optional .deb rebuild).
+# Used by scripts/build-rpm.sh. Binary path is injected via --target / env staging.
+#
+#   nfpm package -f packaging/nfpm.yaml -p rpm -t dist/
+
+name: topicbench
+arch: ${ARCH}
+platform: linux
+version: ${VERSION}
+release: "1"
+section: net
+priority: optional
+maintainer: "Mike / Agile Automation <mike@agileautomation.ca>"
+description: |
+  TopicBench — multi-broker MQTT explorer and monitor.
+vendor: Agile Automation
+homepage: https://github.com/unipsycho/topicbench
+license: MIT OR Apache-2.0
+contents:
+  - src: ${BIN}
+    dst: /usr/bin/topicbench
+    file_info:
+      mode: 0755
+  - src: packaging/topicbench.desktop
+    dst: /usr/share/applications/topicbench.desktop
+  - src: packaging/topicbench.png
+    dst: /usr/share/icons/hicolor/256x256/apps/topicbench.png
+overrides:
+  rpm:
+    depends:
+      - libxcb
+      - libxkbcommon
+  deb:
+    depends:
+      - libxcb1
+      - libxkbcommon0
