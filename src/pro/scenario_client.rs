@@ -108,11 +108,21 @@ impl ScenarioStep {
         }
     }
 
+    /// Wire/schema kind id (`wait_time`, not UI copy).
     pub fn kind_label(&self) -> &'static str {
         match self {
             Self::Publish { .. } => "publish",
             Self::WaitTime { .. } => "wait_time",
             Self::WaitValue { .. } => "wait_value",
+        }
+    }
+
+    /// Human label for Scenarios UI rows / menus (`wait time`).
+    pub fn kind_ui_label(&self) -> &'static str {
+        match self {
+            Self::Publish { .. } => "publish",
+            Self::WaitTime { .. } => "wait time",
+            Self::WaitValue { .. } => "wait value",
         }
     }
 
