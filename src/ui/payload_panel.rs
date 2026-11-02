@@ -1,6 +1,7 @@
 //! Payload side panel — live Value view for the selected topic tree row + find.
 //! Topics can also pop out to independent OS windows (snapshot focus; close to dismiss).
 
+use crate::mqtt::hex_view;
 use crate::mqtt::pins::{DetectedValue, PinBoard};
 use crate::mqtt::profile::{ProfileStore, StickyViewMode};
 use crate::mqtt::publish::MqttMsgProps;
@@ -110,6 +111,8 @@ pub struct PayloadSearch {
     pub current: usize,
     /// After Next/Prev / query change, scroll the active match into view.
     pub scroll_to_current: bool,
+    /// Payload body mode: Value (default) or Hex.
+    pub view_hex: bool,
     /// Last `(profile_id, topic)` we rendered — topic switch resets diff history.
     focus_key: Option<(String, String)>,
     /// Previous display body (pretty JSON / value text) for change highlighting.
@@ -412,10 +415,54 @@ fn draw_topic_body(
             ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
                 ui.spacing_mut().item_spacing.x = 2.0;
                 if icons
-                    .tiny(ui, "delete_red", false, "Delete topic hierarchy")
+                    .tiny(ui, "delete_red", false, "Delete topic hierarchy (local only)")
                     .clicked()
                 {
                     **delete_hierarchy = true;
+                }
+                let clear_dlg = egui::Id::new(("dlg_clear_retained", profile_id, topic));
+                let connected = sessions
+                    .open
+                    .get(profile_id)
+                    .is_some_and(|s| s.state == crate::mqtt::session::SessionState::Connected);
+                if icons
+                    .tiny(
+                        ui,
+                        "retained_message",
+                        !connected,
+                        "Clear retained message on broker",
+                    )
+                    .clicked()
+                    && connected
+                {
+                    let broker = profile_name.to_string();
+                    let t = topic.to_string();
+                    crate::ui::native_dialog::begin_message(ui.ctx(), clear_dlg, move |d| {
+                        d.set_level(rfd::MessageLevel::Warning)
+                            .set_title("Clear retained on broker")
+                            .set_description(format!(
+                                "Publish empty retained to clear this topic on the broker?\n\n{broker}\n{t}"
+                            ))
+                            .set_buttons(rfd::MessageButtons::YesNo)
+                    });
+                }
+                if let Some(r) = crate::ui::native_dialog::poll_message(ui.ctx(), clear_dlg) {
+                    let yes = matches!(r, rfd::MessageDialogResult::Yes)
+                        || matches!(
+                            &r,
+                            rfd::MessageDialogResult::Custom(s) if s.eq_ignore_ascii_case("yes")
+                        );
+                    if yes {
+                        match sessions.clear_retained(profile_id, topic) {
+                            Ok(()) => {
+                                *status =
+                                    format!("Cleared retained → {profile_name} {topic}");
+                            }
+                            Err(e) => {
+                                *status = format!("Clear retained failed: {e}");
+                            }
+                        }
+                    }
                 }
                 if icons
                     .tiny(
@@ -452,8 +499,12 @@ fn draw_topic_body(
         .and_then(|s| s.topic_tree.root.node_at(topic));
 
     match node {
-        Some(n) if n.last_payload.as_deref().is_some_and(|p| !p.is_empty()) => {
+        Some(n) if n.last_payload.is_some() => {
             let live_payload = n.last_payload.as_deref().unwrap_or("").to_string();
+            let live_bytes = n.last_payload_bytes.clone().unwrap_or_else(|| {
+                live_payload.as_bytes().to_vec()
+            });
+            let live_utf8 = n.last_payload_utf8;
             let message_count = n.message_count;
             let mqtt5_props = n.last_props.clone();
             // Merge short ring + Pro deep samples for scrub (oldest → newest).
@@ -495,14 +546,25 @@ fn draw_topic_body(
                     history.last().map(|(t, _)| *t),
                 )
             };
-            let display = display_text(&payload);
-            let is_json = json_view::try_pretty_json(&payload).is_some();
+            // Hex uses live raw bytes at tip; scrubbed history is string → its UTF-8 bytes.
+            let hex_bytes: Vec<u8> = if scrubbing {
+                payload.as_bytes().to_vec()
+            } else {
+                live_bytes
+            };
+            let show_utf8 = if scrubbing { true } else { live_utf8 };
+            let display = if search.view_hex {
+                hex_view::format_hex_dump(&hex_bytes)
+            } else {
+                display_text(&payload)
+            };
+            let is_json = !search.view_hex && json_view::try_pretty_json(&payload).is_some();
             let now = Instant::now();
-            // Change flash only tracks live tip (avoid flashing while scrubbing).
-            if !scrubbing {
+            // Change flash only tracks live tip Value mode (avoid flashing while scrubbing/hex).
+            if !scrubbing && !search.view_hex {
                 search.note_display(profile_id, topic, &display, now);
             }
-            let change_bg = if scrubbing {
+            let change_bg = if scrubbing || search.view_hex {
                 Color32::TRANSPARENT
             } else {
                 change_flash_bg(search.change_flash_until, now)
@@ -512,7 +574,19 @@ fn draw_topic_body(
                 draw_mqtt5_props(ui, &mqtt5_props);
                 ui.add_space(4.0);
             }
-            draw_search_bar(ui, icons, search, &display);
+            ui.horizontal(|ui| {
+                ui.selectable_value(&mut search.view_hex, false, "Value");
+                ui.selectable_value(&mut search.view_hex, true, "Hex");
+            });
+            if !search.view_hex && !show_utf8 {
+                ui.colored_label(
+                    Color32::from_rgb(220, 140, 100),
+                    "Binary payload — switch to Hex for raw bytes.",
+                );
+            }
+            if !search.view_hex {
+                draw_search_bar(ui, icons, search, &display);
+            }
             ui.add_space(4.0);
             draw_searchable_body(
                 ui,
@@ -910,7 +984,9 @@ fn draw_searchable_body(
         pro::has(Entitlement::HistoryScrubber) && history_len > 1 && payload_scrub.is_some();
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 8.0;
-        if is_json {
+        if search.view_hex {
+            ui.label(RichText::new("Hex").small().weak());
+        } else if is_json {
             ui.label(RichText::new("JSON").small().weak());
         } else {
             ui.label(RichText::new("Value").small().weak());
