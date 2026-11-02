@@ -11,7 +11,10 @@ use crate::mqtt::publish::{MqttMsgProps, Qos as AppQos};
 use crate::mqtt::session::SessionState;
 use crate::mqtt::settings::WIRE_MAX_PACKET;
 use eframe::egui::Context;
-use rumqttc::{Client as ClientV311, Event as EventV311, MqttOptions as OptsV311, Packet as PacketV311, Transport};
+use rumqttc::{
+    Client as ClientV311, Event as EventV311, LastWill as LastWillV311, MqttOptions as OptsV311,
+    Packet as PacketV311, Transport,
+};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Sender;
 use std::sync::Arc;
@@ -35,6 +38,10 @@ pub enum BrokerEvent {
         generation: u64,
         topic: String,
         payload: String,
+        /// Original wire bytes (empty when oversized-skipped).
+        payload_raw: Vec<u8>,
+        /// Whether `payload_raw` was valid UTF-8 (false → prefer Hex view).
+        payload_utf8: bool,
         /// MQTT RETAIN flag from the Publish packet.
         retain: bool,
         /// Raw publish payload length in bytes (before soft-limit placeholder).
@@ -208,6 +215,9 @@ fn spawn_v311(
     if !profile.username.is_empty() {
         opts.set_credentials(&profile.username, &profile.password);
     }
+    if let Some(will) = last_will_v311(profile) {
+        opts.set_last_will(will);
+    }
     opts.set_transport(build_transport(profile)?);
 
     let (client, mut connection) = ClientV311::new(opts, 1024);
@@ -373,6 +383,9 @@ fn spawn_v5(
     opts.set_pending_throttle(Duration::from_secs(1));
     if !profile.username.is_empty() {
         opts.set_credentials(&profile.username, &profile.password);
+    }
+    if let Some(will) = last_will_v5(profile) {
+        opts.set_last_will(will);
     }
     opts.set_transport(build_transport(profile)?);
 
@@ -580,19 +593,29 @@ fn handle_publish_bytes(
     props: MqttMsgProps,
 ) {
     let raw_len = payload_bytes.len();
-    let (payload, skipped) = if raw_len > soft_max {
+    let (payload, payload_raw, payload_utf8, skipped) = if raw_len > soft_max {
         let size_kb = (raw_len + 1023) / 1024;
         let placeholder =
             format!("[skipped oversized payload: {size_kb} KB > {soft_kb} KB limit]");
-        (placeholder, true)
+        (placeholder, Vec::new(), true, true)
     } else {
-        (String::from_utf8_lossy(payload_bytes).into_owned(), false)
+        match std::str::from_utf8(payload_bytes) {
+            Ok(s) => (s.to_string(), payload_bytes.to_vec(), true, false),
+            Err(_) => (
+                String::from_utf8_lossy(payload_bytes).into_owned(),
+                payload_bytes.to_vec(),
+                false,
+                false,
+            ),
+        }
     };
     let _ = tx.send(BrokerEvent::Message {
         profile_id: profile_id.to_string(),
         generation,
         topic: topic.clone(),
         payload,
+        payload_raw,
+        payload_utf8,
         retain,
         payload_bytes: raw_len,
         props,
@@ -607,6 +630,31 @@ fn handle_publish_bytes(
             ),
         });
     }
+}
+
+fn last_will_v311(profile: &ConnectionProfile) -> Option<LastWillV311> {
+    if !profile.will_active() {
+        return None;
+    }
+    Some(LastWillV311::new(
+        profile.will_topic.trim(),
+        profile.will_payload.as_bytes().to_vec(),
+        to_qos_v311(profile.will_qos),
+        profile.will_retain,
+    ))
+}
+
+fn last_will_v5(profile: &ConnectionProfile) -> Option<rumqttc::v5::mqttbytes::v5::LastWill> {
+    if !profile.will_active() {
+        return None;
+    }
+    Some(rumqttc::v5::mqttbytes::v5::LastWill::new(
+        profile.will_topic.trim(),
+        profile.will_payload.as_bytes().to_vec(),
+        to_qos_v5(profile.will_qos),
+        profile.will_retain,
+        None,
+    ))
 }
 
 fn emit_connecting(
