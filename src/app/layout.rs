@@ -585,8 +585,11 @@ impl MqttMonitorApp {
         let mut payload_rect = None;
 
         if self.panels.profiles {
-            // Width driven by settings + Middle-layer grip (built-in SidePanel resize sits on
-            // Background and was covered by the profiles_front overlay — ungrabbable).
+            // exact_width from settings (desired) — do NOT copy response.rect back into settings.
+            // egui SidePanel clamps display with at_most(available) then stores that rect in
+            // PanelState; with default_width that permanently stuck panels after narrow→wide.
+            // exact_width re-asserts the desired size each frame so expand restores usable width.
+            // Built-in resize is unusable under Middle overlays — Foreground grip updates settings.
             let r = egui::SidePanel::left("profiles")
                 .exact_width(self.settings.profiles_panel_width)
                 .show_separator_line(false)
@@ -783,6 +786,7 @@ impl MqttMonitorApp {
                     );
                 });
             });
+            // Grip owns desired width — never sync from layout-clamped rect.
             if side_panel_resize_grip(
                 ctx,
                 "profiles_resize",
@@ -1099,7 +1103,7 @@ enum SideResizeEdge {
     Left,
 }
 
-/// Grab strip width for Middle-layer side-panel resize (egui default is 5).
+/// Grab strip width for Foreground-layer side-panel resize (egui default is 5).
 fn side_resize_grab_w(ctx: &egui::Context) -> f32 {
     ctx.style()
         .interaction
@@ -1108,7 +1112,7 @@ fn side_resize_grab_w(ctx: &egui::Context) -> f32 {
 }
 
 /// Paint a side panel's real UI above the central column (fixes overlap z-order).
-/// Insets the content away from [`SideResizeEdge`] so the Middle resize grip stays hittable.
+/// Insets content away from [`SideResizeEdge`] so the Foreground resize grip stays hittable.
 fn side_panel_overlay(
     ctx: &egui::Context,
     overlay_id: impl Into<egui::Id>,
@@ -1146,8 +1150,8 @@ fn side_panel_overlay(
         });
 }
 
-/// Middle-layer resize grip + separator paint for a side panel edge.
-/// Returns true when `width` changed enough to persist.
+/// Foreground-layer resize grip + separator for a side panel edge.
+/// Returns true when `width` changed enough to persist (user drag only).
 fn side_panel_resize_grip(
     ctx: &egui::Context,
     grip_id: impl Into<egui::Id>,
