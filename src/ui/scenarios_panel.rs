@@ -250,7 +250,7 @@ fn paint_left(
     ui.label(RichText::new("Scenarios").color(CHROME_MUTED()).small());
 
     egui::ScrollArea::vertical()
-        .id_salt("scenarios_runner_list")
+        .id_salt("scenarios_list")
         .auto_shrink([false, false])
         .show(ui, |ui| {
             let rows: Vec<(String, String, bool)> = client
