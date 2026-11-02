@@ -444,6 +444,8 @@ fn body(
         );
     }
 
+    // Opaque toolbar strip so any 1px scroll bleed cannot show through chrome.
+    egui::Frame::NONE.fill(CHROME_BG()).show(ui, |ui| {
     // Toolbar — Start/Stop control the CSV tape while playback is active.
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 6.0;
@@ -685,6 +687,7 @@ fn body(
             let _ = crate::ui::native_dialog::poll_message(ui.ctx(), import_err_dlg);
         });
     });
+    }); // opaque toolbar Frame
 
     ui.add_space(4.0);
 
@@ -694,8 +697,8 @@ fn body(
     let wrap = ui.available_width() < WRAP_WIDTH;
 
     let sheet = |ui: &mut egui::Ui| {
-        // Keep sheet content under the panel header/toolbar (row cells also intersect).
-        ui.set_clip_rect(ui.clip_rect().intersect(ui.max_rect()));
+        // Never expand clip past the ScrollArea viewport (row cells also shrink).
+        ui.shrink_clip_rect(ui.max_rect());
         ui.spacing_mut().item_spacing.y = ROW_GAP;
         // Match row frame horizontal margin so flex cols fill the real inner width.
         let inner_w = (ui.available_width() - 4.0).max(0.0);
@@ -742,11 +745,18 @@ fn body(
         client.prune_selection();
     };
 
+    // Optional one-shot scroll for clip screenshots: TOPICBENCH_SIM_SCROLL_Y=120
+    let debug_scroll_y = std::env::var("TOPICBENCH_SIM_SCROLL_Y")
+        .ok()
+        .and_then(|s| s.parse::<f32>().ok());
     if scroll_both {
-        egui::ScrollArea::both()
+        let mut sa = egui::ScrollArea::both()
             .auto_shrink([false, false])
-            .id_salt("sim_sheet_scroll")
-            .show(ui, sheet);
+            .id_salt("sim_sheet_scroll");
+        if let Some(y) = debug_scroll_y {
+            sa = sa.vertical_scroll_offset(y);
+        }
+        sa.show(ui, sheet);
     } else {
         // Docked: hug content vertically so Topic tree sits right under the list
         // (auto_shrink y=false left a tall empty band after the last row).
@@ -1032,9 +1042,10 @@ fn draw_row(
             let line_w = ui.available_width();
             let (line_rect, _) =
                 ui.allocate_exact_size(Vec2::new(line_w, ROW_H), egui::Sense::hover());
+            // Capture ScrollArea clip before child UiBuilder (max_rect alone would replace it).
+            let parent_clip = ui.clip_rect();
             ui.allocate_new_ui(egui::UiBuilder::new().max_rect(line_rect), |ui| {
-                // Intersect so ScrollArea still clips rows under the header/toolbar.
-                ui.set_clip_rect(ui.clip_rect().intersect(line_rect));
+                ui.set_clip_rect(parent_clip.intersect(line_rect));
                 ui.spacing_mut().item_spacing.x = COL_GAP;
                 ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
                     draw_gutter(ui, client, ids, &row.id, selected, mods);
@@ -1069,9 +1080,10 @@ fn draw_row(
             let line_w = ui.available_width();
             let (line_rect, _) =
                 ui.allocate_exact_size(Vec2::new(line_w, ROW_H), egui::Sense::hover());
+            // Capture ScrollArea clip before child UiBuilder (max_rect alone would replace it).
+            let parent_clip = ui.clip_rect();
             ui.allocate_new_ui(egui::UiBuilder::new().max_rect(line_rect), |ui| {
-                // Intersect so ScrollArea still clips rows under the header/toolbar.
-                ui.set_clip_rect(ui.clip_rect().intersect(line_rect));
+                ui.set_clip_rect(parent_clip.intersect(line_rect));
                 ui.spacing_mut().item_spacing.x = COL_GAP;
                 ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
                     draw_gutter(ui, client, ids, &row.id, selected, mods);
@@ -1356,8 +1368,9 @@ fn draw_value_cell(
     } else {
         CHROME_TEXT()
     };
+    let parent_clip = ui.clip_rect();
     ui.allocate_new_ui(egui::UiBuilder::new().max_rect(rect), |ui| {
-        ui.set_clip_rect(ui.clip_rect().intersect(rect));
+        ui.set_clip_rect(parent_clip.intersect(rect));
         ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
             let resp = ui.add(
                 egui::Label::new(RichText::new(&val).monospace().color(color))
@@ -1420,8 +1433,9 @@ fn draw_settings_cell(
 ) {
     // Exact clipped band — Constant ±% (and friends) cannot grow past COL_SETTINGS.
     let (rect, _) = ui.allocate_exact_size(Vec2::new(COL_SETTINGS, ROW_H), egui::Sense::hover());
+    let parent_clip = ui.clip_rect();
     ui.allocate_new_ui(egui::UiBuilder::new().max_rect(rect), |ui| {
-        ui.set_clip_rect(ui.clip_rect().intersect(rect));
+        ui.set_clip_rect(parent_clip.intersect(rect));
         // Parent may be right_to_left (trash pin) — force LTR so slots stay A→D.
         ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
             ui.spacing_mut().item_spacing.x = SET_GAP;
@@ -1446,8 +1460,9 @@ fn pin_settings_and_trash(
         .max(COL_SETTINGS + COL_DELETE + COL_GAP);
     // Exact rect so a fat Constant slider cannot expand past the row's right edge.
     let (rect, _) = ui.allocate_exact_size(Vec2::new(rem, ROW_H), egui::Sense::hover());
+    let parent_clip = ui.clip_rect();
     ui.allocate_new_ui(egui::UiBuilder::new().max_rect(rect), |ui| {
-        ui.set_clip_rect(ui.clip_rect().intersect(rect));
+        ui.set_clip_rect(parent_clip.intersect(rect));
         ui.spacing_mut().item_spacing.x = COL_GAP;
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             draw_delete_cell(ui, icons, client, id, status);
@@ -1461,8 +1476,9 @@ fn pin_settings_and_trash(
 /// One Settings column slot — exact clipped width so values share one vertical column.
 fn settings_slot(ui: &mut egui::Ui, width: f32, add_contents: impl FnOnce(&mut egui::Ui)) {
     let (rect, _) = ui.allocate_exact_size(Vec2::new(width, ROW_H), egui::Sense::hover());
+    let parent_clip = ui.clip_rect();
     ui.allocate_new_ui(egui::UiBuilder::new().max_rect(rect), |ui| {
-        ui.set_clip_rect(ui.clip_rect().intersect(rect));
+        ui.set_clip_rect(parent_clip.intersect(rect));
         ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
             ui.spacing_mut().item_spacing.x = 3.0;
             add_contents(ui);
