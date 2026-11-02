@@ -149,6 +149,25 @@ impl ScenarioStep {
     }
 }
 
+/// Named folder for organizing scenarios (empty `group_id` on a row = Ungrouped).
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ScenarioGroup {
+    #[serde(default)]
+    pub id: String,
+    #[serde(default)]
+    pub name: String,
+}
+
+/// DnD / reorder placement for one scenario.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ScenarioPlacement {
+    pub id: String,
+    #[serde(default)]
+    pub group_id: String,
+    #[serde(default)]
+    pub sort: i64,
+}
+
 /// One scenario definition from the sidecar.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct ScenarioRow {
@@ -159,6 +178,12 @@ pub struct ScenarioRow {
     /// Legacy scenario-level profile (Pro migrates onto steps; not sent on upsert).
     #[serde(default, skip_serializing)]
     pub profile: String,
+    /// Owning group id; empty = Ungrouped.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub group_id: String,
+    /// Order within the group (and among ungrouped); lower first.
+    #[serde(default)]
+    pub sort: i64,
     #[serde(default, rename = "loop")]
     pub loop_: bool,
     #[serde(default)]
@@ -198,6 +223,7 @@ impl ScenarioStatus {
 #[derive(Clone, Default)]
 struct SharedSnap {
     rows: Vec<ScenarioRow>,
+    groups: Vec<ScenarioGroup>,
     statuses: Vec<ScenarioStatus>,
     sidecar_up: bool,
     last_error: Option<String>,
@@ -222,11 +248,14 @@ enum ScenarioCmd {
 /// Cached list + selection for the Scenarios panel (UI-facing).
 pub struct ScenarioClientState {
     pub rows: Vec<ScenarioRow>,
+    pub groups: Vec<ScenarioGroup>,
     pub statuses: Vec<ScenarioStatus>,
     pub last_error: Option<String>,
     pub sidecar_up: bool,
-    /// Selected runner id (left list).
+    /// Selected scenario id (left list); mutually exclusive with [`Self::selected_group_id`].
     pub selected_id: Option<String>,
+    /// Selected group id; `Some("")` = Ungrouped, `Some(id)` = named group.
+    pub selected_group_id: Option<String>,
     /// Selected step index within the selected scenario (right editor).
     pub selected_step: Option<usize>,
     pub toolbar_arm_at: Option<Instant>,
@@ -259,10 +288,12 @@ impl ScenarioClientState {
             .spawn(move || worker_loop(cmd_rx, shared_t, base));
         Self {
             rows: Vec::new(),
+            groups: Vec::new(),
             statuses: Vec::new(),
             last_error: None,
             sidecar_up: false,
             selected_id: None,
+            selected_group_id: None,
             selected_step: None,
             toolbar_arm_at: None,
             last_fetch: None,
@@ -311,9 +342,32 @@ impl ScenarioClientState {
         self.rows.iter_mut().find(|r| r.id == id)
     }
 
-    pub fn select(&mut self, id: String) {
+    /// Select a scenario; clears group selection.
+    pub fn select_scenario(&mut self, id: String) {
         self.selected_id = Some(id);
+        self.selected_group_id = None;
         self.selected_step = None;
+    }
+
+    /// Select a group (`""` = Ungrouped); clears scenario/step selection.
+    pub fn select_group(&mut self, group_id: String) {
+        self.selected_group_id = Some(group_id);
+        self.selected_id = None;
+        self.selected_step = None;
+    }
+
+    /// Alias kept for older call sites.
+    pub fn select(&mut self, id: String) {
+        self.select_scenario(id);
+    }
+
+    /// Wire id for group transport (`ungrouped` when empty).
+    pub fn group_wire_id(group_id: &str) -> &str {
+        if group_id.is_empty() {
+            "ungrouped"
+        } else {
+            group_id
+        }
     }
 
     pub fn poll_if_due(&mut self, force: bool) {
@@ -352,7 +406,7 @@ impl ScenarioClientState {
         } else {
             self.rows.push(row.clone());
         }
-        self.selected_id = Some(row.id.clone());
+        self.select_scenario(row.id.clone());
         self.poll_if_due(true);
         Ok(row)
     }
@@ -365,6 +419,92 @@ impl ScenarioClientState {
             self.selected_id = self.rows.first().map(|r| r.id.clone());
             self.selected_step = None;
         }
+        self.poll_if_due(true);
+        Ok(())
+    }
+
+    pub fn upsert_group(&mut self, id: Option<&str>, name: &str) -> Result<ScenarioGroup, String> {
+        let body = serde_json::json!({
+            "id": id.unwrap_or(""),
+            "name": name,
+        });
+        let v = self.http(
+            "PUT",
+            "/scenario/groups",
+            Some(serde_json::to_vec(&body).map_err(|e| e.to_string())?),
+        )?;
+        let g = v
+            .get("group")
+            .cloned()
+            .ok_or_else(|| "missing group in response".to_string())?;
+        let group: ScenarioGroup = serde_json::from_value(g).map_err(|e| e.to_string())?;
+        if let Some(slot) = self.groups.iter_mut().find(|x| x.id == group.id) {
+            *slot = group.clone();
+        } else {
+            self.groups.push(group.clone());
+        }
+        self.select_group(group.id.clone());
+        self.poll_if_due(true);
+        Ok(group)
+    }
+
+    pub fn delete_group(&mut self, id: &str) -> Result<(), String> {
+        let _ = self.http("DELETE", &format!("/scenario/groups/{id}"), None)?;
+        self.groups.retain(|g| g.id != id);
+        for r in &mut self.rows {
+            if r.group_id == id {
+                r.group_id.clear();
+            }
+        }
+        if self.selected_group_id.as_deref() == Some(id) {
+            self.selected_group_id = None;
+        }
+        self.poll_if_due(true);
+        Ok(())
+    }
+
+    pub fn start_group(&mut self, group_id: &str) -> Result<(), String> {
+        let wire = Self::group_wire_id(group_id);
+        let _ = self.http("POST", &format!("/scenario/groups/{wire}/start"), None)?;
+        self.poll_if_due(true);
+        Ok(())
+    }
+
+    pub fn pause_group(&mut self, group_id: &str) -> Result<(), String> {
+        let wire = Self::group_wire_id(group_id);
+        let _ = self.http("POST", &format!("/scenario/groups/{wire}/pause"), None)?;
+        self.poll_if_due(true);
+        Ok(())
+    }
+
+    pub fn resume_group(&mut self, group_id: &str) -> Result<(), String> {
+        let wire = Self::group_wire_id(group_id);
+        let _ = self.http("POST", &format!("/scenario/groups/{wire}/resume"), None)?;
+        self.poll_if_due(true);
+        Ok(())
+    }
+
+    pub fn stop_group(&mut self, group_id: &str) -> Result<(), String> {
+        let wire = Self::group_wire_id(group_id);
+        let _ = self.http("POST", &format!("/scenario/groups/{wire}/stop"), None)?;
+        self.poll_if_due(true);
+        Ok(())
+    }
+
+    pub fn reorder(
+        &mut self,
+        group_ids: Option<Vec<String>>,
+        placements: Vec<ScenarioPlacement>,
+    ) -> Result<(), String> {
+        let body = serde_json::json!({
+            "group_ids": group_ids,
+            "placements": placements,
+        });
+        let _ = self.http(
+            "POST",
+            "/scenario/reorder",
+            Some(serde_json::to_vec(&body).map_err(|e| e.to_string())?),
+        )?;
         self.poll_if_due(true);
         Ok(())
     }
@@ -399,15 +539,32 @@ impl ScenarioClientState {
         Ok(())
     }
 
-    pub fn import_mode(&mut self, json: &Value, mode: &str) -> Result<usize, String> {
-        let scenarios = parse_scenarios_array(json)?;
-        let mode = if mode.eq_ignore_ascii_case("merge") {
-            "merge"
-        } else {
-            "replace"
+    /// Import: `replace` | `merge` | `into_group` (+ optional group_id / group_name).
+    /// Body is the raw document (wrapped or bare array); sidecar parses it.
+    pub fn import_mode(
+        &mut self,
+        json: &Value,
+        mode: &str,
+        group_id: Option<&str>,
+        group_name: Option<&str>,
+    ) -> Result<usize, String> {
+        let mode = mode.trim().to_ascii_lowercase();
+        let mode = match mode.as_str() {
+            "merge" => "merge",
+            "into_group" => "into_group",
+            _ => "replace",
         };
-        let body = serde_json::to_vec(scenarios).map_err(|e| e.to_string())?;
-        let v = self.http("POST", &format!("/scenario/import?mode={mode}"), Some(body))?;
+        let mut path = format!("/scenario/import?mode={mode}");
+        if mode == "into_group" {
+            if let Some(id) = group_id.map(str::trim).filter(|s| !s.is_empty()) {
+                path.push_str(&format!("&group_id={}", query_escape(id)));
+            }
+            if let Some(name) = group_name.map(str::trim).filter(|s| !s.is_empty()) {
+                path.push_str(&format!("&group_name={}", query_escape(name)));
+            }
+        }
+        let body = serde_json::to_vec(json).map_err(|e| e.to_string())?;
+        let v = self.http("POST", &path, Some(body))?;
         if let Some(err) = v.get("error").and_then(|e| e.as_str()) {
             return Err(err.to_string());
         }
@@ -418,12 +575,20 @@ impl ScenarioClientState {
             .unwrap_or(0))
     }
 
+    /// Full wrapped `{ groups, scenarios }` document.
+    pub fn export_all(&mut self) -> Result<Value, String> {
+        self.http("GET", "/scenario/export", None)
+    }
+
+    /// One group (`""` / ungrouped → Ungrouped members only).
+    pub fn export_group(&mut self, group_id: &str) -> Result<Value, String> {
+        let wire = Self::group_wire_id(group_id);
+        self.http("GET", &format!("/scenario/export?group_id={}", query_escape(wire)), None)
+    }
+
+    /// Legacy: export everything (prefer [`Self::export_all`]).
     pub fn export(&mut self) -> Result<Value, String> {
-        let v = self.http("GET", "/scenario/export", None)?;
-        match parse_scenarios_array(&v) {
-            Ok(arr) => Ok(Value::Array(arr.to_vec())),
-            Err(_) => Err("export response was not a JSON array".into()),
-        }
+        self.export_all()
     }
 
     pub fn arm_toolbar_after_open(&mut self) {
@@ -452,18 +617,28 @@ impl ScenarioClientState {
         }
         self.last_gen = g.generation;
         self.rows = g.rows.clone();
+        self.groups = g.groups.clone();
         self.statuses = g.statuses.clone();
         self.sidecar_up = g.sidecar_up;
         self.last_error = g.last_error.clone();
         drop(g);
-        // Keep selection if still present.
+        // Keep selection if still present (group XOR scenario).
+        if let Some(gid) = &self.selected_group_id {
+            let ok = gid.is_empty() || self.groups.iter().any(|g| g.id == *gid);
+            if !ok {
+                self.selected_group_id = None;
+            }
+        }
         if let Some(id) = &self.selected_id {
             if !self.rows.iter().any(|r| r.id == *id) {
-                self.selected_id = self.rows.first().map(|r| r.id.clone());
+                self.selected_id = None;
                 self.selected_step = None;
             }
-        } else if let Some(first) = self.rows.first() {
-            self.selected_id = Some(first.id.clone());
+        }
+        if self.selected_id.is_none() && self.selected_group_id.is_none() {
+            if let Some(first) = self.rows.first() {
+                self.selected_id = Some(first.id.clone());
+            }
         }
     }
 
@@ -502,12 +677,13 @@ fn worker_loop(rx: Receiver<ScenarioCmd>, shared: Arc<Mutex<SharedSnap>>, base: 
                 }
                 while let Ok(ScenarioCmd::Refresh { .. }) = rx.try_recv() {}
                 match fetch_list(&base, &mut token) {
-                    Ok((rows, statuses)) => {
+                    Ok((rows, groups, statuses)) => {
                         let ctx = {
                             let Ok(mut g) = shared.lock() else {
                                 continue;
                             };
                             g.rows = rows;
+                            g.groups = groups;
                             g.statuses = statuses;
                             g.sidecar_up = true;
                             g.last_error = None;
@@ -581,15 +757,18 @@ fn worker_loop(rx: Receiver<ScenarioCmd>, shared: Arc<Mutex<SharedSnap>>, base: 
 fn fetch_list(
     base: &str,
     token: &mut Option<String>,
-) -> Result<(Vec<ScenarioRow>, Vec<ScenarioStatus>), String> {
+) -> Result<(Vec<ScenarioRow>, Vec<ScenarioGroup>, Vec<ScenarioStatus>), String> {
     let v = http_call(base, token, "GET", "/scenario", None)?;
     let rows: Vec<ScenarioRow> =
         serde_json::from_value(v.get("scenarios").cloned().unwrap_or(Value::Array(vec![])))
             .map_err(|e| format!("scenarios: {e}"))?;
+    let groups: Vec<ScenarioGroup> =
+        serde_json::from_value(v.get("groups").cloned().unwrap_or(Value::Array(vec![])))
+            .map_err(|e| format!("groups: {e}"))?;
     let statuses: Vec<ScenarioStatus> =
         serde_json::from_value(v.get("statuses").cloned().unwrap_or(Value::Array(vec![])))
             .map_err(|e| format!("statuses: {e}"))?;
-    Ok((rows, statuses))
+    Ok((rows, groups, statuses))
 }
 
 fn read_token_cached(token: &mut Option<String>) -> Result<String, String> {
@@ -700,6 +879,30 @@ pub fn parse_scenarios_array(json: &Value) -> Result<&[Value], String> {
     ))
 }
 
+/// Groups from a wrapped document (`groups` key); bare arrays → none.
+pub fn parse_groups_array(json: &Value) -> Result<Vec<ScenarioGroup>, String> {
+    let Some(obj) = json.as_object() else {
+        return Ok(Vec::new());
+    };
+    let Some(arr) = obj.get("groups").and_then(|x| x.as_array()) else {
+        return Ok(Vec::new());
+    };
+    serde_json::from_value(Value::Array(arr.clone())).map_err(|e| format!("groups: {e}"))
+}
+
+fn query_escape(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() * 3);
+    for b in s.bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(b as char);
+            }
+            _ => out.push_str(&format!("%{b:02X}")),
+        }
+    }
+    out
+}
+
 fn token_path() -> PathBuf {
     crate::mqtt::paths::config_file("mcp-token")
 }
@@ -710,6 +913,8 @@ pub fn blank_scenario(default_profile: &str) -> ScenarioRow {
         id: String::new(),
         name: "New scenario".into(),
         profile: String::new(),
+        group_id: String::new(),
+        sort: 0,
         loop_: false,
         steps: vec![blank_step("publish", default_profile)],
         auto_start: false,
@@ -770,6 +975,21 @@ mod tests {
             2
         );
         assert!(parse_scenarios_array(&json!({ "other": [] })).is_err());
+        assert!(parse_groups_array(&json!([{ "id": "a" }])).unwrap().is_empty());
+        let groups = parse_groups_array(&json!({
+            "groups": [{ "id": "g1", "name": "Lab" }],
+            "scenarios": []
+        }))
+        .unwrap();
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].id, "g1");
+    }
+
+    #[test]
+    fn blank_has_group_defaults() {
+        let s = blank_scenario("p1");
+        assert!(s.group_id.is_empty());
+        assert_eq!(s.sort, 0);
     }
 
     #[test]
