@@ -151,12 +151,30 @@ fn paint_body(
             egui::vec2(SPLIT_GRAB, avail.y),
             Sense::click_and_drag(),
         );
+        let split_resp = split_resp.on_hover_cursor(CursorIcon::ResizeHorizontal);
+        if split_resp.hovered() || split_resp.dragged() {
+            ui.painter().rect_filled(
+                split_rect,
+                0.0,
+                CHROME_HOVER().gamma_multiply(0.55),
+            );
+        }
         ui.painter().vline(
             split_rect.center().x,
             split_rect.y_range(),
-            egui::Stroke::new(1.0, CHROME_SEP()),
+            egui::Stroke::new(
+                if split_resp.hovered() || split_resp.dragged() {
+                    2.0
+                } else {
+                    1.0
+                },
+                if split_resp.hovered() || split_resp.dragged() {
+                    CHROME_ACCENT_BORDER()
+                } else {
+                    CHROME_SEP()
+                },
+            ),
         );
-        let split_resp = split_resp.on_hover_cursor(CursorIcon::ResizeHorizontal);
         if split_resp.dragged() {
             let next = AppSettings::clamp_scenarios_left_width(
                 *left_width + split_resp.drag_delta().x,
