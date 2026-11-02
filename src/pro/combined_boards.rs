@@ -14,8 +14,31 @@ use std::fs;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
-/// Ring size for board display buffers (≈10 min at 1 Hz) — matches sticky Graph.
-const HISTORY_CAP: usize = 600;
+/// Safety ceiling per Combined series buffer (≈1h+ at 1–2 Hz).
+/// Old 600 ≈10 min @1 Hz: dense series truncated mid-window while slower
+/// ones still spanned a 15 min X domain. View filter paints the timeline;
+/// this ring must be deep enough for every member series to fill it.
+const HISTORY_CAP: usize = 8_000;
+/// Retain up to the longest fixed timeline (+slack) so 1m→15m→1h still has data.
+const TIME_TRIM_SLACK: Duration = Duration::from_secs(5);
+
+/// Drop samples older than 1h (+slack), then count-cap. Independent of the
+/// current view filter so widening the timeline does not lose retained history.
+fn trim_board_buffer(buf: &mut VecDeque<HistorySample>) {
+    if let Some(span) = CombinedTimeRange::Hour1.max_span() {
+        if let Some(tip) = buf.back().map(|s| s.at) {
+            let keep_from = tip
+                .checked_sub(span.saturating_add(TIME_TRIM_SLACK))
+                .unwrap_or(tip);
+            while buf.front().is_some_and(|s| s.at < keep_from) {
+                buf.pop_front();
+            }
+        }
+    }
+    while buf.len() > HISTORY_CAP {
+        buf.pop_front();
+    }
+}
 
 const SESSION_FILE: &str = "combined_boards.json";
 const LIBRARY_FILE: &str = "combined_boards_library.json";
@@ -504,9 +527,7 @@ impl CombinedBoardsStore {
             for s in hist {
                 buf.push_back(s.clone());
             }
-            while buf.len() > HISTORY_CAP {
-                buf.pop_front();
-            }
+            trim_board_buffer(&mut buf);
         }
         board.buffers.insert(key, buf);
         self.last_focused_id = Some(board_id.to_string());
@@ -666,10 +687,8 @@ impl CombinedBoardsStore {
                         payload: extracted,
                         numeric,
                     });
-                    while buf.len() > HISTORY_CAP {
-                        buf.pop_front();
-                    }
                 }
+                trim_board_buffer(buf);
             }
         }
     }
@@ -739,6 +758,43 @@ mod tests {
         let now = Instant::now();
         let c = CombinedTimeRange::Min5.cutoff(now).unwrap();
         assert_eq!(now.saturating_duration_since(c), Duration::from_secs(5 * 60));
+    }
+
+    /// Fast 1 Hz series must retain ≥15 min (old 600-cap ≈10 min left dense series mid-window).
+    #[test]
+    fn fifteen_min_board_keeps_one_hz_span() {
+        let mut store = CombinedBoardsStore::default();
+        let id = store.create_board(true);
+        store.add_series_to(&id, "p", "N", "sim/uniform", None);
+        store.get_mut(&id).unwrap().time_range = CombinedTimeRange::Min15;
+
+        let tip = Instant::now();
+        let start = tip
+            .checked_sub(Duration::from_secs(20 * 60))
+            .expect("clock has 20 min of Instant headroom");
+        let samples: Vec<(Instant, String)> = (0..(20 * 60))
+            .map(|i| (start + Duration::from_secs(i), format!("{i}")))
+            .collect();
+        for chunk in samples.chunks(25) {
+            store.on_message_samples("p", "N", "sim/uniform", chunk);
+        }
+
+        let board = store.get(&id).unwrap();
+        let key = CombinedSeriesRef::key("p", "sim/uniform");
+        let buf = board.buffers.get(&key).expect("buffer");
+        assert!(!buf.is_empty());
+        let span = buf
+            .back()
+            .unwrap()
+            .at
+            .saturating_duration_since(buf.front().unwrap().at);
+        assert!(
+            span >= Duration::from_secs(15 * 60),
+            "expected ≥15 min retained, got {span:?} (len={})",
+            buf.len()
+        );
+        // Retention is 1h-based; a 20 min feed should survive intact.
+        assert_eq!(buf.len(), 20 * 60);
     }
 
     #[test]
