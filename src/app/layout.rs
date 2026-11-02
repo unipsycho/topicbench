@@ -213,17 +213,25 @@ impl MqttMonitorApp {
             );
             let bm_tip = shortcuts::tip("Bookmarks", "Ctrl+Shift+J");
             let cr_tip = shortcuts::tip("Color Rules", "Ctrl+Shift+C");
-            let names = ["data_table", "bookmarks", "color_rules"];
-            let labels = ["Simulate", "Book-\nmarks", "Color\nRules"];
-            let tips = [tip.as_str(), bm_tip.as_str(), cr_tip.as_str()];
+            let sc_tip =
+                "Scenarios — authored multi-step scripts (publish / wait time / wait value)";
+            let names = [
+                "data_table",
+                "bookmarks",
+                "color_rules",
+                "clipboard_checklist",
+            ];
+            let labels = ["Simulate", "Book-\nmarks", "Color\nRules", "Scen-\narios"];
+            let tips = [tip.as_str(), bm_tip.as_str(), cr_tip.as_str(), sc_tip];
             let selected = [
                 self.simulation_open,
                 self.bookmarks_open,
                 self.color_rules_open,
+                self.scenarios_open,
             ];
-            let mut clicks = [false; 3];
+            let mut clicks = [false; 4];
             if mode == SectionMode::Full {
-                for i in 0..3 {
+                for i in 0..4 {
                     clicks[i] = self
                         .icons
                         .command(ui, names[i], labels[i], selected[i], tips[i])
@@ -231,7 +239,7 @@ impl MqttMonitorApp {
                 }
             } else {
                 // Stack like Profiles/Panels — no extra Pro-only gaps.
-                ribbon_compact_columns(ui, 3, |i, ui| {
+                ribbon_compact_columns(ui, 4, |i, ui| {
                     clicks[i] = self
                         .icons
                         .command_compact(ui, names[i], selected[i], tips[i])
@@ -252,6 +260,13 @@ impl MqttMonitorApp {
             if clicks[2] {
                 self.color_rules_open = !self.color_rules_open;
                 self.persist_panels();
+            }
+            if clicks[3] {
+                self.scenarios_open = !self.scenarios_open;
+                self.persist_panels();
+                if self.scenarios_open {
+                    self.scenario_client.poll_if_due(true);
+                }
             }
         });
     }
@@ -554,6 +569,12 @@ impl MqttMonitorApp {
                 ui.label(RichText::new("·").color(CHROME_MUTED()));
                 ui.add_space(12.0);
                 ui.label(RichText::new(sim_label).color(CHROME_CAPTION()));
+            }
+            if let Some(scn_label) = self.scenario_client.status_strip_label() {
+                ui.add_space(12.0);
+                ui.label(RichText::new("·").color(CHROME_MUTED()));
+                ui.add_space(12.0);
+                ui.label(RichText::new(scn_label).color(CHROME_CAPTION()));
             }
 
             let alpha = status_strip_fade_alpha(self.status_changed_at, Instant::now());
@@ -1043,6 +1064,47 @@ impl MqttMonitorApp {
         } else {
             self.color_rules_open = false;
             self.vp_seeds.color_rules = None;
+        }
+
+        if crate::pro::has(crate::pro::Entitlement::ScenarioPlayer) {
+            let profile_names: Vec<(String, String)> = self
+                .profiles
+                .ids_in_order()
+                .into_iter()
+                .filter_map(|id| {
+                    self.profiles
+                        .profiles
+                        .get(&id)
+                        .map(|p| (id, p.name.clone()))
+                })
+                .collect();
+            let was_open = self.scenarios_open;
+            if self.scenarios_open {
+                let seed = Self::vp_seed(
+                    &mut self.vp_seeds.scenarios,
+                    self.settings.window_scenarios,
+                    crate::mqtt::window_geom::WinGeom::size(960.0, 560.0),
+                );
+                crate::ui::scenarios_panel::draw_popup(
+                    ctx,
+                    &mut self.scenarios_open,
+                    &mut self.scenario_client,
+                    &profile_names,
+                    &self.icons,
+                    &mut self.status,
+                    seed,
+                    &mut self.settings.window_scenarios,
+                    &mut self.geometry_dirty,
+                );
+            } else {
+                self.vp_seeds.scenarios = None;
+            }
+            if self.scenarios_open != was_open {
+                self.persist_panels();
+            }
+        } else {
+            self.scenarios_open = false;
+            self.vp_seeds.scenarios = None;
         }
     }
 

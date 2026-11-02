@@ -139,6 +139,10 @@ pub struct MqttMonitorApp {
     /// Pro color rules.
     color_rules: crate::pro::color_rules::ColorRulesStore,
     color_rules_open: bool,
+    /// Pro Scenarios panel (authored step scripts).
+    scenarios_open: bool,
+    /// HTTP client for `topicbench-pro` `/scenario`.
+    scenario_client: crate::pro::scenario_client::ScenarioClientState,
     /// Pro live CSV recording (per-broker, tree header controls).
     recordings: crate::pro::recording::RecordingStore,
     /// Topic-tree Export scope modal open.
@@ -159,6 +163,7 @@ struct ViewportSeeds {
     simulation: Option<WinGeom>,
     bookmarks: Option<WinGeom>,
     color_rules: Option<WinGeom>,
+    scenarios: Option<WinGeom>,
     topic_trees: HashMap<String, WinGeom>,
     payload_pops: HashMap<String, WinGeom>,
     combined_boards: HashMap<String, WinGeom>,
@@ -219,6 +224,8 @@ impl MqttMonitorApp {
             || std::env::var_os("TOPICBENCH_OPEN_BOOKMARKS").is_some();
         let color_rules_open = settings.show_color_rules
             || std::env::var_os("TOPICBENCH_OPEN_COLOR_RULES").is_some();
+        let scenarios_open = settings.show_scenarios
+            || std::env::var_os("TOPICBENCH_OPEN_SCENARIOS").is_some();
         // Recreate pop-outs from last session (topic trees wait until brokers reconnect).
         let topic_tree_undocked: HashSet<String> =
             settings.topic_tree_undocked.iter().cloned().collect();
@@ -312,6 +319,8 @@ impl MqttMonitorApp {
             scroll_tree_to: None,
             color_rules: crate::pro::color_rules::ColorRulesStore::load(),
             color_rules_open,
+            scenarios_open,
+            scenario_client: crate::pro::scenario_client::ScenarioClientState::new(),
             recordings: crate::pro::recording::RecordingStore::default(),
             tree_export_open: false,
             tree_import: crate::ui::topic_tree_panel::TreeImportUi::load_recent(),
@@ -424,6 +433,13 @@ impl eframe::App for MqttMonitorApp {
                 ctx.request_repaint_after(std::time::Duration::from_millis(750));
             }
         }
+        if crate::pro::has(crate::pro::Entitlement::ScenarioPlayer) {
+            self.scenario_client.bind_egui_ctx(ctx);
+            self.scenario_client.poll_if_due(false);
+            if self.scenario_client.status_strip_label().is_some() {
+                ctx.request_repaint_after(std::time::Duration::from_millis(750));
+            }
+        }
         if let Some(fwd) = self.history_fwd.as_ref() {
             fwd.bind_egui_ctx(ctx);
         }
@@ -529,7 +545,8 @@ impl eframe::App for MqttMonitorApp {
             || self.shortcuts_open
             || self.update_modal_open
             || self.bookmarks_open
-            || self.color_rules_open;
+            || self.color_rules_open
+            || self.scenarios_open;
         crate::ui::hover_tip::set_block_hover_tips(ctx, block_tips);
         if block_tips {
             crate::ui::topic_tree_panel::dismiss_hover_tips(ctx);

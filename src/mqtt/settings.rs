@@ -157,6 +157,9 @@ pub struct AppSettings {
     /// Pro Color Rules OS window open/closed.
     #[serde(default)]
     pub show_color_rules: bool,
+    /// Pro Scenarios OS window open/closed.
+    #[serde(default)]
+    pub show_scenarios: bool,
     /// Live traffic panel scroll height (px); user-resizable.
     #[serde(default = "default_live_traffic_height")]
     pub live_traffic_height: f32,
@@ -208,6 +211,9 @@ pub struct AppSettings {
     /// Color Rules OS window geometry.
     #[serde(default)]
     pub window_color_rules: Option<WinGeom>,
+    /// Scenarios OS window geometry.
+    #[serde(default)]
+    pub window_scenarios: Option<WinGeom>,
     /// Per-broker Topic tree pop-out geometry (keyed by profile id).
     #[serde(default)]
     pub window_topic_trees: BTreeMap<String, WinGeom>,
@@ -296,6 +302,7 @@ impl Default for AppSettings {
             simulation_floating: true,
             show_bookmarks: false,
             show_color_rules: false,
+            show_scenarios: false,
             live_traffic_height: default_live_traffic_height(),
             search_query: String::new(),
             search_scope: SearchScope::All,
@@ -312,6 +319,7 @@ impl Default for AppSettings {
             window_simulation: None,
             window_bookmarks: None,
             window_color_rules: None,
+            window_scenarios: None,
             window_topic_trees: BTreeMap::new(),
             window_payload_popouts: BTreeMap::new(),
         }
@@ -469,10 +477,11 @@ impl AppSettings {
         self.simulation_floating = floating;
     }
 
-    /// Persist Bookmarks / Color Rules window open flags.
-    pub fn set_pro_windows(&mut self, bookmarks: bool, color_rules: bool) {
+    /// Persist Bookmarks / Color Rules / Scenarios window open flags.
+    pub fn set_pro_windows(&mut self, bookmarks: bool, color_rules: bool, scenarios: bool) {
         self.show_bookmarks = bookmarks;
         self.show_color_rules = color_rules;
+        self.show_scenarios = scenarios;
     }
 
     /// Snapshot topic-tree undocked brokers + payload pop-outs.
