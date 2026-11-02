@@ -105,6 +105,8 @@ const TRAFFIC_CAP: usize = 80;
 struct CoalescedMsg {
     generation: u64,
     payload: String,
+    payload_raw: Vec<u8>,
+    payload_utf8: bool,
     retain: bool,
     props: MqttMsgProps,
     count: u64,
@@ -160,6 +162,8 @@ impl InboxData {
                         entry.generation = msg.generation;
                     }
                     entry.payload = msg.payload;
+                    entry.payload_raw = msg.payload_raw;
+                    entry.payload_utf8 = msg.payload_utf8;
                     entry.retain = msg.retain;
                     entry.props = msg.props;
                     entry.count = entry.count.saturating_add(msg.count);
@@ -234,6 +238,8 @@ impl SharedInbox {
                 generation,
                 topic,
                 payload,
+                payload_raw,
+                payload_utf8,
                 retain,
                 payload_bytes,
                 props,
@@ -254,6 +260,8 @@ impl SharedInbox {
                 let entry = g.messages.entry(key).or_insert(CoalescedMsg {
                     generation,
                     payload: String::new(),
+                    payload_raw: Vec::new(),
+                    payload_utf8: true,
                     retain: false,
                     props: MqttMsgProps::default(),
                     count: 0,
@@ -282,6 +290,8 @@ impl SharedInbox {
                     }
                 }
                 entry.payload = payload;
+                entry.payload_raw = payload_raw;
+                entry.payload_utf8 = payload_utf8;
                 entry.retain = retain;
                 entry.props = props;
                 entry.count = entry.count.saturating_add(1);
@@ -618,6 +628,26 @@ impl SessionManager {
         Ok(())
     }
 
+    /// Clear a retained message on the broker (empty payload + retain, QoS 1).
+    /// On success, updates the local leaf to empty / not retained.
+    pub fn clear_retained(&mut self, profile_id: &str, topic: &str) -> Result<(), String> {
+        let topic = topic.trim();
+        if topic.is_empty() {
+            return Err("Topic is empty".into());
+        }
+        self.publish_live(
+            profile_id,
+            topic,
+            "",
+            crate::mqtt::publish::Qos::AtLeastOnce,
+            true,
+        )?;
+        if let Some(session) = self.open.get_mut(profile_id) {
+            let _ = session.topic_tree.mark_cleared_retained(topic);
+        }
+        Ok(())
+    }
+
     /// Apply coalesced inbox updates flushed by the background applier thread.
     ///
     /// `combined` receives the same timed samples as stickies so board series
@@ -703,6 +733,8 @@ impl SessionManager {
                     now,
                     msg.count,
                     Some(&msg.props),
+                    Some(msg.payload_raw.as_slice()),
+                    msg.payload_utf8,
                 );
                 session.traffic.push_front(TrafficLine {
                     topic: topic.clone(),

@@ -30,8 +30,12 @@ fn trim_payload_history(history: &mut VecDeque<(Instant, String)>) {
 pub struct TopicNode {
     /// Child segment → node.
     pub children: BTreeMap<String, TopicNode>,
-    /// Set when a full topic ending here has been seen.
+    /// Set when a full topic ending here has been seen (UTF-8 display / lossy).
     pub last_payload: Option<String>,
+    /// Raw last payload bytes (for Hex view). Empty vec after broker clear-retain.
+    pub last_payload_bytes: Option<Vec<u8>>,
+    /// False when `last_payload_bytes` were not valid UTF-8.
+    pub last_payload_utf8: bool,
     /// MQTT RETAIN flag from the last message on this leaf.
     pub last_retain: bool,
     /// MQTT 5 properties from the last message (empty when none / MQTT 3.1.1).
@@ -54,10 +58,11 @@ impl TopicNode {
 
     /// Insert/update `topic` with `payload` and MQTT `retain` flag.
     pub fn observe(&mut self, topic: &str, payload: &str, retain: bool, now: Instant) {
-        self.observe_n(topic, payload, retain, now, 1, None);
+        self.observe_n(topic, payload, retain, now, 1, None, None, true);
     }
 
     /// Like [`observe`], but bumps the leaf count by `n` (coalesced UI-frame batch).
+    #[allow(clippy::too_many_arguments)]
     pub fn observe_n(
         &mut self,
         topic: &str,
@@ -66,6 +71,8 @@ impl TopicNode {
         now: Instant,
         n: u64,
         props: Option<&MqttMsgProps>,
+        raw_bytes: Option<&[u8]>,
+        utf8: bool,
     ) {
         let flash = now + Duration::from_millis(FLASH_MS);
         let n = n.max(1);
@@ -75,12 +82,38 @@ impl TopicNode {
             node = node.children.entry((*part).to_string()).or_default();
             if i + 1 == parts.len() {
                 node.last_payload = Some(payload.to_string());
+                node.last_payload_bytes = Some(match raw_bytes {
+                    Some(b) => b.to_vec(),
+                    None => payload.as_bytes().to_vec(),
+                });
+                node.last_payload_utf8 = utf8;
                 node.last_retain = retain;
                 node.last_props = props.cloned().unwrap_or_default();
                 node.message_count = node.message_count.saturating_add(n);
                 node.flash_until = Some(flash);
             }
         }
+    }
+
+    /// After a successful broker clear-retain: empty payload, not retained.
+    pub fn mark_cleared_retained(&mut self, topic: &str) -> bool {
+        let Some(node) = self.node_at_mut(topic) else {
+            return false;
+        };
+        node.last_payload = Some(String::new());
+        node.last_payload_bytes = Some(Vec::new());
+        node.last_payload_utf8 = true;
+        node.last_retain = false;
+        true
+    }
+
+    /// Mutable walk to a topic path.
+    pub fn node_at_mut(&mut self, topic: &str) -> Option<&mut TopicNode> {
+        let mut node = self;
+        for part in topic.split('/').filter(|p| !p.is_empty()) {
+            node = node.children.get_mut(part)?;
+        }
+        Some(node)
     }
 
     /// Replay timed samples into the leaf payload history (Payload scrub / Pro forward).
@@ -119,6 +152,8 @@ impl TopicNode {
             let had = !self.children.is_empty();
             self.children.clear();
             self.last_payload = None;
+            self.last_payload_bytes = None;
+            self.last_payload_utf8 = true;
             self.last_retain = false;
             self.last_props = MqttMsgProps::default();
             self.message_count = 0;
@@ -148,6 +183,7 @@ impl TopicTree {
         self.root.observe(topic, payload, retain, now);
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn observe_n(
         &mut self,
         topic: &str,
@@ -156,13 +192,21 @@ impl TopicTree {
         now: Instant,
         n: u64,
         props: Option<&MqttMsgProps>,
+        raw_bytes: Option<&[u8]>,
+        utf8: bool,
     ) {
-        self.root.observe_n(topic, payload, retain, now, n, props);
+        self.root
+            .observe_n(topic, payload, retain, now, n, props, raw_bytes, utf8);
     }
 
     /// Drop a topic path and all descendants from the session display tree (not the broker).
     pub fn remove_hierarchy(&mut self, topic: &str) -> bool {
         self.root.remove_hierarchy(topic)
+    }
+
+    /// Local follow-up after clearing a retained message on the broker.
+    pub fn mark_cleared_retained(&mut self, topic: &str) -> bool {
+        self.root.mark_cleared_retained(topic)
     }
 }
 
@@ -195,15 +239,28 @@ mod tests {
     fn observe_n_keeps_latest_payload_and_count() {
         let mut tree = TopicTree::default();
         let now = Instant::now();
-        tree.observe_n("sensors/lab/temp", "21.5", false, now, 7, None);
+        tree.observe_n("sensors/lab/temp", "21.5", false, now, 7, None, None, true);
         let leaf = tree.root.node_at("sensors/lab/temp").unwrap();
         assert_eq!(leaf.last_payload.as_deref(), Some("21.5"));
         assert_eq!(leaf.message_count, 7);
-        tree.observe_n("sensors/lab/temp", "22.0", true, now, 3, None);
+        tree.observe_n("sensors/lab/temp", "22.0", true, now, 3, None, None, true);
         let leaf = tree.root.node_at("sensors/lab/temp").unwrap();
         assert_eq!(leaf.last_payload.as_deref(), Some("22.0"));
         assert!(leaf.last_retain);
         assert_eq!(leaf.message_count, 10);
+    }
+
+    #[test]
+    fn mark_cleared_retained_empties_leaf() {
+        let mut tree = TopicTree::default();
+        let now = Instant::now();
+        tree.observe("a/b", "keep", true, now);
+        assert!(tree.mark_cleared_retained("a/b"));
+        let leaf = tree.root.node_at("a/b").unwrap();
+        assert_eq!(leaf.last_payload.as_deref(), Some(""));
+        assert_eq!(leaf.last_payload_bytes.as_deref(), Some(&[][..]));
+        assert!(!leaf.last_retain);
+        assert!(leaf.last_payload_utf8);
     }
 
     #[test]
