@@ -413,6 +413,12 @@ fn paint_right(
     icons: &IconSet,
     status: &mut String,
 ) {
+    // Capture before any desired_width widgets expand the pane past the viewport
+    // (fixed Name/TextEdit widths were shoving step trash off-screen while leaving
+    // empty clipped space — grip/check stayed, trash got chopped).
+    let pane_w = ui.available_width().max(1.0);
+    ui.set_max_width(pane_w);
+
     let Some(sel_id) = client.selected_id.clone() else {
         ui.label(
             RichText::new("Select a scenario on the left to edit its steps.")
@@ -444,10 +450,12 @@ fn paint_right(
 
     ui.horizontal(|ui| {
         ui.label(RichText::new("Name").color(CHROME_MUTED()).small());
+        // Yield to pane width — never force the right column wider than the split.
+        let name_w = (pane_w - 88.0).clamp(48.0, 200.0);
         if ui
             .add(
                 egui::TextEdit::singleline(&mut draft.name)
-                    .desired_width(200.0)
+                    .desired_width(name_w)
                     .hint_text("Scenario name"),
             )
             .changed()
@@ -496,14 +504,15 @@ fn paint_right(
         // Inset the + glyph; match Publish padding so icon isn't flush to the chrome edge.
         ui.spacing_mut().button_padding = egui::vec2(12.0, 5.0);
         ui.spacing_mut().item_spacing.x = 8.0;
+        let add_min = egui::vec2(ADD_STEP_BTN.x.min(pane_w.max(72.0)), ADD_STEP_BTN.y);
         let add_btn = if let Some(tex) = icons.get("add_blue") {
             egui::Button::image_and_text(
                 egui::Image::new(tex).fit_to_exact_size(egui::vec2(ADD_STEP_ICON, ADD_STEP_ICON)),
                 "Add",
             )
-            .min_size(ADD_STEP_BTN)
+            .min_size(add_min)
         } else {
-            egui::Button::new("Add").min_size(ADD_STEP_BTN)
+            egui::Button::new("Add").min_size(add_min)
         };
         egui::menu::menu_custom_button(ui, add_btn, |ui| {
             ui.set_min_width(140.0);
@@ -529,9 +538,8 @@ fn paint_right(
     let mut pending_reorder: Option<(usize, usize, bool)> = None;
     let mut delete_step: Option<usize> = None;
 
-    // Full pane width — rows span the viewport so trash stays on the visible right edge
+    // Rows span the captured pane width so trash stays on the visible right edge
     // and text ellipsizes into the middle (never leave empty pane while chopping icons).
-    let pane_w = ui.max_rect().width().max(ui.available_width());
     egui::ScrollArea::vertical()
         .id_salt("scenarios_steps")
         .auto_shrink([false, false])
@@ -762,8 +770,9 @@ fn edit_step_fields(
     let mut dirty = false;
     ui.horizontal(|ui| {
         ui.label(RichText::new("Label").color(CHROME_MUTED()).small());
+        let lw = (ui.available_width() - 8.0).clamp(40.0, 140.0);
         if ui
-            .add(egui::TextEdit::singleline(step.name_mut()).desired_width(140.0))
+            .add(egui::TextEdit::singleline(step.name_mut()).desired_width(lw))
             .changed()
         {
             dirty = true;
@@ -781,7 +790,7 @@ fn edit_step_fields(
             dirty |= edit_step_profile(ui, profile, profiles_names, "pub_profile");
             ui.horizontal(|ui| {
                 ui.label(RichText::new("Topic").color(CHROME_MUTED()).small());
-                let tw = (ui.available_width() - 8.0).clamp(80.0, 280.0);
+                let tw = (ui.available_width() - 8.0).clamp(40.0, 280.0);
                 if ui
                     .add(egui::TextEdit::singleline(topic).desired_width(tw))
                     .changed()
@@ -791,7 +800,7 @@ fn edit_step_fields(
             });
             ui.horizontal(|ui| {
                 ui.label(RichText::new("Payload").color(CHROME_MUTED()).small());
-                let pw = (ui.available_width() - 8.0).max(80.0);
+                let pw = (ui.available_width() - 8.0).max(40.0);
                 if ui
                     .add(
                         egui::TextEdit::multiline(payload)
@@ -874,7 +883,7 @@ fn edit_step_fields(
             dirty |= edit_step_profile(ui, profile, profiles_names, "wv_profile");
             ui.horizontal(|ui| {
                 ui.label(RichText::new("Topic").color(CHROME_MUTED()).small());
-                let tw = (ui.available_width() * 0.55).clamp(80.0, 220.0);
+                let tw = (ui.available_width() * 0.55).clamp(40.0, 220.0);
                 if ui
                     .add(egui::TextEdit::singleline(topic).desired_width(tw))
                     .changed()
@@ -882,7 +891,7 @@ fn edit_step_fields(
                     dirty = true;
                 }
                 ui.label(RichText::new("Field").color(CHROME_MUTED()).small());
-                let fw = (ui.available_width() - 8.0).clamp(60.0, 120.0);
+                let fw = (ui.available_width() - 8.0).clamp(40.0, 120.0);
                 if ui
                     .add(
                         egui::TextEdit::singleline(field)
@@ -916,7 +925,7 @@ fn edit_step_fields(
             });
             ui.horizontal(|ui| {
                 ui.label(RichText::new("Value").color(CHROME_MUTED()).small());
-                let vw = (ui.available_width() - 8.0).clamp(80.0, 200.0);
+                let vw = (ui.available_width() - 8.0).clamp(40.0, 200.0);
                 if ui
                     .add(egui::TextEdit::singleline(value).desired_width(vw))
                     .changed()
@@ -999,7 +1008,7 @@ fn edit_step_profile(
                 .map(|(_, n)| n.clone())
                 .unwrap_or_else(|| profile.clone())
         };
-        let cw = (ui.available_width() - 8.0).clamp(100.0, 200.0);
+        let cw = (ui.available_width() - 8.0).clamp(40.0, 200.0);
         egui::ComboBox::from_id_salt((id_salt, profile.as_str()))
             .selected_text(label)
             .width(cw)
