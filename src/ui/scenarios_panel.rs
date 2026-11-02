@@ -1082,6 +1082,7 @@ fn paint_group_rename(
         let mut name = client.groups[idx].name.clone();
         let resp = ui.add(
             egui::TextEdit::singleline(&mut name)
+                .id_salt(("scn_group_name", group_id))
                 .desired_width(name_w)
                 .hint_text("Group name"),
         );
@@ -1475,11 +1476,17 @@ fn edit_step_fields(
     profiles_names: &[(String, String)],
 ) -> bool {
     let mut dirty = false;
+    // Stable ids so TextEdit keeps focus across auto-save upserts.
+    let sid = step.id().to_string();
     ui.horizontal(|ui| {
         ui.label(RichText::new("Label").color(CHROME_MUTED()).small());
         let lw = (ui.available_width() - 8.0).clamp(40.0, 140.0);
         if ui
-            .add(egui::TextEdit::singleline(step.name_mut()).desired_width(lw))
+            .add(
+                egui::TextEdit::singleline(step.name_mut())
+                    .id_salt(("scn_step_label", sid.as_str()))
+                    .desired_width(lw),
+            )
             .changed()
         {
             dirty = true;
@@ -1494,12 +1501,16 @@ fn edit_step_fields(
             profile,
             ..
         } => {
-            dirty |= edit_step_profile(ui, profile, profiles_names, "pub_profile");
+            dirty |= edit_step_profile(ui, profile, profiles_names, &format!("pub_profile_{sid}"));
             ui.horizontal(|ui| {
                 ui.label(RichText::new("Topic").color(CHROME_MUTED()).small());
                 let tw = (ui.available_width() - 8.0).clamp(40.0, 280.0);
                 if ui
-                    .add(egui::TextEdit::singleline(topic).desired_width(tw))
+                    .add(
+                        egui::TextEdit::singleline(topic)
+                            .id_salt(("scn_step_topic", sid.as_str()))
+                            .desired_width(tw),
+                    )
                     .changed()
                 {
                     dirty = true;
@@ -1511,6 +1522,7 @@ fn edit_step_fields(
                 if ui
                     .add(
                         egui::TextEdit::multiline(payload)
+                            .id_salt(("scn_step_payload", sid.as_str()))
                             .desired_width(pw)
                             .desired_rows(2),
                     )
@@ -1587,12 +1599,16 @@ fn edit_step_fields(
             profile,
             ..
         } => {
-            dirty |= edit_step_profile(ui, profile, profiles_names, "wv_profile");
+            dirty |= edit_step_profile(ui, profile, profiles_names, &format!("wv_profile_{sid}"));
             ui.horizontal(|ui| {
                 ui.label(RichText::new("Topic").color(CHROME_MUTED()).small());
                 let tw = (ui.available_width() * 0.55).clamp(40.0, 220.0);
                 if ui
-                    .add(egui::TextEdit::singleline(topic).desired_width(tw))
+                    .add(
+                        egui::TextEdit::singleline(topic)
+                            .id_salt(("scn_wv_topic", sid.as_str()))
+                            .desired_width(tw),
+                    )
                     .changed()
                 {
                     dirty = true;
@@ -1602,6 +1618,7 @@ fn edit_step_fields(
                 if ui
                     .add(
                         egui::TextEdit::singleline(field)
+                            .id_salt(("scn_wv_field", sid.as_str()))
                             .desired_width(fw)
                             .hint_text("optional"),
                     )
@@ -1634,7 +1651,11 @@ fn edit_step_fields(
                 ui.label(RichText::new("Value").color(CHROME_MUTED()).small());
                 let vw = (ui.available_width() - 8.0).clamp(40.0, 200.0);
                 if ui
-                    .add(egui::TextEdit::singleline(value).desired_width(vw))
+                    .add(
+                        egui::TextEdit::singleline(value)
+                            .id_salt(("scn_wv_value", sid.as_str()))
+                            .desired_width(vw),
+                    )
                     .changed()
                 {
                     dirty = true;
