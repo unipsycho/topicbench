@@ -1168,32 +1168,31 @@ fn side_panel_resize_grip(
 
     let id = grip_id.into();
     let response = egui::Area::new(id)
-        .order(egui::Order::Middle)
+        .order(egui::Order::Foreground)
         .fixed_pos(grip_rect.min)
         .default_size(grip_rect.size())
         .constrain(false)
         .interactable(true)
         .show(ctx, |ui| {
-            ui.set_min_size(grip_rect.size());
-            ui.set_max_size(grip_rect.size());
-            // Fill the strip so central bleed cannot paint through the seam.
-            ui.painter()
-                .rect_filled(grip_rect, 0.0, CHROME_BG());
-            let sense = ui.interact(
-                grip_rect,
-                ui.id().with("drag"),
-                egui::Sense::click_and_drag(),
-            );
+            // Allocate in-Area so hit-testing owns the strip (not absolute interact).
+            let (rect, sense) =
+                ui.allocate_exact_size(grip_rect.size(), egui::Sense::click_and_drag());
+            // Keep seam opaque so stickies/tree cannot paint through the grab strip.
+            ui.painter().rect_filled(rect, 0.0, CHROME_BG());
             let hovered = sense.hovered() || sense.dragged();
+            // Idle uses muted (not sep) — sep≈bg on Gruvbox/Latte made the grip invisible.
             let stroke = if sense.dragged() {
                 egui::Stroke::new(2.0_f32, CHROME_ACCENT_BORDER())
             } else if hovered {
-                egui::Stroke::new(1.5_f32, CHROME_ACCENT_BORDER())
+                egui::Stroke::new(2.0_f32, CHROME_ACCENT_BORDER())
             } else {
-                egui::Stroke::new(1.0_f32, CHROME_SEP())
+                egui::Stroke::new(1.5_f32, CHROME_MUTED())
             };
-            ui.painter()
-                .vline(edge_x, panel_rect.y_range(), stroke);
+            let line_x = match edge {
+                SideResizeEdge::Right => rect.max.x - grab,
+                SideResizeEdge::Left => rect.min.x + grab,
+            };
+            ui.painter().vline(line_x, rect.y_range(), stroke);
             if hovered {
                 ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
             }
