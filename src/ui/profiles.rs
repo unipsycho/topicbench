@@ -3,6 +3,7 @@
 use crate::mqtt::certs;
 use crate::mqtt::pins::PinBoard;
 use crate::mqtt::profile::{ConnectionProfile, MqttVersion, ProfileStore, ProfileTransport};
+use crate::mqtt::publish::Qos;
 use crate::mqtt::session::{SessionManager, SessionState};
 use crate::mqtt::settings::AppSettings;
 use crate::ui::hover_tip;
@@ -504,6 +505,43 @@ pub fn draw(
                         }
                     }
                 }
+                // Last Will — broker publishes on unclean disconnect only.
+                ui.add_space(6.0);
+                egui::CollapsingHeader::new("Last Will")
+                    .id_salt(("profile_lwt", id.as_str()))
+                    .default_open(profile.will_enabled)
+                    .show(ui, |ui| {
+                        hover_tip::attach(
+                            ui.checkbox(&mut profile.will_enabled, "Enable Last Will"),
+                            "Broker publishes this message only if the client disconnects uncleanly (crash / network drop). Graceful Disconnect discards the will.",
+                        );
+                        ui.add_enabled_ui(profile.will_enabled, |ui| {
+                            ui.horizontal(|ui| {
+                                icons::tiny_image(ui, icons, "last_will_security");
+                                ui.label("Topic");
+                                ui.add(
+                                    egui::TextEdit::singleline(&mut profile.will_topic)
+                                        .desired_width(200.0)
+                                        .hint_text("status/topicbench"),
+                                );
+                            });
+                            ui.horizontal(|ui| {
+                                ui.label("Payload");
+                                ui.add(
+                                    egui::TextEdit::singleline(&mut profile.will_payload)
+                                        .desired_width(200.0)
+                                        .hint_text("offline"),
+                                );
+                            });
+                            ui.horizontal(|ui| {
+                                ui.label("QoS");
+                                ui.selectable_value(&mut profile.will_qos, Qos::AtMostOnce, "0");
+                                ui.selectable_value(&mut profile.will_qos, Qos::AtLeastOnce, "1");
+                                ui.selectable_value(&mut profile.will_qos, Qos::ExactlyOnce, "2");
+                                ui.checkbox(&mut profile.will_retain, "Retain");
+                            });
+                        });
+                    });
                 sessions.sync_profile_name(&id, &profile.name);
             }
 
