@@ -17,10 +17,13 @@ const ROW_H: f32 = 28.0;
 const GRIP_W: f32 = 16.0;
 const TRASH_W: f32 = 22.0;
 const SPLIT_GRAB: f32 = 6.0;
-/// Icon inside Add button — smaller than TINY so 28px chrome has margin (Publish pattern).
-const ADD_STEP_ICON: f32 = 18.0;
-/// Match Simulation / Publish toolbar button chrome.
-const ADD_STEP_BTN: egui::Vec2 = egui::vec2(88.0, 28.0);
+/// Minimum right column: grip + checkbox + ellipsis + trash (text yields first).
+const RIGHT_COL_MIN: f32 = 140.0;
+const CHECK_W: f32 = 18.0;
+/// Icon inside Add button — leave margin inside 28px chrome (TINY 24 was flush).
+const ADD_STEP_ICON: f32 = 16.0;
+/// Match Publish button height; width like Simulation toolbar.
+const ADD_STEP_BTN: egui::Vec2 = egui::vec2(100.0, 28.0);
 
 /// DnD payload for reordering steps (index into the current draft).
 #[derive(Clone, Debug)]
@@ -136,8 +139,8 @@ fn paint_body(
     ui.add_space(6.0);
 
     let avail = ui.available_size();
-    // Keep a usable right column while clamping the persisted left width.
-    let max_left = (avail.x - 280.0).max(SCENARIOS_LEFT_W_MIN);
+    // Allow a narrow right column (icons stay; text truncates) while left can grow.
+    let max_left = (avail.x - RIGHT_COL_MIN - SPLIT_GRAB).max(SCENARIOS_LEFT_W_MIN);
     *left_width = AppSettings::clamp_scenarios_left_width(*left_width).min(max_left);
     let left_w = *left_width;
 
@@ -486,6 +489,8 @@ fn paint_right(
     // Step toolbar — Publish-sized chrome; flat selectable menu (combo style, not boxed buttons).
     ui.horizontal(|ui| {
         ui.label(RichText::new("Steps").color(CHROME_MUTED()).small());
+        // Extra padding so the + sits inset like other TopicBench image+text buttons.
+        ui.spacing_mut().button_padding = egui::vec2(10.0, 5.0);
         let add_btn = if let Some(tex) = icons.get("add_blue") {
             egui::Button::image_and_text(
                 egui::Image::new(tex).fit_to_exact_size(egui::vec2(ADD_STEP_ICON, ADD_STEP_ICON)),
@@ -518,10 +523,14 @@ fn paint_right(
     let mut pending_reorder: Option<(usize, usize, bool)> = None;
     let mut delete_step: Option<usize> = None;
 
+    // Cap content to the pane so TextEdit desired widths can't shove icons off-screen.
+    let steps_w = ui.available_width();
     egui::ScrollArea::vertical()
         .id_salt("scenarios_steps")
         .auto_shrink([false, false])
+        .max_width(steps_w)
         .show(ui, |ui| {
+            ui.set_max_width(steps_w);
             let n = draft.steps.len();
             for i in 0..n {
                 let selected = client.selected_step == Some(i);
@@ -537,8 +546,9 @@ fn paint_right(
                 let enabled = draft.steps[i].enabled();
                 let name_preview = draft.steps[i].name().to_string();
 
+                let row_w = ui.available_width().min(steps_w);
                 let (row_rect, drop_response) =
-                    ui.allocate_exact_size(egui::vec2(ui.available_width(), ROW_H), Sense::hover());
+                    ui.allocate_exact_size(egui::vec2(row_w, ROW_H), Sense::hover());
                 ui.painter().rect_filled(row_rect, 4.0, fill);
                 if selected {
                     ui.painter().rect_stroke(
@@ -549,13 +559,24 @@ fn paint_right(
                     );
                 }
 
+                // Pack chrome first: grip | check | …text… | trash — text yields on narrow.
                 let grip_rect = egui::Rect::from_min_size(
                     egui::pos2(row_rect.left() + 2.0, row_rect.top()),
                     egui::vec2(GRIP_W, ROW_H),
                 );
                 let trash_rect = egui::Rect::from_min_size(
-                    egui::pos2(row_rect.right() - TRASH_W - 2.0, row_rect.top()),
-                    egui::vec2(TRASH_W, ROW_H),
+                    egui::pos2((row_rect.right() - TRASH_W - 2.0).max(grip_rect.right()), row_rect.top()),
+                    egui::vec2(TRASH_W.min(row_rect.width()), ROW_H),
+                );
+                let check_rect = egui::Rect::from_min_size(
+                    egui::pos2(grip_rect.right() + 2.0, row_rect.top()),
+                    egui::vec2(CHECK_W, ROW_H),
+                );
+                let label_left = check_rect.right() + 4.0;
+                let label_right = (trash_rect.left() - 4.0).max(label_left);
+                let label_rect = egui::Rect::from_min_max(
+                    egui::pos2(label_left, row_rect.top()),
+                    egui::pos2(label_right, row_rect.bottom()),
                 );
                 let body_rect = egui::Rect::from_min_max(
                     egui::pos2(grip_rect.right() + 2.0, row_rect.top()),
@@ -582,12 +603,6 @@ fn paint_right(
                     }
                 }
 
-                // Checkbox + label in body.
-                let check_w = 18.0_f32;
-                let check_rect = egui::Rect::from_min_size(
-                    egui::pos2(body_rect.left(), body_rect.top()),
-                    egui::vec2(check_w, ROW_H),
-                );
                 let mut en = enabled;
                 let check_resp = ui.put(
                     check_rect,
@@ -607,10 +622,6 @@ fn paint_right(
                         format!("· {name_preview}")
                     }
                 );
-                let label_rect = egui::Rect::from_min_max(
-                    egui::pos2(check_rect.right() + 4.0, body_rect.top()),
-                    body_rect.right_bottom(),
-                );
                 paint_truncated_label(ui, label_rect, label, CHROME_TEXT(), 13.0);
                 let body_resp = ui.interact(
                     body_rect,
@@ -621,7 +632,7 @@ fn paint_right(
                     client.selected_step = Some(i);
                 }
 
-                // Per-step trash.
+                // Per-step trash — always drawn in reserved right chrome.
                 let trash_resp = ui.interact(
                     trash_rect,
                     egui::Id::new(("scn_step_trash", &sel_id, i)),
@@ -679,6 +690,7 @@ fn paint_right(
                         .corner_radius(4.0)
                         .inner_margin(egui::Margin::symmetric(8, 6))
                         .show(ui, |ui| {
+                            ui.set_max_width(steps_w.saturating_sub(4.0));
                             if edit_step_fields(ui, &mut draft.steps[i], profiles_names) {
                                 dirty = true;
                             }
@@ -754,8 +766,9 @@ fn edit_step_fields(
             dirty |= edit_step_profile(ui, profile, profiles_names, "pub_profile");
             ui.horizontal(|ui| {
                 ui.label(RichText::new("Topic").color(CHROME_MUTED()).small());
+                let tw = (ui.available_width() - 8.0).clamp(80.0, 280.0);
                 if ui
-                    .add(egui::TextEdit::singleline(topic).desired_width(220.0))
+                    .add(egui::TextEdit::singleline(topic).desired_width(tw))
                     .changed()
                 {
                     dirty = true;
@@ -763,10 +776,11 @@ fn edit_step_fields(
             });
             ui.horizontal(|ui| {
                 ui.label(RichText::new("Payload").color(CHROME_MUTED()).small());
+                let pw = (ui.available_width() - 8.0).max(80.0);
                 if ui
                     .add(
                         egui::TextEdit::multiline(payload)
-                            .desired_width(ui.available_width().max(200.0))
+                            .desired_width(pw)
                             .desired_rows(2),
                     )
                     .changed()
@@ -845,17 +859,19 @@ fn edit_step_fields(
             dirty |= edit_step_profile(ui, profile, profiles_names, "wv_profile");
             ui.horizontal(|ui| {
                 ui.label(RichText::new("Topic").color(CHROME_MUTED()).small());
+                let tw = (ui.available_width() * 0.55).clamp(80.0, 220.0);
                 if ui
-                    .add(egui::TextEdit::singleline(topic).desired_width(200.0))
+                    .add(egui::TextEdit::singleline(topic).desired_width(tw))
                     .changed()
                 {
                     dirty = true;
                 }
                 ui.label(RichText::new("Field").color(CHROME_MUTED()).small());
+                let fw = (ui.available_width() - 8.0).clamp(60.0, 120.0);
                 if ui
                     .add(
                         egui::TextEdit::singleline(field)
-                            .desired_width(100.0)
+                            .desired_width(fw)
                             .hint_text("optional"),
                     )
                     .changed()
@@ -863,7 +879,7 @@ fn edit_step_fields(
                     dirty = true;
                 }
             });
-            ui.horizontal(|ui| {
+            ui.horizontal_wrapped(|ui| {
                 ui.label(RichText::new("Operation").color(CHROME_MUTED()).small());
                 // Symbols for numeric/eq; contains for string substring match.
                 let ops = [
@@ -885,8 +901,9 @@ fn edit_step_fields(
             });
             ui.horizontal(|ui| {
                 ui.label(RichText::new("Value").color(CHROME_MUTED()).small());
+                let vw = (ui.available_width() - 8.0).clamp(80.0, 200.0);
                 if ui
-                    .add(egui::TextEdit::singleline(value).desired_width(160.0))
+                    .add(egui::TextEdit::singleline(value).desired_width(vw))
                     .changed()
                 {
                     dirty = true;
@@ -910,6 +927,7 @@ fn edit_step_fields(
 }
 
 /// Single-line label clipped with ellipsis so it never paints past `rect`.
+/// Painter-only — does not expand parent layout (avoids shoving trash off-screen).
 fn paint_truncated_label(
     ui: &mut egui::Ui,
     rect: egui::Rect,
@@ -921,21 +939,31 @@ fn paint_truncated_label(
     if max_w < 4.0 || !ui.is_rect_visible(rect) {
         return;
     }
-    let mut job = egui::text::LayoutJob::simple(
-        text.into(),
-        egui::FontId::proportional(size),
-        color,
-        max_w,
+    let mut job = egui::text::LayoutJob {
+        wrap: egui::text::TextWrapping {
+            max_width: max_w,
+            max_rows: 1,
+            break_anywhere: true,
+            overflow_character: Some('…'),
+        },
+        ..Default::default()
+    };
+    job.append(
+        &text.into(),
+        0.0,
+        egui::TextFormat {
+            font_id: egui::FontId::proportional(size),
+            color,
+            ..Default::default()
+        },
     );
-    job.wrap = egui::text::TextWrapping::truncate_at_width(max_w);
     let galley = ui.fonts(|f| f.layout_job(job));
-    let pos = egui::pos2(
-        rect.left(),
-        rect.center().y - galley.size().y * 0.5,
-    );
-    // Clip as a belt-and-suspenders against any residual overflow.
     let painter = ui.painter().with_clip_rect(rect);
-    painter.galley(pos, galley, color);
+    painter.galley(
+        egui::pos2(rect.left(), rect.center().y - galley.size().y * 0.5),
+        galley,
+        color,
+    );
 }
 
 fn edit_step_profile(
@@ -956,9 +984,10 @@ fn edit_step_profile(
                 .map(|(_, n)| n.clone())
                 .unwrap_or_else(|| profile.clone())
         };
+        let cw = (ui.available_width() - 8.0).clamp(100.0, 200.0);
         egui::ComboBox::from_id_salt((id_salt, profile.as_str()))
             .selected_text(label)
-            .width(160.0)
+            .width(cw)
             .show_ui(ui, |ui| {
                 for (id, name) in profiles_names {
                     if ui.selectable_label(profile == id, name).clicked() {
