@@ -1353,7 +1353,7 @@ fn paint_right(
                         format!(" · {name_preview}")
                     }
                 );
-                let summary = draft.steps[i].settings_summary();
+                let summary = draft.steps[i].settings_summary(profiles_names);
                 paint_step_row_label(ui, label_rect, &primary, &summary, 13.0);
                 let body_resp = ui.interact(
                     body_rect,
