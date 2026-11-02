@@ -1226,9 +1226,9 @@ fn paint_right(
             ui.set_min_width(140.0);
             ui.spacing_mut().item_spacing.y = 2.0;
             for (k, label) in [
-                ("publish", "Publish"),
-                ("wait_time", "Wait time"),
-                ("wait_value", "Wait value"),
+                ("publish", "publish"),
+                ("wait_time", "wait time"),
+                ("wait_value", "wait value"),
             ] {
                 // selectable_label = ComboBox / Profiles filter style (no per-row button boxes).
                 if ui.selectable_label(false, label).clicked() {
@@ -1266,7 +1266,7 @@ fn paint_right(
                 } else {
                     CHROME_ROW()
                 };
-                let kind = draft.steps[i].kind_label().to_string();
+                let kind = draft.steps[i].kind_ui_label().to_string();
                 let enabled = draft.steps[i].enabled();
                 let name_preview = draft.steps[i].name().to_string();
 
@@ -1434,7 +1434,7 @@ fn paint_right(
             }
             if draft.steps.is_empty() {
                 ui.label(
-                    RichText::new("No steps — Add a Publish, Wait time, or Wait value step.")
+                    RichText::new("No steps — Add a publish, wait time, or wait value step.")
                         .color(CHROME_MUTED())
                         .italics(),
                 );
@@ -1744,11 +1744,12 @@ fn paint_step_row_label(
         );
     }
     let galley = ui.fonts(|f| f.layout_job(job));
-    let pos = egui::pos2(
-        rect.left(),
-        rect.center().y - galley.size().y * 0.5,
+    let painter = ui.painter().with_clip_rect(rect);
+    painter.galley(
+        egui::pos2(rect.left(), rect.center().y - galley.size().y * 0.5),
+        galley,
+        CHROME_TEXT(),
     );
-    ui.painter().galley(pos, galley, CHROME_TEXT());
 }
 
 /// Single-line label clipped with ellipsis so it never paints past `rect`.
