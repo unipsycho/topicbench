@@ -3,17 +3,20 @@
 use crate::pro::scenario_client::{
     blank_scenario, blank_step, ScenarioClientState, ScenarioStep, WaitOp,
 };
+use crate::mqtt::settings::{
+    AppSettings, SCENARIOS_LEFT_W_MAX, SCENARIOS_LEFT_W_MIN,
+};
 use crate::ui::hover_tip;
 use crate::ui::icons::{
     self, IconSet, CHROME_ACCENT_BORDER, CHROME_ACCENT_SOFT, CHROME_BG, CHROME_HOVER, CHROME_MUTED,
-    CHROME_ROW, CHROME_TEXT,
+    CHROME_ROW, CHROME_SEP, CHROME_TEXT, TINY_ICON,
 };
 use eframe::egui::{self, Color32, CursorIcon, RichText, Sense, ViewportBuilder, ViewportClass};
 
-const LEFT_W: f32 = 260.0;
 const ROW_H: f32 = 28.0;
 const GRIP_W: f32 = 16.0;
 const TRASH_W: f32 = 22.0;
+const SPLIT_GRAB: f32 = 6.0;
 
 /// DnD payload for reordering steps (index into the current draft).
 #[derive(Clone, Debug)]
@@ -30,6 +33,7 @@ pub fn draw_popup(
     status: &mut String,
     builder_seed: crate::mqtt::window_geom::WinGeom,
     saved_geom: &mut Option<crate::mqtt::window_geom::WinGeom>,
+    left_width: &mut f32,
     geom_dirty: &mut bool,
 ) {
     if !*open {
@@ -48,7 +52,16 @@ pub fn draw_popup(
         |ctx, class| {
             let mut paint = |ui: &mut egui::Ui| {
                 icons::apply_pro_panel_chrome(ui);
-                paint_body(ui, client, profiles_names, icons, status, &mut close);
+                paint_body(
+                    ui,
+                    client,
+                    profiles_names,
+                    icons,
+                    status,
+                    left_width,
+                    geom_dirty,
+                    &mut close,
+                );
             };
             match class {
                 ViewportClass::Embedded => {
@@ -94,6 +107,8 @@ fn paint_body(
     profiles_names: &[(String, String)],
     icons: &IconSet,
     status: &mut String,
+    left_width: &mut f32,
+    geom_dirty: &mut bool,
     close: &mut bool,
 ) {
     // Header
@@ -117,16 +132,41 @@ fn paint_body(
     ui.add_space(6.0);
 
     let avail = ui.available_size();
+    // Keep a usable right column while clamping the persisted left width.
+    let max_left = (avail.x - 280.0).max(SCENARIOS_LEFT_W_MIN);
+    *left_width = AppSettings::clamp_scenarios_left_width(*left_width).min(max_left);
+    let left_w = *left_width;
+
     ui.horizontal(|ui| {
         // ── Left: runners + transport ──────────────────────────────────────
         ui.allocate_ui_with_layout(
-            egui::vec2(LEFT_W.min(avail.x * 0.38), avail.y),
+            egui::vec2(left_w, avail.y),
             egui::Layout::top_down(egui::Align::Min),
             |ui| {
                 paint_left(ui, client, profiles_names, icons, status);
             },
         );
-        ui.separator();
+        // Draggable vertical split (persisted like main side panels).
+        let (split_rect, split_resp) = ui.allocate_exact_size(
+            egui::vec2(SPLIT_GRAB, avail.y),
+            Sense::click_and_drag(),
+        );
+        ui.painter().vline(
+            split_rect.center().x,
+            split_rect.y_range(),
+            egui::Stroke::new(1.0, CHROME_SEP()),
+        );
+        let split_resp = split_resp.on_hover_cursor(CursorIcon::ResizeHorizontal);
+        if split_resp.dragged() {
+            let next = AppSettings::clamp_scenarios_left_width(
+                *left_width + split_resp.drag_delta().x,
+            )
+            .min(max_left);
+            if (next - *left_width).abs() > 0.5 {
+                *left_width = next;
+                *geom_dirty = true;
+            }
+        }
         // ── Right: step editor only ───────────────────────────────────────
         ui.allocate_ui_with_layout(
             egui::vec2(ui.available_width(), avail.y),
@@ -154,7 +194,7 @@ fn paint_left(
     icons: &IconSet,
     status: &mut String,
 ) {
-    // One-row transport: Play / Pause / Step / Add (+) — trash is per-row.
+    // One-row transport: Play / Pause / Step / Add — trash is per-row. Pause is enough to halt.
     let sel = client.selected_id.clone();
     let st = sel.as_ref().and_then(|id| client.status_for(id).cloned());
     ui.horizontal(|ui| {
@@ -223,20 +263,6 @@ fn paint_left(
                     *status = format!("Added scenario {}", r.name);
                 }
                 Err(e) => *status = e,
-            }
-        }
-        // Stop as text (not red X) — cancels wait_value / ends run.
-        if ui
-            .small_button("Stop")
-            .on_hover_text("Stop selected scenario")
-            .clicked()
-            && can
-        {
-            if let Some(id) = &sel {
-                match client.stop(id) {
-                    Ok(()) => *status = "Scenario stopped".into(),
-                    Err(e) => *status = e,
-                }
             }
         }
     });
@@ -432,25 +458,43 @@ fn paint_right(
     }
     ui.add_space(4.0);
 
-    // Step toolbar — Add menu uses add_blue icon (not broken text-only).
+    // Step toolbar — icon lives inside the Add button (no stray + beside it).
     ui.horizontal(|ui| {
         ui.label(RichText::new("Steps").color(CHROME_MUTED()).small());
-        ui.menu_button("Add ▾", |ui| {
-            for (k, label) in [
-                ("publish", "Publish"),
-                ("wait_time", "Wait time"),
-                ("wait_value", "Wait value"),
-            ] {
-                if ui.button(label).clicked() {
-                    draft.steps.push(blank_step(k, &default_profile));
-                    dirty = true;
-                    client.selected_step = Some(draft.steps.len().saturating_sub(1));
-                    ui.close_menu();
+        let add_popup = egui::Id::new(("scn_add_step", &sel_id));
+        let add_btn = if let Some(tex) = icons.get("add_blue") {
+            egui::Button::image_and_text(
+                egui::Image::new(tex).fit_to_exact_size(egui::vec2(TINY_ICON, TINY_ICON)),
+                "Add",
+            )
+        } else {
+            egui::Button::new("Add")
+        };
+        let add_resp = ui.add(add_btn).on_hover_text("Add step");
+        if add_resp.clicked() {
+            ui.memory_mut(|m| m.toggle_popup(add_popup));
+        }
+        egui::popup::popup_below_widget(
+            ui,
+            add_popup,
+            &add_resp,
+            egui::popup::PopupCloseBehavior::CloseOnClickOutside,
+            |ui| {
+                ui.set_min_width(120.0);
+                for (k, label) in [
+                    ("publish", "Publish"),
+                    ("wait_time", "Wait time"),
+                    ("wait_value", "Wait value"),
+                ] {
+                    if ui.button(label).clicked() {
+                        draft.steps.push(blank_step(k, &default_profile));
+                        dirty = true;
+                        client.selected_step = Some(draft.steps.len().saturating_sub(1));
+                        ui.memory_mut(|m| m.close_popup());
+                    }
                 }
-            }
-        });
-        // Icon affordance next to Add menu (profiles-style blue +).
-        let _ = icons.tiny(ui, "add_blue", false, "Add step (use menu)");
+            },
+        );
     });
 
     // Step list with drag-reorder + per-row trash.
@@ -806,8 +850,8 @@ fn edit_step_fields(
                 }
             });
             ui.horizontal(|ui| {
-                ui.label(RichText::new("Op").color(CHROME_MUTED()).small());
-                // Symbols — not GT/LT/GTE text.
+                ui.label(RichText::new("Operation").color(CHROME_MUTED()).small());
+                // Symbols for numeric/eq; contains for string substring match.
                 let ops = [
                     (WaitOp::Eq, "="),
                     (WaitOp::Neq, "!="),
@@ -815,6 +859,8 @@ fn edit_step_fields(
                     (WaitOp::Gte, ">="),
                     (WaitOp::Lt, "<"),
                     (WaitOp::Lte, "<="),
+                    (WaitOp::Contains, "contains"),
+                    (WaitOp::NotContains, "does not contain"),
                 ];
                 for (cand, label) in ops {
                     if ui.selectable_label(*op == cand, label).clicked() {
@@ -1015,9 +1061,20 @@ pub fn draw_docked(
     profiles_names: &[(String, String)],
     icons: &IconSet,
     status: &mut String,
+    left_width: &mut f32,
+    geom_dirty: &mut bool,
 ) {
     let mut close = false;
     icons::apply_pro_panel_chrome(ui);
-    paint_body(ui, client, profiles_names, icons, status, &mut close);
+    paint_body(
+        ui,
+        client,
+        profiles_names,
+        icons,
+        status,
+        left_width,
+        geom_dirty,
+        &mut close,
+    );
     let _ = close;
 }
