@@ -575,14 +575,14 @@ fn paint_group_header(
         x = g.right() + 2.0;
     }
 
-    // Disclosure triangle.
-    let tri_rect = egui::Rect::from_min_size(egui::pos2(x, rect.top()), egui::vec2(14.0, ROW_H));
+    // Disclosure chevron (tree-style ▸/▾ — theme stroke, not egui's washed triangle).
+    let chev_rect = egui::Rect::from_min_size(egui::pos2(x, rect.top()), egui::vec2(14.0, ROW_H));
     let tri_resp = ui.interact(
-        tri_rect,
+        chev_rect,
         egui::Id::new(("scn_grp_tri", group_id)),
         Sense::click(),
     );
-    egui::collapsing_header::paint_default_icon(ui, if open { 1.0 } else { 0.0 }, &tri_resp);
+    paint_disclosure_chevron(ui, chev_rect, open, tri_resp.hovered());
     if tri_resp.clicked() {
         if open {
             collapsed.insert(group_id.to_string());
@@ -590,7 +590,7 @@ fn paint_group_header(
             collapsed.remove(group_id);
         }
     }
-    x = tri_rect.right() + 4.0;
+    x = chev_rect.right() + 4.0;
 
     let trash_rect = if named {
         egui::Rect::from_min_size(
@@ -717,10 +717,15 @@ fn paint_scenario_row(
     if !ui.is_rect_visible(rect) {
         return;
     }
-    ui.painter().rect_filled(rect, 4.0, fill);
+    // Highlight/chip starts after the indent gutter (tree child-row pattern).
+    let chip = egui::Rect::from_min_max(
+        egui::pos2(rect.left() + SCENARIO_INDENT, rect.top()),
+        egui::pos2(rect.right(), rect.bottom()),
+    );
+    ui.painter().rect_filled(chip, 4.0, fill);
     if selected {
         ui.painter().rect_stroke(
-            rect,
+            chip,
             4.0,
             egui::Stroke::new(1.0, CHROME_ACCENT_BORDER()),
             egui::StrokeKind::Inside,
@@ -728,7 +733,7 @@ fn paint_scenario_row(
     }
 
     let grip_rect = egui::Rect::from_min_size(
-        egui::pos2(rect.left() + 2.0 + SCENARIO_INDENT, rect.top()),
+        egui::pos2(chip.left() + 2.0, rect.top()),
         egui::vec2(GRIP_W, ROW_H),
     );
     icons::paint_drag_grip(ui, grip_rect);
@@ -797,7 +802,7 @@ fn paint_scenario_row(
         *delete_id = Some(id.to_string());
     } else if drop_resp.hovered() && !selected && !trash_resp.hovered() && !grip_resp.hovered() {
         ui.painter()
-            .rect_filled(rect, 4.0, CHROME_HOVER().gamma_multiply(0.35));
+            .rect_filled(chip, 4.0, CHROME_HOVER().gamma_multiply(0.35));
     }
     if drop_resp.clicked() && !trash_resp.clicked() && !grip_resp.dragged() {
         client.select_scenario(id.to_string());
@@ -810,9 +815,9 @@ fn paint_scenario_row(
                 .hover_pos()
                 .map(|p| p.y > rect.center().y)
                 .unwrap_or(false);
-            let y = if after { rect.bottom() } else { rect.top() };
+            let y = if after { chip.bottom() } else { chip.top() };
             ui.painter().hline(
-                rect.x_range(),
+                chip.x_range(),
                 y,
                 egui::Stroke::new(2.0, CHROME_ACCENT_BORDER()),
             );
@@ -1575,6 +1580,28 @@ fn edit_step_fields(
 }
 
 /// Single-line label clipped with ellipsis so it never paints past `rect`.
+/// Tree/list disclosure: closed = ▸ (right), open = ▾ (down). Theme stroke, not egui default.
+fn paint_disclosure_chevron(ui: &mut egui::Ui, rect: egui::Rect, open: bool, hovered: bool) {
+    let color = if hovered {
+        CHROME_TEXT()
+    } else {
+        CHROME_MUTED()
+    };
+    let stroke = egui::Stroke::new(1.6, color);
+    let c = rect.center();
+    let s = 4.0_f32;
+    let painter = ui.painter();
+    if open {
+        // Down chevron: two legs of a V.
+        painter.line_segment([egui::pos2(c.x - s, c.y - s * 0.35), egui::pos2(c.x, c.y + s * 0.55)], stroke);
+        painter.line_segment([egui::pos2(c.x + s, c.y - s * 0.35), egui::pos2(c.x, c.y + s * 0.55)], stroke);
+    } else {
+        // Right chevron: two legs of a >.
+        painter.line_segment([egui::pos2(c.x - s * 0.35, c.y - s), egui::pos2(c.x + s * 0.55, c.y)], stroke);
+        painter.line_segment([egui::pos2(c.x - s * 0.35, c.y + s), egui::pos2(c.x + s * 0.55, c.y)], stroke);
+    }
+}
+
 /// Painter-only — does not expand parent layout (avoids shoving trash off-screen).
 fn paint_truncated_label(
     ui: &mut egui::Ui,
