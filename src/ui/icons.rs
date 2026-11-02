@@ -306,9 +306,10 @@ impl IconSet {
 
         // Caption with a few px clearance above the cell bottom (avoids section chrome collision).
         // `\n` → two-line captions (e.g. Book- / marks, Color / Rules) under the same icon.
+        // Dark chrome keeps a light selected caption; light themes need ink on the soft chip.
         let caption = if !enabled {
             Color32::from_rgb(100, 104, 112)
-        } else if selected {
+        } else if selected && !chrome_is_light() {
             Color32::from_rgb(180, 210, 255)
         } else {
             CHROME_TEXT()
