@@ -401,12 +401,21 @@ impl ScenarioClientState {
             .cloned()
             .ok_or_else(|| "missing scenario in response".to_string())?;
         let row: ScenarioRow = serde_json::from_value(scn).map_err(|e| e.to_string())?;
+        // Keep selected_step when updating the already-selected scenario — calling
+        // select_scenario() would clear it and collapse the step editor every keystroke.
+        let keep_step = if self.selected_id.as_deref() == Some(row.id.as_str()) {
+            self.selected_step
+        } else {
+            None
+        };
         if let Some(slot) = self.rows.iter_mut().find(|r| r.id == row.id) {
             *slot = row.clone();
         } else {
             self.rows.push(row.clone());
         }
-        self.select_scenario(row.id.clone());
+        self.selected_id = Some(row.id.clone());
+        self.selected_group_id = None;
+        self.selected_step = keep_step;
         self.poll_if_due(true);
         Ok(row)
     }
@@ -443,7 +452,9 @@ impl ScenarioClientState {
         } else {
             self.groups.push(group.clone());
         }
-        self.select_group(group.id.clone());
+        // Keep selection without bouncing selected_step / remounting the rename field.
+        self.selected_group_id = Some(group.id.clone());
+        self.selected_id = None;
         self.poll_if_due(true);
         Ok(group)
     }
