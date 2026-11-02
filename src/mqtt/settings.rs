@@ -157,6 +157,9 @@ pub struct AppSettings {
     /// Pro Color Rules OS window open/closed.
     #[serde(default)]
     pub show_color_rules: bool,
+    /// Pro Scenarios OS window open/closed.
+    #[serde(default)]
+    pub show_scenarios: bool,
     /// Live traffic panel scroll height (px); user-resizable.
     #[serde(default = "default_live_traffic_height")]
     pub live_traffic_height: f32,
@@ -208,6 +211,12 @@ pub struct AppSettings {
     /// Color Rules OS window geometry.
     #[serde(default)]
     pub window_color_rules: Option<WinGeom>,
+    /// Scenarios OS window geometry.
+    #[serde(default)]
+    pub window_scenarios: Option<WinGeom>,
+    /// Scenarios panel left-list width (px) inside the OS viewport.
+    #[serde(default = "default_scenarios_left_width")]
+    pub scenarios_left_width: f32,
     /// Per-broker Topic tree pop-out geometry (keyed by profile id).
     #[serde(default)]
     pub window_topic_trees: BTreeMap<String, WinGeom>,
@@ -261,6 +270,10 @@ fn default_payload_panel_width() -> f32 {
     320.0
 }
 
+fn default_scenarios_left_width() -> f32 {
+    260.0
+}
+
 /// Side-panel width clamps (match layout.rs ranges).
 pub const PROFILES_W_MIN: f32 = 120.0;
 pub const PROFILES_W_MAX: f32 = 560.0;
@@ -268,6 +281,9 @@ pub const PUBLISH_W_MIN: f32 = 100.0;
 pub const PUBLISH_W_MAX: f32 = 480.0;
 pub const PAYLOAD_W_MIN: f32 = 110.0;
 pub const PAYLOAD_W_MAX: f32 = 560.0;
+pub const SCENARIOS_LEFT_W_MIN: f32 = 160.0;
+/// Wide enough that the steps column can shrink to icon+ellipsis chrome.
+pub const SCENARIOS_LEFT_W_MAX: f32 = 640.0;
 
 /// Combined graph plot height range (drag-resize).
 pub const COMBINED_GRAPH_H_MIN: f32 = 80.0;
@@ -296,6 +312,7 @@ impl Default for AppSettings {
             simulation_floating: true,
             show_bookmarks: false,
             show_color_rules: false,
+            show_scenarios: false,
             live_traffic_height: default_live_traffic_height(),
             search_query: String::new(),
             search_scope: SearchScope::All,
@@ -312,6 +329,8 @@ impl Default for AppSettings {
             window_simulation: None,
             window_bookmarks: None,
             window_color_rules: None,
+            window_scenarios: None,
+            scenarios_left_width: default_scenarios_left_width(),
             window_topic_trees: BTreeMap::new(),
             window_payload_popouts: BTreeMap::new(),
         }
@@ -397,6 +416,7 @@ impl AppSettings {
         s.profiles_panel_width = Self::clamp_profiles_width(s.profiles_panel_width);
         s.publish_panel_width = Self::clamp_publish_width(s.publish_panel_width);
         s.payload_panel_width = Self::clamp_payload_width(s.payload_panel_width);
+        s.scenarios_left_width = Self::clamp_scenarios_left_width(s.scenarios_left_width);
         s
     }
 
@@ -428,6 +448,13 @@ impl AppSettings {
         w.clamp(PAYLOAD_W_MIN, PAYLOAD_W_MAX)
     }
 
+    pub fn clamp_scenarios_left_width(w: f32) -> f32 {
+        if !w.is_finite() {
+            return default_scenarios_left_width();
+        }
+        w.clamp(SCENARIOS_LEFT_W_MIN, SCENARIOS_LEFT_W_MAX)
+    }
+
     pub fn save(&self) -> Result<(), String> {
         let path = Self::path();
         if let Some(parent) = path.parent() {
@@ -441,6 +468,7 @@ impl AppSettings {
         clone.profiles_panel_width = Self::clamp_profiles_width(clone.profiles_panel_width);
         clone.publish_panel_width = Self::clamp_publish_width(clone.publish_panel_width);
         clone.payload_panel_width = Self::clamp_payload_width(clone.payload_panel_width);
+        clone.scenarios_left_width = Self::clamp_scenarios_left_width(clone.scenarios_left_width);
         let text = serde_json::to_string_pretty(&clone).map_err(|e| e.to_string())?;
         fs::write(&path, text).map_err(|e| format!("write {}: {e}", path.display()))
     }
@@ -469,10 +497,11 @@ impl AppSettings {
         self.simulation_floating = floating;
     }
 
-    /// Persist Bookmarks / Color Rules window open flags.
-    pub fn set_pro_windows(&mut self, bookmarks: bool, color_rules: bool) {
+    /// Persist Bookmarks / Color Rules / Scenarios window open flags.
+    pub fn set_pro_windows(&mut self, bookmarks: bool, color_rules: bool, scenarios: bool) {
         self.show_bookmarks = bookmarks;
         self.show_color_rules = color_rules;
+        self.show_scenarios = scenarios;
     }
 
     /// Snapshot topic-tree undocked brokers + payload pop-outs.

@@ -32,8 +32,11 @@ impl MqttMonitorApp {
         );
         self.settings
             .set_simulation_panel(self.simulation_open, self.simulation_floating);
-        self.settings
-            .set_pro_windows(self.bookmarks_open, self.color_rules_open);
+        self.settings.set_pro_windows(
+            self.bookmarks_open,
+            self.color_rules_open,
+            self.scenarios_open,
+        );
         let payload_popouts = self
             .payload_popped
             .iter()
