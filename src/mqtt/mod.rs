@@ -1,6 +1,7 @@
 //! MQTT domain: profiles, live sessions, subscribe, topic tree, stickies, publish.
 
 pub mod certs;
+pub mod hex_view;
 pub mod live;
 pub mod paths;
 pub mod pins;
