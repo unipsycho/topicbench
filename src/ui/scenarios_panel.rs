@@ -9,7 +9,7 @@ use crate::mqtt::settings::{
 use crate::ui::hover_tip;
 use crate::ui::icons::{
     self, IconSet, CHROME_ACCENT_BORDER, CHROME_ACCENT_SOFT, CHROME_BG, CHROME_HOVER, CHROME_MUTED,
-    CHROME_ROW, CHROME_SEP, CHROME_TEXT, TINY_ICON,
+    CHROME_ROW, CHROME_SEP, CHROME_TEXT,
 };
 use eframe::egui::{self, Color32, CursorIcon, RichText, Sense, ViewportBuilder, ViewportClass};
 
@@ -17,6 +17,10 @@ const ROW_H: f32 = 28.0;
 const GRIP_W: f32 = 16.0;
 const TRASH_W: f32 = 22.0;
 const SPLIT_GRAB: f32 = 6.0;
+/// Icon inside Add button — smaller than TINY so 28px chrome has margin (Publish pattern).
+const ADD_STEP_ICON: f32 = 18.0;
+/// Match Simulation / Publish toolbar button chrome.
+const ADD_STEP_BTN: egui::Vec2 = egui::vec2(88.0, 28.0);
 
 /// DnD payload for reordering steps (index into the current draft).
 #[derive(Clone, Debug)]
@@ -342,13 +346,17 @@ fn paint_left(
                         egui::pos2(rect.right() - TRASH_W - 4.0, rect.top()),
                         egui::vec2(TRASH_W, ROW_H),
                     );
-                    let text_right = trash_rect.left() - 4.0;
-                    ui.painter().text(
-                        rect.left_center() + egui::vec2(8.0, 0.0),
-                        egui::Align2::LEFT_CENTER,
+                    // Ellipsize so label never paints under the trash icon.
+                    let text_rect = egui::Rect::from_min_max(
+                        egui::pos2(rect.left() + 8.0, rect.top()),
+                        egui::pos2(trash_rect.left() - 4.0, rect.bottom()),
+                    );
+                    paint_truncated_label(
+                        ui,
+                        text_rect,
                         format!("{label}  ·  {state}{loop_bit}"),
-                        egui::FontId::proportional(13.0),
                         text_color,
+                        13.0,
                     );
                     // Per-row trash (profiles/sims pattern).
                     let trash_id = egui::Id::new(("scn_trash", id.as_str()));
@@ -363,7 +371,6 @@ fn paint_left(
                             Color32::WHITE,
                         );
                     }
-                    let _ = text_right;
                     if trash_resp.clicked() {
                         delete_id = Some(id.clone());
                     } else if resp.hovered() && !selected && !trash_resp.hovered() {
@@ -476,43 +483,34 @@ fn paint_right(
     }
     ui.add_space(4.0);
 
-    // Step toolbar — icon lives inside the Add button (no stray + beside it).
+    // Step toolbar — Publish-sized chrome; flat selectable menu (combo style, not boxed buttons).
     ui.horizontal(|ui| {
         ui.label(RichText::new("Steps").color(CHROME_MUTED()).small());
-        let add_popup = egui::Id::new(("scn_add_step", &sel_id));
         let add_btn = if let Some(tex) = icons.get("add_blue") {
             egui::Button::image_and_text(
-                egui::Image::new(tex).fit_to_exact_size(egui::vec2(TINY_ICON, TINY_ICON)),
+                egui::Image::new(tex).fit_to_exact_size(egui::vec2(ADD_STEP_ICON, ADD_STEP_ICON)),
                 "Add",
             )
+            .min_size(ADD_STEP_BTN)
         } else {
-            egui::Button::new("Add")
+            egui::Button::new("Add").min_size(ADD_STEP_BTN)
         };
-        let add_resp = ui.add(add_btn).on_hover_text("Add step");
-        if add_resp.clicked() {
-            ui.memory_mut(|m| m.toggle_popup(add_popup));
-        }
-        egui::popup::popup_below_widget(
-            ui,
-            add_popup,
-            &add_resp,
-            egui::popup::PopupCloseBehavior::CloseOnClickOutside,
-            |ui| {
-                ui.set_min_width(120.0);
-                for (k, label) in [
-                    ("publish", "Publish"),
-                    ("wait_time", "Wait time"),
-                    ("wait_value", "Wait value"),
-                ] {
-                    if ui.button(label).clicked() {
-                        draft.steps.push(blank_step(k, &default_profile));
-                        dirty = true;
-                        client.selected_step = Some(draft.steps.len().saturating_sub(1));
-                        ui.memory_mut(|m| m.close_popup());
-                    }
+        egui::menu::menu_custom_button(ui, add_btn, |ui| {
+            ui.set_min_width(140.0);
+            for (k, label) in [
+                ("publish", "Publish"),
+                ("wait_time", "Wait time"),
+                ("wait_value", "Wait value"),
+            ] {
+                // selectable_label = ComboBox / Profiles filter style (no per-row button boxes).
+                if ui.selectable_label(false, label).clicked() {
+                    draft.steps.push(blank_step(k, &default_profile));
+                    dirty = true;
+                    client.selected_step = Some(draft.steps.len().saturating_sub(1));
+                    ui.close_menu();
                 }
-            },
-        );
+            }
+        });
     });
 
     // Step list with drag-reorder + per-row trash.
@@ -609,13 +607,11 @@ fn paint_right(
                         format!("· {name_preview}")
                     }
                 );
-                ui.painter().text(
-                    egui::pos2(check_rect.right() + 4.0, body_rect.center().y),
-                    egui::Align2::LEFT_CENTER,
-                    label,
-                    egui::FontId::proportional(13.0),
-                    CHROME_TEXT(),
+                let label_rect = egui::Rect::from_min_max(
+                    egui::pos2(check_rect.right() + 4.0, body_rect.top()),
+                    body_rect.right_bottom(),
                 );
+                paint_truncated_label(ui, label_rect, label, CHROME_TEXT(), 13.0);
                 let body_resp = ui.interact(
                     body_rect,
                     egui::Id::new(("scn_step_body", &sel_id, i)),
@@ -911,6 +907,35 @@ fn edit_step_fields(
         }
     }
     dirty
+}
+
+/// Single-line label clipped with ellipsis so it never paints past `rect`.
+fn paint_truncated_label(
+    ui: &mut egui::Ui,
+    rect: egui::Rect,
+    text: impl Into<String>,
+    color: Color32,
+    size: f32,
+) {
+    let max_w = rect.width().max(0.0);
+    if max_w < 4.0 || !ui.is_rect_visible(rect) {
+        return;
+    }
+    let mut job = egui::text::LayoutJob::simple(
+        text.into(),
+        egui::FontId::proportional(size),
+        color,
+        max_w,
+    );
+    job.wrap = egui::text::TextWrapping::truncate_at_width(max_w);
+    let galley = ui.fonts(|f| f.layout_job(job));
+    let pos = egui::pos2(
+        rect.left(),
+        rect.center().y - galley.size().y * 0.5,
+    );
+    // Clip as a belt-and-suspenders against any residual overflow.
+    let painter = ui.painter().with_clip_rect(rect);
+    painter.galley(pos, galley, color);
 }
 
 fn edit_step_profile(
