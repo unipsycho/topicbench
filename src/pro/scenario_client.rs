@@ -147,6 +147,66 @@ impl ScenarioStep {
             | Self::WaitValue { name, .. } => name,
         }
     }
+
+    /// One-line muted summary of key settings for the left step list.
+    pub fn settings_summary(&self) -> String {
+        match self {
+            Self::Publish {
+                topic, profile, ..
+            } => {
+                let topic = topic.trim();
+                let profile = profile.trim();
+                match (topic.is_empty(), profile.is_empty()) {
+                    (true, true) => String::new(),
+                    (false, true) => topic.to_string(),
+                    (true, false) => format!("@{profile}"),
+                    (false, false) => format!("{topic} @{profile}"),
+                }
+            }
+            Self::WaitTime {
+                duration_ms, max_ms, ..
+            } => match max_ms {
+                Some(m) if *m > *duration_ms => format!("{duration_ms}–{m} ms"),
+                _ => format!("{duration_ms} ms"),
+            },
+            Self::WaitValue {
+                topic,
+                field,
+                op,
+                value,
+                ..
+            } => {
+                let topic = topic.trim();
+                let field = field.trim();
+                let value = value.trim();
+                let left = if topic.is_empty() && field.is_empty() {
+                    String::new()
+                } else if field.is_empty() {
+                    topic.to_string()
+                } else if topic.is_empty() {
+                    field.to_string()
+                } else {
+                    format!("{topic}.{field}")
+                };
+                let op_s = match op {
+                    WaitOp::Eq => "=",
+                    WaitOp::Neq => "≠",
+                    WaitOp::Gt => ">",
+                    WaitOp::Gte => "≥",
+                    WaitOp::Lt => "<",
+                    WaitOp::Lte => "≤",
+                    WaitOp::Contains => "contains",
+                    WaitOp::NotContains => "!contains",
+                };
+                match (left.is_empty(), value.is_empty()) {
+                    (true, true) => String::new(),
+                    (false, true) => format!("{left} {op_s}"),
+                    (true, false) => format!("{op_s} {value}"),
+                    (false, false) => format!("{left} {op_s} {value}"),
+                }
+            }
+        }
+    }
 }
 
 /// Named folder for organizing scenarios (empty `group_id` on a row = Ungrouped).
