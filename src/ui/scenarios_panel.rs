@@ -260,12 +260,12 @@ fn paint_left(
     ui.horizontal(|ui| {
         let can = (sel.is_some() || group_sel.is_some()) && client.sidecar_up;
         let can_step = sel.is_some() && client.sidecar_up;
-        if icons
-            .tiny_header(ui, "play", false, "Start")
-            .on_disabled_hover_text("Start selected scenario or group")
-            .clicked()
-            && can
-        {
+        let play_tip = if group_sel.is_some() {
+            "Play — start all scenarios in the selected group"
+        } else {
+            "Play — start the selected scenario"
+        };
+        if icons.tiny_header(ui, "play", false, play_tip).clicked() && can {
             if let Some(gid) = &group_sel {
                 match client.start_group(gid) {
                     Ok(()) => *status = "Group started".into(),
@@ -278,8 +278,19 @@ fn paint_left(
                 }
             }
         }
+        let pause_tip = if group_sel.is_some() {
+            if paused {
+                "Resume — resume all paused scenarios in the group"
+            } else {
+                "Pause — pause all running scenarios in the group"
+            }
+        } else if paused {
+            "Resume — continue the selected scenario"
+        } else {
+            "Pause — pause the selected scenario"
+        };
         if icons
-            .tiny_header(ui, "pause", false, if paused { "Resume" } else { "Pause" })
+            .tiny_header(ui, "pause", false, pause_tip)
             .clicked()
             && can
         {
@@ -317,11 +328,13 @@ fn paint_left(
                 }
             }
         }
-        let step_resp = icons.tiny_header(ui, "playback", false, "Step once");
-        if group_sel.is_some() {
-            // Step is single-scenario only — tip explains why Play/Pause still work.
-            step_resp.on_hover_text("Step is only available for a single scenario");
-        } else if step_resp.clicked() && can_step {
+        // Step is single-scenario only.
+        let step_tip = if group_sel.is_some() {
+            "Step — select one scenario (not available for a group)"
+        } else {
+            "Step — run one enabled step, then pause"
+        };
+        if icons.tiny_header(ui, "playback", false, step_tip).clicked() && can_step {
             if let Some(id) = &sel {
                 match client.step(id) {
                     Ok(()) => *status = "Scenario stepped".into(),
@@ -329,10 +342,12 @@ fn paint_left(
                 }
             }
         }
-        if icons
-            .tiny_header(ui, "add_blue", false, "Add scenario")
-            .clicked()
-        {
+        let add_scn_tip = if group_sel.is_some() {
+            "Add scenario — create in the selected group"
+        } else {
+            "Add scenario — create a new script"
+        };
+        if icons.tiny_header(ui, "add_blue", false, add_scn_tip).clicked() {
             let profile = profiles_names
                 .first()
                 .map(|(id, _)| id.as_str())
@@ -348,7 +363,7 @@ fn paint_left(
             }
         }
         if icons
-            .tiny_header(ui, "profile_add", false, "Add group")
+            .tiny_header(ui, "profile_add", false, "Add group — create a named folder")
             .clicked()
         {
             ui.ctx().data_mut(|d| {
@@ -1034,6 +1049,64 @@ fn draw_add_group_modal(
     }
 }
 
+/// Right pane when a group header is selected — rename only.
+fn paint_group_rename(
+    ui: &mut egui::Ui,
+    client: &mut ScenarioClientState,
+    pane_w: f32,
+    group_id: &str,
+    status: &mut String,
+) {
+    // Ungrouped is implicit — no rename.
+    if group_id.is_empty() {
+        ui.label(
+            RichText::new("Ungrouped — scenarios with no group. Select a named group to rename it.")
+                .color(CHROME_MUTED())
+                .italics(),
+        );
+        return;
+    }
+    let Some(idx) = client.groups.iter().position(|g| g.id == group_id) else {
+        ui.label(
+            RichText::new("Group not found.")
+                .color(CHROME_MUTED())
+                .italics(),
+        );
+        return;
+    };
+    ui.label(RichText::new("Group").color(CHROME_MUTED()).small());
+    ui.add_space(4.0);
+    ui.horizontal(|ui| {
+        ui.label(RichText::new("Name").color(CHROME_MUTED()).small());
+        let name_w = (pane_w - 52.0).clamp(80.0, 280.0);
+        let mut name = client.groups[idx].name.clone();
+        let resp = ui.add(
+            egui::TextEdit::singleline(&mut name)
+                .desired_width(name_w)
+                .hint_text("Group name"),
+        );
+        if resp.changed() {
+            let trimmed = name.trim().to_string();
+            if trimmed.is_empty() {
+                *status = "Group name cannot be empty".into();
+            } else {
+                match client.upsert_group(Some(group_id), &trimmed) {
+                    Ok(g) => {
+                        *status = format!("Renamed group to {}", g.name);
+                    }
+                    Err(e) => *status = e,
+                }
+            }
+        }
+    });
+    ui.add_space(8.0);
+    ui.label(
+        RichText::new("Play / Pause on the left runs every scenario in this group.")
+            .color(CHROME_MUTED())
+            .small(),
+    );
+}
+
 fn paint_right(
     ui: &mut egui::Ui,
     client: &mut ScenarioClientState,
@@ -1047,15 +1120,20 @@ fn paint_right(
     let pane_w = ui.available_width().max(1.0);
     ui.set_max_width(pane_w);
 
-    let Some(sel_id) = client.selected_id.clone() else {
-        let tip = if client.selected_group_id.is_some() {
-            "Group selected — pick a scenario inside it to edit steps."
-        } else {
-            "Select a scenario on the left to edit its steps."
-        };
-        ui.label(RichText::new(tip).color(CHROME_MUTED()).italics());
+    // Group selected → rename only (no step editor).
+    if client.selected_id.is_none() {
+        if let Some(gid) = client.selected_group_id.clone() {
+            paint_group_rename(ui, client, pane_w, &gid, status);
+            return;
+        }
+        ui.label(
+            RichText::new("Select a scenario on the left to edit its steps.")
+                .color(CHROME_MUTED())
+                .italics(),
+        );
         return;
-    };
+    }
+    let sel_id = client.selected_id.clone().unwrap();
 
     let mut dirty = false;
     let mut draft = client
@@ -1579,7 +1657,6 @@ fn edit_step_fields(
     dirty
 }
 
-/// Single-line label clipped with ellipsis so it never paints past `rect`.
 /// Tree/list disclosure: closed = ▸ (right), open = ▾ (down). Theme stroke, not egui default.
 fn paint_disclosure_chevron(ui: &mut egui::Ui, rect: egui::Rect, open: bool, hovered: bool) {
     let color = if hovered {
@@ -1602,6 +1679,7 @@ fn paint_disclosure_chevron(ui: &mut egui::Ui, rect: egui::Rect, open: bool, hov
     }
 }
 
+/// Single-line label clipped with ellipsis so it never paints past `rect`.
 /// Painter-only — does not expand parent layout (avoids shoving trash off-screen).
 fn paint_truncated_label(
     ui: &mut egui::Ui,
