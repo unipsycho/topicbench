@@ -3,9 +3,7 @@
 use crate::pro::scenario_client::{
     blank_scenario, blank_step, ScenarioClientState, ScenarioStep, WaitOp,
 };
-use crate::mqtt::settings::{
-    AppSettings, SCENARIOS_LEFT_W_MAX, SCENARIOS_LEFT_W_MIN,
-};
+use crate::mqtt::settings::{AppSettings, SCENARIOS_LEFT_W_MIN};
 use crate::ui::hover_tip;
 use crate::ui::icons::{
     self, IconSet, CHROME_ACCENT_BORDER, CHROME_ACCENT_SOFT, CHROME_BG, CHROME_HOVER, CHROME_MUTED,
@@ -690,7 +688,7 @@ fn paint_right(
                         .corner_radius(4.0)
                         .inner_margin(egui::Margin::symmetric(8, 6))
                         .show(ui, |ui| {
-                            ui.set_max_width(steps_w.saturating_sub(4.0));
+                            ui.set_max_width((steps_w - 4.0).max(80.0));
                             if edit_step_fields(ui, &mut draft.steps[i], profiles_names) {
                                 dirty = true;
                             }
