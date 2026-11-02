@@ -247,7 +247,7 @@ fn paint_left(
         }
     });
     ui.add_space(4.0);
-    ui.label(RichText::new("Runners").color(CHROME_MUTED()).small());
+    ui.label(RichText::new("Scenarios").color(CHROME_MUTED()).small());
 
     egui::ScrollArea::vertical()
         .id_salt("scenarios_runner_list")
@@ -331,7 +331,7 @@ fn paint_right(
 ) {
     let Some(sel_id) = client.selected_id.clone() else {
         ui.label(
-            RichText::new("Select a runner on the left to edit its steps.")
+            RichText::new("Select a scenario on the left to edit its steps.")
                 .color(CHROME_MUTED())
                 .italics(),
         );
