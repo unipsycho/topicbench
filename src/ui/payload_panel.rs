@@ -447,11 +447,11 @@ fn draw_topic_body(
                     });
                 }
                 if let Some(r) = crate::ui::native_dialog::poll_message(ui.ctx(), clear_dlg) {
-                    let yes = matches!(r, rfd::MessageDialogResult::Yes)
-                        || matches!(
-                            &r,
-                            rfd::MessageDialogResult::Custom(s) if s.eq_ignore_ascii_case("yes")
-                        );
+                    let yes = match &r {
+                        rfd::MessageDialogResult::Yes => true,
+                        rfd::MessageDialogResult::Custom(s) => s.eq_ignore_ascii_case("yes"),
+                        _ => false,
+                    };
                     if yes {
                         match sessions.clear_retained(profile_id, topic) {
                             Ok(()) => {
