@@ -448,10 +448,10 @@ fn paint_right(
         .or_else(|| profiles_names.first().map(|(id, _)| id.clone()))
         .unwrap_or_default();
 
-    ui.horizontal(|ui| {
+    // Name + Loop wrap when the right pane is tight so Loop isn't clipped.
+    ui.horizontal_wrapped(|ui| {
         ui.label(RichText::new("Name").color(CHROME_MUTED()).small());
-        // Yield to pane width — never force the right column wider than the split.
-        let name_w = (pane_w - 88.0).clamp(48.0, 200.0);
+        let name_w = (pane_w - 52.0).clamp(48.0, 200.0);
         if ui
             .add(
                 egui::TextEdit::singleline(&mut draft.name)
