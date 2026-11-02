@@ -3,14 +3,21 @@
 use crate::pro::scenario_client::{
     blank_scenario, blank_step, ScenarioClientState, ScenarioStep, WaitOp,
 };
+use crate::ui::hover_tip;
 use crate::ui::icons::{
     self, IconSet, CHROME_ACCENT_BORDER, CHROME_ACCENT_SOFT, CHROME_BG, CHROME_HOVER, CHROME_MUTED,
     CHROME_ROW, CHROME_TEXT,
 };
-use eframe::egui::{self, Color32, RichText, Sense, ViewportBuilder, ViewportClass};
+use eframe::egui::{self, Color32, CursorIcon, RichText, Sense, ViewportBuilder, ViewportClass};
 
 const LEFT_W: f32 = 260.0;
 const ROW_H: f32 = 28.0;
+const GRIP_W: f32 = 16.0;
+const TRASH_W: f32 = 22.0;
+
+/// DnD payload for reordering steps (index into the current draft).
+#[derive(Clone, Debug)]
+struct StepDnd(usize);
 
 /// Draw Scenarios as an OS viewport (Bookmarks / Color Rules pattern).
 #[allow(clippy::too_many_arguments)]
@@ -147,12 +154,11 @@ fn paint_left(
     icons: &IconSet,
     status: &mut String,
 ) {
-    // Transport for selected runner
+    // One-row transport: Play / Pause / Step / Add (+) — trash is per-row.
     let sel = client.selected_id.clone();
     let st = sel.as_ref().and_then(|id| client.status_for(id).cloned());
     ui.horizontal(|ui| {
         let can = sel.is_some() && client.sidecar_up;
-        let running = st.as_ref().map(|s| s.is_running()).unwrap_or(false);
         let paused = st.as_ref().map(|s| s.is_paused()).unwrap_or(false);
         if icons
             .tiny_header(ui, "play", false, "Start")
@@ -190,15 +196,6 @@ fn paint_left(
                 }
             }
         }
-        if icons.tiny_header(ui, "close_red", false, "Stop").clicked() && can {
-            if let Some(id) = &sel {
-                match client.stop(id) {
-                    Ok(()) => *status = "Scenario stopped".into(),
-                    Err(e) => *status = e,
-                }
-            }
-        }
-        // Step-once uses playback icon
         if icons
             .tiny_header(ui, "playback", false, "Step once")
             .clicked()
@@ -211,12 +208,6 @@ fn paint_left(
                 }
             }
         }
-        let _ = (running,);
-    });
-    ui.add_space(4.0);
-
-    // Add / Delete scenario
-    ui.horizontal(|ui| {
         if icons
             .tiny_header(ui, "add_blue", false, "Add scenario")
             .clicked()
@@ -234,13 +225,16 @@ fn paint_left(
                 Err(e) => *status = e,
             }
         }
-        if icons
-            .tiny_header(ui, "delete", false, "Delete scenario")
+        // Stop as text (not red X) — cancels wait_value / ends run.
+        if ui
+            .small_button("Stop")
+            .on_hover_text("Stop selected scenario")
             .clicked()
+            && can
         {
-            if let Some(id) = client.selected_id.clone() {
-                match client.delete(&id) {
-                    Ok(()) => *status = "Scenario deleted".into(),
+            if let Some(id) = &sel {
+                match client.stop(id) {
+                    Ok(()) => *status = "Scenario stopped".into(),
                     Err(e) => *status = e,
                 }
             }
@@ -249,6 +243,7 @@ fn paint_left(
     ui.add_space(4.0);
     ui.label(RichText::new("Scenarios").color(CHROME_MUTED()).small());
 
+    let mut delete_id: Option<String> = None;
     egui::ScrollArea::vertical()
         .id_salt("scenarios_list")
         .auto_shrink([false, false])
@@ -263,10 +258,18 @@ fn paint_left(
                 let state = st.map(|s| s.state.as_str()).unwrap_or("stopped");
                 let loop_n = st.map(|s| s.loop_n).unwrap_or(0);
                 let selected = client.selected_id.as_deref() == Some(id.as_str());
-                let fill = if selected {
-                    CHROME_ACCENT_SOFT()
-                } else {
-                    CHROME_ROW()
+                // Running = green; paused = amber (profiles Connected green pattern).
+                let (fill, text_color) = match (selected, state) {
+                    (true, _) => (CHROME_ACCENT_SOFT(), CHROME_TEXT()),
+                    (false, "running") => (
+                        Color32::from_rgba_unmultiplied(90, 190, 120, 40),
+                        Color32::from_rgb(90, 190, 120),
+                    ),
+                    (false, "paused") => (
+                        Color32::from_rgba_unmultiplied(220, 180, 80, 40),
+                        Color32::from_rgb(220, 180, 80),
+                    ),
+                    _ => (CHROME_ROW(), CHROME_MUTED()),
                 };
                 let (rect, resp) =
                     ui.allocate_exact_size(egui::vec2(ui.available_width(), ROW_H), Sense::click());
@@ -280,11 +283,6 @@ fn paint_left(
                             egui::StrokeKind::Inside,
                         );
                     }
-                    let state_color = match state {
-                        "running" => Color32::from_rgb(90, 190, 120),
-                        "paused" => Color32::from_rgb(220, 180, 80),
-                        _ => CHROME_MUTED(),
-                    };
                     let mut label = name;
                     if label.is_empty() {
                         label = id.clone();
@@ -296,20 +294,41 @@ fn paint_left(
                     } else {
                         String::new()
                     };
+                    let trash_rect = egui::Rect::from_min_size(
+                        egui::pos2(rect.right() - TRASH_W - 4.0, rect.top()),
+                        egui::vec2(TRASH_W, ROW_H),
+                    );
+                    let text_right = trash_rect.left() - 4.0;
                     ui.painter().text(
                         rect.left_center() + egui::vec2(8.0, 0.0),
                         egui::Align2::LEFT_CENTER,
                         format!("{label}  ·  {state}{loop_bit}"),
                         egui::FontId::proportional(13.0),
-                        if selected { CHROME_TEXT() } else { state_color },
+                        text_color,
                     );
-                }
-                if resp.hovered() && !selected {
-                    ui.painter()
-                        .rect_filled(rect, 4.0, CHROME_HOVER().gamma_multiply(0.35));
-                }
-                if resp.clicked() {
-                    client.select(id);
+                    // Per-row trash (profiles/sims pattern).
+                    let trash_id = egui::Id::new(("scn_trash", id.as_str()));
+                    let trash_resp = ui.interact(trash_rect, trash_id, Sense::click());
+                    if let Some(tex) = icons.get("delete_red") {
+                        let sz = 14.0_f32;
+                        let img = egui::Rect::from_center_size(trash_rect.center(), egui::vec2(sz, sz));
+                        ui.painter().image(
+                            tex.id(),
+                            img,
+                            egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+                            Color32::WHITE,
+                        );
+                    }
+                    let _ = text_right;
+                    if trash_resp.clicked() {
+                        delete_id = Some(id.clone());
+                    } else if resp.hovered() && !selected && !trash_resp.hovered() {
+                        ui.painter()
+                            .rect_filled(rect, 4.0, CHROME_HOVER().gamma_multiply(0.35));
+                    }
+                    if resp.clicked() && !trash_resp.clicked() {
+                        client.select(id);
+                    }
                 }
             }
             if client.rows.is_empty() {
@@ -320,6 +339,13 @@ fn paint_left(
                 );
             }
         });
+
+    if let Some(id) = delete_id {
+        match client.delete(&id) {
+            Ok(()) => *status = "Scenario deleted".into(),
+            Err(e) => *status = e,
+        }
+    }
 }
 
 fn paint_right(
@@ -338,45 +364,38 @@ fn paint_right(
         return;
     };
 
-    // Scenario meta (name / profile / loop) — still "editing", not transport.
     let mut dirty = false;
     let mut draft = client
         .selected_row()
         .cloned()
         .unwrap_or_else(|| blank_scenario(""));
+    // Default profile for new steps = first profile, or first step that has one.
+    let default_profile = draft
+        .steps
+        .iter()
+        .find_map(|s| match s {
+            ScenarioStep::Publish { profile, .. } | ScenarioStep::WaitValue { profile, .. }
+                if !profile.is_empty() =>
+            {
+                Some(profile.clone())
+            }
+            _ => None,
+        })
+        .or_else(|| profiles_names.first().map(|(id, _)| id.clone()))
+        .unwrap_or_default();
+
     ui.horizontal(|ui| {
         ui.label(RichText::new("Name").color(CHROME_MUTED()).small());
         if ui
             .add(
                 egui::TextEdit::singleline(&mut draft.name)
-                    .desired_width(160.0)
+                    .desired_width(200.0)
                     .hint_text("Scenario name"),
             )
             .changed()
         {
             dirty = true;
         }
-        ui.add_space(8.0);
-        ui.label(RichText::new("Profile").color(CHROME_MUTED()).small());
-        egui::ComboBox::from_id_salt(("scn_profile", &sel_id))
-            .selected_text(if draft.profile.is_empty() {
-                "(none)".into()
-            } else {
-                profiles_names
-                    .iter()
-                    .find(|(id, _)| id == &draft.profile)
-                    .map(|(_, n)| n.clone())
-                    .unwrap_or_else(|| draft.profile.clone())
-            })
-            .width(140.0)
-            .show_ui(ui, |ui| {
-                for (id, name) in profiles_names {
-                    if ui.selectable_label(draft.profile == *id, name).clicked() {
-                        draft.profile = id.clone();
-                        dirty = true;
-                    }
-                }
-            });
         if ui
             .checkbox(&mut draft.loop_, "Loop")
             .on_hover_text("Restart from step 0 when finished")
@@ -413,7 +432,7 @@ fn paint_right(
     }
     ui.add_space(4.0);
 
-    // Step toolbar
+    // Step toolbar — Add menu uses add_blue icon (not broken text-only).
     ui.horizontal(|ui| {
         ui.label(RichText::new("Steps").color(CHROME_MUTED()).small());
         ui.menu_button("Add ▾", |ui| {
@@ -423,56 +442,28 @@ fn paint_right(
                 ("wait_value", "Wait value"),
             ] {
                 if ui.button(label).clicked() {
-                    draft.steps.push(blank_step(k));
+                    draft.steps.push(blank_step(k, &default_profile));
                     dirty = true;
                     client.selected_step = Some(draft.steps.len().saturating_sub(1));
                     ui.close_menu();
                 }
             }
         });
-        if icons
-            .tiny_header(ui, "delete", false, "Delete step")
-            .clicked()
-        {
-            if let Some(i) = client.selected_step {
-                if i < draft.steps.len() {
-                    draft.steps.remove(i);
-                    dirty = true;
-                    client.selected_step = None;
-                }
-            }
-        }
-        if ui.small_button("↑").on_hover_text("Move step up").clicked() {
-            if let Some(i) = client.selected_step {
-                if i > 0 && i < draft.steps.len() {
-                    draft.steps.swap(i, i - 1);
-                    client.selected_step = Some(i - 1);
-                    dirty = true;
-                }
-            }
-        }
-        if ui
-            .small_button("↓")
-            .on_hover_text("Move step down")
-            .clicked()
-        {
-            if let Some(i) = client.selected_step {
-                if i + 1 < draft.steps.len() {
-                    draft.steps.swap(i, i + 1);
-                    client.selected_step = Some(i + 1);
-                    dirty = true;
-                }
-            }
-        }
+        // Icon affordance next to Add menu (profiles-style blue +).
+        let _ = icons.tiny(ui, "add_blue", false, "Add step (use menu)");
     });
 
-    // Step list + detail fields
+    // Step list with drag-reorder + per-row trash.
     let current_step = client.status_for(&sel_id).and_then(|s| s.step_index);
+    let mut pending_reorder: Option<(usize, usize, bool)> = None;
+    let mut delete_step: Option<usize> = None;
+
     egui::ScrollArea::vertical()
         .id_salt("scenarios_steps")
         .auto_shrink([false, false])
         .show(ui, |ui| {
-            for i in 0..draft.steps.len() {
+            let n = draft.steps.len();
+            for i in 0..n {
                 let selected = client.selected_step == Some(i);
                 let is_current = current_step == Some(i);
                 let fill = if selected {
@@ -486,50 +477,158 @@ fn paint_right(
                 let enabled = draft.steps[i].enabled();
                 let name_preview = draft.steps[i].name().to_string();
 
-                egui::Frame::NONE
-                    .fill(fill)
-                    .corner_radius(4.0)
-                    .inner_margin(egui::Margin::symmetric(8, 6))
-                    .stroke(egui::Stroke::new(
-                        if selected { 1.0 } else { 0.0 },
-                        CHROME_ACCENT_BORDER(),
-                    ))
-                    .show(ui, |ui| {
-                        ui.horizontal(|ui| {
-                            let mut en = enabled;
-                            if ui.checkbox(&mut en, "").changed() {
-                                draft.steps[i].set_enabled(en);
-                                dirty = true;
-                            }
-                            let label = format!(
-                                "{}. {} {}",
-                                i + 1,
-                                kind,
-                                if name_preview.is_empty() {
-                                    String::new()
-                                } else {
-                                    format!("· {name_preview}")
-                                }
-                            );
-                            if ui
-                                .add(
-                                    egui::Label::new(RichText::new(label).color(CHROME_TEXT()))
-                                        .sense(Sense::click()),
-                                )
-                                .clicked()
-                            {
-                                client.selected_step = Some(i);
-                            }
-                        });
+                let (row_rect, drop_response) =
+                    ui.allocate_exact_size(egui::vec2(ui.available_width(), ROW_H), Sense::hover());
+                ui.painter().rect_filled(row_rect, 4.0, fill);
+                if selected {
+                    ui.painter().rect_stroke(
+                        row_rect,
+                        4.0,
+                        egui::Stroke::new(1.0, CHROME_ACCENT_BORDER()),
+                        egui::StrokeKind::Inside,
+                    );
+                }
 
-                        if selected {
-                            ui.add_space(4.0);
+                let grip_rect = egui::Rect::from_min_size(
+                    egui::pos2(row_rect.left() + 2.0, row_rect.top()),
+                    egui::vec2(GRIP_W, ROW_H),
+                );
+                let trash_rect = egui::Rect::from_min_size(
+                    egui::pos2(row_rect.right() - TRASH_W - 2.0, row_rect.top()),
+                    egui::vec2(TRASH_W, ROW_H),
+                );
+                let body_rect = egui::Rect::from_min_max(
+                    egui::pos2(grip_rect.right() + 2.0, row_rect.top()),
+                    egui::pos2(trash_rect.left() - 2.0, row_rect.bottom()),
+                );
+
+                icons::paint_drag_grip(ui, grip_rect);
+                let grip_id = egui::Id::new(("scn_step_grip", &sel_id, i));
+                let grip_response = hover_tip::attach(
+                    ui.interact(grip_rect, grip_id, Sense::drag())
+                        .on_hover_cursor(CursorIcon::Grab),
+                    "Drag to reorder",
+                );
+                if grip_response.dragged() {
+                    grip_response.dnd_set_drag_payload(StepDnd(i));
+                }
+                if ui.ctx().is_being_dragged(grip_id) {
+                    if let Some(pos) = ui.ctx().pointer_interact_pos() {
+                        let layer = egui::LayerId::new(egui::Order::Tooltip, grip_id);
+                        let preview = egui::Rect::from_center_size(pos, egui::vec2(GRIP_W, ROW_H));
+                        ui.ctx()
+                            .layer_painter(layer)
+                            .rect_filled(preview, 2.0, CHROME_HOVER());
+                    }
+                }
+
+                // Checkbox + label in body.
+                let check_w = 18.0_f32;
+                let check_rect = egui::Rect::from_min_size(
+                    egui::pos2(body_rect.left(), body_rect.top()),
+                    egui::vec2(check_w, ROW_H),
+                );
+                let mut en = enabled;
+                let check_resp = ui.put(
+                    check_rect,
+                    egui::Checkbox::without_text(&mut en),
+                );
+                if check_resp.changed() {
+                    draft.steps[i].set_enabled(en);
+                    dirty = true;
+                }
+                let label = format!(
+                    "{}. {} {}",
+                    i + 1,
+                    kind,
+                    if name_preview.is_empty() {
+                        String::new()
+                    } else {
+                        format!("· {name_preview}")
+                    }
+                );
+                ui.painter().text(
+                    egui::pos2(check_rect.right() + 4.0, body_rect.center().y),
+                    egui::Align2::LEFT_CENTER,
+                    label,
+                    egui::FontId::proportional(13.0),
+                    CHROME_TEXT(),
+                );
+                let body_resp = ui.interact(
+                    body_rect,
+                    egui::Id::new(("scn_step_body", &sel_id, i)),
+                    Sense::click(),
+                );
+                if body_resp.clicked() {
+                    client.selected_step = Some(i);
+                }
+
+                // Per-step trash.
+                let trash_resp = ui.interact(
+                    trash_rect,
+                    egui::Id::new(("scn_step_trash", &sel_id, i)),
+                    Sense::click(),
+                );
+                if let Some(tex) = icons.get("delete_red") {
+                    let sz = 14.0_f32;
+                    let img = egui::Rect::from_center_size(trash_rect.center(), egui::vec2(sz, sz));
+                    ui.painter().image(
+                        tex.id(),
+                        img,
+                        egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+                        Color32::WHITE,
+                    );
+                }
+                if trash_resp.clicked() {
+                    delete_step = Some(i);
+                }
+
+                // Drop target insert line.
+                if let Some(payload) = drop_response.dnd_hover_payload::<StepDnd>() {
+                    if payload.0 != i {
+                        let after = drop_response
+                            .hover_pos()
+                            .map(|p| p.y > drop_response.rect.center().y)
+                            .unwrap_or(false);
+                        let y = if after {
+                            drop_response.rect.bottom()
+                        } else {
+                            drop_response.rect.top()
+                        };
+                        ui.painter().hline(
+                            drop_response.rect.x_range(),
+                            y,
+                            egui::Stroke::new(2.0, CHROME_ACCENT_BORDER()),
+                        );
+                    }
+                }
+                if let Some(payload) = drop_response.dnd_release_payload::<StepDnd>() {
+                    if payload.0 != i {
+                        let after = drop_response
+                            .interact_pointer_pos()
+                            .or_else(|| drop_response.hover_pos())
+                            .map(|p| p.y > drop_response.rect.center().y)
+                            .unwrap_or(false);
+                        pending_reorder = Some((payload.0, i, after));
+                    }
+                }
+
+                // Expanded editor under the row when selected.
+                if selected {
+                    ui.add_space(2.0);
+                    egui::Frame::NONE
+                        .fill(CHROME_ROW())
+                        .corner_radius(4.0)
+                        .inner_margin(egui::Margin::symmetric(8, 6))
+                        .show(ui, |ui| {
                             if edit_step_fields(ui, &mut draft.steps[i], profiles_names) {
                                 dirty = true;
                             }
-                        }
-                    });
-                ui.add_space(4.0);
+                        });
+                    ui.add_space(4.0);
+                } else {
+                    ui.add_space(2.0);
+                }
             }
             if draft.steps.is_empty() {
                 ui.label(
@@ -539,6 +638,27 @@ fn paint_right(
                 );
             }
         });
+
+    if let Some((from, target, after)) = pending_reorder {
+        if from < draft.steps.len() && target < draft.steps.len() {
+            let step = draft.steps.remove(from);
+            let mut insert_at = if after { target + 1 } else { target };
+            if from < insert_at {
+                insert_at -= 1;
+            }
+            insert_at = insert_at.min(draft.steps.len());
+            draft.steps.insert(insert_at, step);
+            client.selected_step = Some(insert_at);
+            dirty = true;
+        }
+    }
+    if let Some(i) = delete_step {
+        if i < draft.steps.len() {
+            draft.steps.remove(i);
+            client.selected_step = None;
+            dirty = true;
+        }
+    }
 
     if dirty {
         draft.id = sel_id.clone();
@@ -573,6 +693,7 @@ fn edit_step_fields(
             profile,
             ..
         } => {
+            dirty |= edit_step_profile(ui, profile, profiles_names, "pub_profile");
             ui.horizontal(|ui| {
                 ui.label(RichText::new("Topic").color(CHROME_MUTED()).small());
                 if ui
@@ -606,7 +727,6 @@ fn edit_step_fields(
                 if ui.checkbox(retain, "Retain").changed() {
                     dirty = true;
                 }
-                dirty |= edit_optional_profile(ui, profile, profiles_names);
             });
         }
         ScenarioStep::WaitTime {
@@ -664,6 +784,7 @@ fn edit_step_fields(
             profile,
             ..
         } => {
+            dirty |= edit_step_profile(ui, profile, profiles_names, "wv_profile");
             ui.horizontal(|ui| {
                 ui.label(RichText::new("Topic").color(CHROME_MUTED()).small());
                 if ui
@@ -686,13 +807,14 @@ fn edit_step_fields(
             });
             ui.horizontal(|ui| {
                 ui.label(RichText::new("Op").color(CHROME_MUTED()).small());
+                // Symbols — not GT/LT/GTE text.
                 let ops = [
-                    (WaitOp::Eq, "eq"),
-                    (WaitOp::Neq, "neq"),
-                    (WaitOp::Gt, "gt"),
-                    (WaitOp::Gte, "gte"),
-                    (WaitOp::Lt, "lt"),
-                    (WaitOp::Lte, "lte"),
+                    (WaitOp::Eq, "="),
+                    (WaitOp::Neq, "!="),
+                    (WaitOp::Gt, ">"),
+                    (WaitOp::Gte, ">="),
+                    (WaitOp::Lt, "<"),
+                    (WaitOp::Lte, "<="),
                 ];
                 for (cand, label) in ops {
                     if ui.selectable_label(*op == cand, label).clicked() {
@@ -716,7 +838,6 @@ fn edit_step_fields(
                 {
                     dirty = true;
                 }
-                dirty |= edit_optional_profile(ui, profile, profiles_names);
             });
             ui.label(
                 RichText::new("Waits until match — or Pause / Stop. No timeout.")
@@ -728,44 +849,36 @@ fn edit_step_fields(
     dirty
 }
 
-fn edit_optional_profile(
+fn edit_step_profile(
     ui: &mut egui::Ui,
-    profile: &mut Option<String>,
+    profile: &mut String,
     profiles_names: &[(String, String)],
+    id_salt: &str,
 ) -> bool {
     let mut dirty = false;
-    ui.label(
-        RichText::new("Profile override")
-            .color(CHROME_MUTED())
-            .small(),
-    );
-    let cur = profile.clone().unwrap_or_default();
-    egui::ComboBox::from_id_salt(("step_profile", cur.as_str()))
-        .selected_text(if cur.is_empty() {
-            "(scenario default)".into()
+    ui.horizontal(|ui| {
+        ui.label(RichText::new("Profile").color(CHROME_MUTED()).small());
+        let label = if profile.is_empty() {
+            "(choose profile)".to_string()
         } else {
             profiles_names
                 .iter()
-                .find(|(id, _)| id == &cur)
+                .find(|(id, _)| id == profile)
                 .map(|(_, n)| n.clone())
-                .unwrap_or(cur.clone())
-        })
-        .width(120.0)
-        .show_ui(ui, |ui| {
-            if ui
-                .selectable_label(cur.is_empty(), "(scenario default)")
-                .clicked()
-            {
-                *profile = None;
-                dirty = true;
-            }
-            for (id, name) in profiles_names {
-                if ui.selectable_label(cur == *id, name).clicked() {
-                    *profile = Some(id.clone());
-                    dirty = true;
+                .unwrap_or_else(|| profile.clone())
+        };
+        egui::ComboBox::from_id_salt((id_salt, profile.as_str()))
+            .selected_text(label)
+            .width(160.0)
+            .show_ui(ui, |ui| {
+                for (id, name) in profiles_names {
+                    if ui.selectable_label(profile == id, name).clicked() {
+                        *profile = id.clone();
+                        dirty = true;
+                    }
                 }
-            }
-        });
+            });
+    });
     dirty
 }
 
