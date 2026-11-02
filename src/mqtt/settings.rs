@@ -282,7 +282,8 @@ pub const PUBLISH_W_MAX: f32 = 480.0;
 pub const PAYLOAD_W_MIN: f32 = 110.0;
 pub const PAYLOAD_W_MAX: f32 = 560.0;
 pub const SCENARIOS_LEFT_W_MIN: f32 = 160.0;
-pub const SCENARIOS_LEFT_W_MAX: f32 = 480.0;
+/// Wide enough that the steps column can shrink to icon+ellipsis chrome.
+pub const SCENARIOS_LEFT_W_MAX: f32 = 640.0;
 
 /// Combined graph plot height range (drag-resize).
 pub const COMBINED_GRAPH_H_MIN: f32 = 80.0;
