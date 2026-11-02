@@ -130,6 +130,9 @@ pub fn apply_theme(ctx: &egui::Context, tokens: &ChromeTokens) {
     visuals.window_fill = tokens.bg;
     visuals.extreme_bg_color = tokens.status;
     visuals.code_bg_color = tokens.status;
+    // Panel splitters / separators use noninteractive.bg_stroke — theme from sep
+    // so Latte (and other light palettes) keep a readable grip line.
+    visuals.widgets.noninteractive.bg_stroke = Stroke::new(1.0_f32, tokens.sep);
     // Mid well so `.weak()` muted labels stay readable on panel fill.
     visuals.widgets.noninteractive.weak_bg_fill = if tokens.is_light {
         Color32::from_rgb(
@@ -143,6 +146,10 @@ pub fn apply_theme(ctx: &egui::Context, tokens: &ChromeTokens) {
     apply_selector_widget_visuals(&mut visuals, tokens);
     apply_control_accent_visuals(&mut visuals, tokens);
     ctx.set_visuals(visuals);
+    // Slightly wider than egui's 5px default — easier to grab beside Middle overlays.
+    ctx.style_mut(|s| {
+        s.interaction.resize_grab_radius_side = s.interaction.resize_grab_radius_side.max(8.0);
+    });
 }
 
 /// ComboBox / default egui button fills from active chrome roles.

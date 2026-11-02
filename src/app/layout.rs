@@ -4,8 +4,8 @@ use super::{status_strip_fade_alpha, MqttMonitorApp, PROFILES_PANEL_MIN_W};
 use crate::mqtt::publish::PublishFromTree;
 use crate::mqtt::session::SessionState;
 use crate::ui::icons::{
-    self, ribbon_compact_columns, CHROME_BG, CHROME_CAPTION, CHROME_MUTED, CHROME_SEP, CHROME_TEXT,
-    RIBBON_ROW_H, TINT_APP, TINT_PANELS, TINT_PRO, TINT_PROFILES,
+    self, ribbon_compact_columns, CHROME_ACCENT_BORDER, CHROME_BG, CHROME_CAPTION, CHROME_MUTED,
+    CHROME_SEP, CHROME_TEXT, RIBBON_ROW_H, TINT_APP, TINT_PANELS, TINT_PRO, TINT_PROFILES,
 };
 use crate::ui::ribbon_layout::{self, SectionMode};
 use crate::ui::shortcuts;
@@ -585,56 +585,39 @@ impl MqttMonitorApp {
         let mut payload_rect = None;
 
         if self.panels.profiles {
-            // Hard min width — resize handle cannot drag past this (avoids see-through gap).
+            // exact_width from settings (desired) — do NOT copy response.rect back into settings.
+            // egui SidePanel clamps display with at_most(available) then stores that rect in
+            // PanelState; with default_width that permanently stuck panels after narrow→wide.
+            // exact_width re-asserts the desired size each frame so expand restores usable width.
+            // Built-in resize is unusable under Middle overlays — Foreground grip updates settings.
             let r = egui::SidePanel::left("profiles")
-                .default_width(self.settings.profiles_panel_width)
-                .min_width(PROFILES_PANEL_MIN_W)
-                .width_range(PROFILES_PANEL_MIN_W..=560.0)
-                .resizable(true)
+                .exact_width(self.settings.profiles_panel_width)
+                .show_separator_line(false)
                 .show(ctx, |ui| {
                     reserve_side_panel_space(ui);
                 });
-            let w = crate::mqtt::settings::AppSettings::clamp_profiles_width(r.response.rect.width());
-            if (w - self.settings.profiles_panel_width).abs() > 0.5 {
-                self.settings.profiles_panel_width = w;
-                self.geometry_dirty = true;
-            }
             profiles_rect = Some(r.response.rect);
         }
 
         if self.panels.publish {
             // Min ~half of prior 200 — leaves more room for Topic tree when the window shrinks.
             let r = egui::SidePanel::right("publish")
-                .default_width(self.settings.publish_panel_width)
-                .min_width(100.0)
-                .width_range(100.0..=480.0)
-                .resizable(true)
+                .exact_width(self.settings.publish_panel_width)
+                .show_separator_line(false)
                 .show(ctx, |ui| {
                     reserve_side_panel_space(ui);
                 });
-            let w = crate::mqtt::settings::AppSettings::clamp_publish_width(r.response.rect.width());
-            if (w - self.settings.publish_panel_width).abs() > 0.5 {
-                self.settings.publish_panel_width = w;
-                self.geometry_dirty = true;
-            }
             publish_rect = Some(r.response.rect);
         }
 
         if self.panels.payload {
             // Min ~half of prior 220 — Topic tree keeps search/icons instead of clipping first.
             let r = egui::SidePanel::right("payload")
-                .default_width(self.settings.payload_panel_width)
-                .min_width(110.0)
-                .width_range(110.0..=560.0)
-                .resizable(true)
+                .exact_width(self.settings.payload_panel_width)
+                .show_separator_line(false)
                 .show(ctx, |ui| {
                     reserve_side_panel_space(ui);
                 });
-            let w = crate::mqtt::settings::AppSettings::clamp_payload_width(r.response.rect.width());
-            if (w - self.settings.payload_panel_width).abs() > 0.5 {
-                self.settings.payload_panel_width = w;
-                self.geometry_dirty = true;
-            }
             payload_rect = Some(r.response.rect);
         }
 
@@ -785,7 +768,7 @@ impl MqttMonitorApp {
         payload_rect: Option<egui::Rect>,
     ) {
         if let Some(rect) = profiles_rect {
-            side_panel_overlay(ctx, "profiles_front", rect, |ui| {
+            side_panel_overlay(ctx, "profiles_front", rect, SideResizeEdge::Right, |ui| {
                 egui::ScrollArea::vertical().show(ui, |ui| {
                     profiles::draw(
                         ui,
@@ -803,10 +786,25 @@ impl MqttMonitorApp {
                     );
                 });
             });
+            // Grip owns desired width — never sync from layout-clamped rect.
+            if side_panel_resize_grip(
+                ctx,
+                "profiles_resize",
+                rect,
+                SideResizeEdge::Right,
+                PROFILES_PANEL_MIN_W..=560.0,
+                &mut self.settings.profiles_panel_width,
+            ) {
+                self.settings.profiles_panel_width =
+                    crate::mqtt::settings::AppSettings::clamp_profiles_width(
+                        self.settings.profiles_panel_width,
+                    );
+                self.geometry_dirty = true;
+            }
         }
 
         if let Some(rect) = publish_rect {
-            side_panel_overlay(ctx, "publish_front", rect, |ui| {
+            side_panel_overlay(ctx, "publish_front", rect, SideResizeEdge::Left, |ui| {
                 publish_panel::draw(
                     ui,
                     &mut self.publish,
@@ -817,12 +815,26 @@ impl MqttMonitorApp {
                     &mut self.status,
                 );
             });
+            if side_panel_resize_grip(
+                ctx,
+                "publish_resize",
+                rect,
+                SideResizeEdge::Left,
+                100.0..=480.0,
+                &mut self.settings.publish_panel_width,
+            ) {
+                self.settings.publish_panel_width =
+                    crate::mqtt::settings::AppSettings::clamp_publish_width(
+                        self.settings.publish_panel_width,
+                    );
+                self.geometry_dirty = true;
+            }
         }
 
         if let Some(rect) = payload_rect {
             let stickies_before = self.panels.stickies;
             let popped_before = self.payload_popped.len();
-            side_panel_overlay(ctx, "payload_front", rect, |ui| {
+            side_panel_overlay(ctx, "payload_front", rect, SideResizeEdge::Left, |ui| {
                 payload_panel::draw(
                     ui,
                     &mut self.sessions,
@@ -839,6 +851,20 @@ impl MqttMonitorApp {
                     &mut self.combined_boards,
                 );
             });
+            if side_panel_resize_grip(
+                ctx,
+                "payload_resize",
+                rect,
+                SideResizeEdge::Left,
+                110.0..=560.0,
+                &mut self.settings.payload_panel_width,
+            ) {
+                self.settings.payload_panel_width =
+                    crate::mqtt::settings::AppSettings::clamp_payload_width(
+                        self.settings.payload_panel_width,
+                    );
+                self.geometry_dirty = true;
+            }
             if self.panels.stickies != stickies_before || self.payload_popped.len() != popped_before
             {
                 self.persist_panels();
@@ -1068,23 +1094,53 @@ fn reserve_side_panel_space(ui: &mut egui::Ui) {
     ui.allocate_at_least(ui.available_size(), egui::Sense::hover());
 }
 
+/// Which edge of a side panel faces the central column (resize grip lives there).
+#[derive(Clone, Copy)]
+enum SideResizeEdge {
+    /// Left panel — grip on the right edge.
+    Right,
+    /// Right panel — grip on the left edge.
+    Left,
+}
+
+/// Grab strip width for Foreground-layer side-panel resize (egui default is 5).
+fn side_resize_grab_w(ctx: &egui::Context) -> f32 {
+    ctx.style()
+        .interaction
+        .resize_grab_radius_side
+        .max(8.0)
+}
+
 /// Paint a side panel's real UI above the central column (fixes overlap z-order).
+/// Insets content away from [`SideResizeEdge`] so the Foreground resize grip stays hittable.
 fn side_panel_overlay(
     ctx: &egui::Context,
     overlay_id: impl Into<egui::Id>,
     rect: egui::Rect,
+    resize_edge: SideResizeEdge,
     add_contents: impl FnOnce(&mut egui::Ui),
 ) {
+    let grab = side_resize_grab_w(ctx);
+    let mut content = rect;
+    match resize_edge {
+        SideResizeEdge::Right => {
+            content.max.x = (content.max.x - grab).max(content.min.x);
+        }
+        SideResizeEdge::Left => {
+            content.min.x = (content.min.x + grab).min(content.max.x);
+        }
+    }
+
     egui::Area::new(overlay_id.into())
         .order(egui::Order::Middle)
-        .fixed_pos(rect.min)
-        .default_size(rect.size())
+        .fixed_pos(content.min)
+        .default_size(content.size())
         .constrain(false)
         .interactable(true)
         .show(ctx, |ui| {
-            ui.set_min_size(rect.size());
-            ui.set_max_size(rect.size());
-            ui.set_clip_rect(rect);
+            ui.set_min_size(content.size());
+            ui.set_max_size(content.size());
+            ui.set_clip_rect(content);
             egui::Frame::side_top_panel(ui.style())
                 .fill(CHROME_BG())
                 .show(ui, |ui| {
@@ -1092,6 +1148,75 @@ fn side_panel_overlay(
                     add_contents(ui);
                 });
         });
+}
+
+/// Foreground-layer resize grip + separator for a side panel edge.
+/// Returns true when `width` changed enough to persist (user drag only).
+fn side_panel_resize_grip(
+    ctx: &egui::Context,
+    grip_id: impl Into<egui::Id>,
+    panel_rect: egui::Rect,
+    edge: SideResizeEdge,
+    range: std::ops::RangeInclusive<f32>,
+    width: &mut f32,
+) -> bool {
+    let grab = side_resize_grab_w(ctx);
+    let edge_x = match edge {
+        SideResizeEdge::Right => panel_rect.max.x,
+        SideResizeEdge::Left => panel_rect.min.x,
+    };
+    let grip_rect = egui::Rect::from_x_y_ranges(
+        (edge_x - grab)..=(edge_x + grab),
+        panel_rect.y_range(),
+    );
+
+    let id = grip_id.into();
+    let response = egui::Area::new(id)
+        .order(egui::Order::Foreground)
+        .fixed_pos(grip_rect.min)
+        .default_size(grip_rect.size())
+        .constrain(false)
+        .interactable(true)
+        .show(ctx, |ui| {
+            // Allocate in-Area so hit-testing owns the strip (not absolute interact).
+            let (rect, sense) =
+                ui.allocate_exact_size(grip_rect.size(), egui::Sense::click_and_drag());
+            // Keep seam opaque so stickies/tree cannot paint through the grab strip.
+            ui.painter().rect_filled(rect, 0.0, CHROME_BG());
+            let hovered = sense.hovered() || sense.dragged();
+            // Idle uses muted (not sep) — sep≈bg on Gruvbox/Latte made the grip invisible.
+            let stroke = if sense.dragged() || hovered {
+                egui::Stroke::new(2.0_f32, CHROME_ACCENT_BORDER())
+            } else {
+                egui::Stroke::new(1.5_f32, CHROME_MUTED())
+            };
+            let line_x = match edge {
+                SideResizeEdge::Right => rect.max.x - grab,
+                SideResizeEdge::Left => rect.min.x + grab,
+            };
+            ui.painter().vline(line_x, rect.y_range(), stroke);
+            if hovered {
+                ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
+            }
+            sense
+        })
+        .inner;
+
+    let mut changed = false;
+    if response.dragged() {
+        if let Some(pointer) = response.interact_pointer_pos() {
+            let new_w = match edge {
+                SideResizeEdge::Right => pointer.x - panel_rect.min.x,
+                SideResizeEdge::Left => panel_rect.max.x - pointer.x,
+            };
+            let new_w = new_w.clamp(*range.start(), *range.end());
+            if (new_w - *width).abs() > 0.5 {
+                *width = new_w;
+                changed = true;
+            }
+        }
+    }
+    changed
 }
 
 /// Paint top chrome (ribbon / status) above central scroll (same z-order fix as sides).
