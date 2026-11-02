@@ -14,6 +14,7 @@ pub mod pin_board;
 pub mod profiles;
 pub mod publish_panel;
 pub mod ribbon_layout;
+pub mod scenarios_panel;
 pub mod search_bar;
 pub mod settings_panel;
 pub mod shortcuts;

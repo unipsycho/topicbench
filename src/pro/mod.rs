@@ -16,6 +16,7 @@ pub mod combined_boards;
 pub mod history_client;
 pub mod recording;
 pub mod sidecar_launch;
+pub mod scenario_client;
 pub mod sim_client;
 pub mod theme_client;
 pub mod topic_tree_io;
@@ -258,6 +259,7 @@ mod tests {
         assert!(e.get(Entitlement::MultiGraph));
         assert!(e.get(Entitlement::McpServer));
         assert!(e.get(Entitlement::Simulation));
+        assert!(e.get(Entitlement::ScenarioPlayer));
         assert!(e.get(Entitlement::TreeExport));
     }
 }
