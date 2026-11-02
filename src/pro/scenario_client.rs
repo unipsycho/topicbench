@@ -4,7 +4,7 @@
 //! UI thread never calls ureq (same invariant as [`super::sim_client`]).
 
 use eframe::egui::Context;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
 use std::fs;
 use std::path::PathBuf;
@@ -12,6 +12,11 @@ use std::sync::mpsc::{self, Receiver, SyncSender};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
+
+/// Accept string or null (older step overrides used `Option`).
+fn deser_profile<'de, D: Deserializer<'de>>(d: D) -> Result<String, D::Error> {
+    Ok(Option::<String>::deserialize(d)?.unwrap_or_default())
+}
 
 const DEFAULT_BASE: &str = "http://127.0.0.1:7853";
 const POLL_INTERVAL: Duration = Duration::from_millis(500);
@@ -43,8 +48,9 @@ pub enum ScenarioStep {
         name: String,
         #[serde(default = "default_true")]
         enabled: bool,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        profile: Option<String>,
+        /// Broker profile for this publish (per-step; cross-broker scenarios).
+        #[serde(default, deserialize_with = "deser_profile")]
+        profile: String,
         #[serde(default)]
         topic: String,
         #[serde(default)]
@@ -73,8 +79,9 @@ pub enum ScenarioStep {
         name: String,
         #[serde(default = "default_true")]
         enabled: bool,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        profile: Option<String>,
+        /// Broker profile to watch (per-step; cross-broker scenarios).
+        #[serde(default, deserialize_with = "deser_profile")]
+        profile: String,
         #[serde(default)]
         topic: String,
         #[serde(default)]
@@ -147,7 +154,8 @@ pub struct ScenarioRow {
     pub id: String,
     #[serde(default)]
     pub name: String,
-    #[serde(default)]
+    /// Legacy scenario-level profile (Pro migrates onto steps; not sent on upsert).
+    #[serde(default, skip_serializing)]
     pub profile: String,
     #[serde(default, rename = "loop")]
     pub loop_: bool,
@@ -694,28 +702,20 @@ fn token_path() -> PathBuf {
     crate::mqtt::paths::config_file("mcp-token")
 }
 
-/// Blank scenario ready for Add.
-pub fn blank_scenario(profile: &str) -> ScenarioRow {
+/// Blank scenario ready for Add (`default_profile` seeds the first publish step).
+pub fn blank_scenario(default_profile: &str) -> ScenarioRow {
     ScenarioRow {
         id: String::new(),
         name: "New scenario".into(),
-        profile: profile.to_string(),
+        profile: String::new(),
         loop_: false,
-        steps: vec![ScenarioStep::Publish {
-            id: String::new(),
-            name: "publish".into(),
-            enabled: true,
-            profile: None,
-            topic: String::new(),
-            payload: String::new(),
-            qos: 0,
-            retain: false,
-        }],
+        steps: vec![blank_step("publish", default_profile)],
         auto_start: false,
     }
 }
 
-pub fn blank_step(kind: &str) -> ScenarioStep {
+/// Blank step; `default_profile` used for publish / wait_value.
+pub fn blank_step(kind: &str, default_profile: &str) -> ScenarioStep {
     match kind {
         "wait_time" => ScenarioStep::WaitTime {
             id: String::new(),
@@ -728,7 +728,7 @@ pub fn blank_step(kind: &str) -> ScenarioStep {
             id: String::new(),
             name: "wait value".into(),
             enabled: true,
-            profile: None,
+            profile: default_profile.to_string(),
             topic: String::new(),
             field: String::new(),
             op: WaitOp::Eq,
@@ -739,7 +739,7 @@ pub fn blank_step(kind: &str) -> ScenarioStep {
             id: String::new(),
             name: "publish".into(),
             enabled: true,
-            profile: None,
+            profile: default_profile.to_string(),
             topic: String::new(),
             payload: String::new(),
             qos: 0,
@@ -772,10 +772,18 @@ mod tests {
 
     #[test]
     fn step_round_trip() {
-        let s = blank_step("wait_time");
+        let s = blank_step("wait_time", "");
         let v = serde_json::to_value(&s).unwrap();
         assert_eq!(v.get("kind").and_then(|k| k.as_str()), Some("wait_time"));
         let back: ScenarioStep = serde_json::from_value(v).unwrap();
         assert_eq!(back.kind_label(), "wait_time");
+    }
+
+    #[test]
+    fn publish_blank_topic_serializes() {
+        let s = blank_step("publish", "p1");
+        let v = serde_json::to_value(&s).unwrap();
+        assert_eq!(v.get("profile").and_then(|p| p.as_str()), Some("p1"));
+        assert_eq!(v.get("topic").and_then(|t| t.as_str()), Some(""));
     }
 }
