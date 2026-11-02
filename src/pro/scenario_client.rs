@@ -158,19 +158,34 @@ impl ScenarioStep {
         }
     }
 
-    /// One-line muted summary of key settings for the left step list.
-    pub fn settings_summary(&self) -> String {
+    /// One-line muted summary for the step list.
+    /// `profiles_names` is `(id, display name)` — same list the step editor combo uses.
+    pub fn settings_summary(&self, profiles_names: &[(String, String)]) -> String {
         match self {
             Self::Publish {
-                topic, profile, ..
+                topic,
+                profile,
+                payload,
+                ..
             } => {
                 let topic = topic.trim();
-                let profile = profile.trim();
-                match (topic.is_empty(), profile.is_empty()) {
+                let payload = collapse_ws(payload);
+                let pname = resolve_profile_name(profile, profiles_names);
+                // `LocalHost:plant/alarm = {"state":"on"}`
+                let left = match (pname.is_empty(), topic.is_empty()) {
                     (true, true) => String::new(),
-                    (false, true) => topic.to_string(),
-                    (true, false) => format!("@{profile}"),
-                    (false, false) => format!("{topic} @{profile}"),
+                    (false, true) => pname,
+                    (true, false) => topic.to_string(),
+                    (false, false) => format!("{pname}:{topic}"),
+                };
+                if left.is_empty() && payload.is_empty() {
+                    String::new()
+                } else if payload.is_empty() {
+                    left
+                } else if left.is_empty() {
+                    format!("= {payload}")
+                } else {
+                    format!("{left} = {payload}")
                 }
             }
             Self::WaitTime {
@@ -184,12 +199,14 @@ impl ScenarioStep {
                 field,
                 op,
                 value,
+                profile,
                 ..
             } => {
                 let topic = topic.trim();
                 let field = field.trim();
                 let value = value.trim();
-                let left = if topic.is_empty() && field.is_empty() {
+                let pname = resolve_profile_name(profile, profiles_names);
+                let path = if topic.is_empty() && field.is_empty() {
                     String::new()
                 } else if field.is_empty() {
                     topic.to_string()
@@ -197,6 +214,12 @@ impl ScenarioStep {
                     field.to_string()
                 } else {
                     format!("{topic}.{field}")
+                };
+                let left = match (pname.is_empty(), path.is_empty()) {
+                    (true, true) => String::new(),
+                    (false, true) => pname,
+                    (true, false) => path,
+                    (false, false) => format!("{pname}:{path}"),
                 };
                 let op_s = match op {
                     WaitOp::Eq => "=",
@@ -217,6 +240,25 @@ impl ScenarioStep {
             }
         }
     }
+}
+
+/// Display name for a profile id; falls back to the id if not in the list.
+fn resolve_profile_name(profile_id: &str, profiles_names: &[(String, String)]) -> String {
+    let id = profile_id.trim();
+    if id.is_empty() {
+        return String::new();
+    }
+    profiles_names
+        .iter()
+        .find(|(pid, _)| pid == id)
+        .map(|(_, name)| name.clone())
+        .filter(|n| !n.trim().is_empty())
+        .unwrap_or_else(|| id.to_string())
+}
+
+/// Flatten payload to a single line for the step-row summary.
+fn collapse_ws(s: &str) -> String {
+    s.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 /// Named folder for organizing scenarios (empty `group_id` on a row = Ungrouped).
