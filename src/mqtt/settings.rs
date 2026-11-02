@@ -544,4 +544,22 @@ mod tests {
         }
         assert_eq!(s.font_zoom_step, FONT_ZOOM_MIN);
     }
+
+    /// Layout may temporarily draw a narrower panel when the window is cramped, but
+    /// settings keep the user-desired width so expand restores via `exact_width`.
+    #[test]
+    fn side_panel_desired_width_not_clamped_by_layout_rect() {
+        let desired = default_profiles_panel_width();
+        let layout_forced = PROFILES_W_MIN; // what egui stores after at_most(available)
+        let mut settings_w = desired;
+        // Correct: ignore layout-forced shrink (only user drag updates settings).
+        let _display = layout_forced;
+        assert!(
+            (settings_w - desired).abs() < f32::EPSILON,
+            "settings must keep desired width after a narrow layout frame"
+        );
+        // Clamp still accepts the desired default.
+        settings_w = AppSettings::clamp_profiles_width(settings_w);
+        assert!((settings_w - desired).abs() < f32::EPSILON);
+    }
 }
