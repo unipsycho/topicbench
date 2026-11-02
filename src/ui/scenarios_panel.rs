@@ -1,15 +1,16 @@
 //! Scenarios OS viewport (Pro) — left runners + transport; right step editor.
 
-use crate::pro::scenario_client::{
-    blank_scenario, blank_step, ScenarioClientState, ScenarioStep, WaitOp,
-};
 use crate::mqtt::settings::{AppSettings, SCENARIOS_LEFT_W_MIN};
+use crate::pro::scenario_client::{
+    blank_scenario, blank_step, ScenarioClientState, ScenarioPlacement, ScenarioStep, WaitOp,
+};
 use crate::ui::hover_tip;
 use crate::ui::icons::{
     self, IconSet, CHROME_ACCENT_BORDER, CHROME_ACCENT_SOFT, CHROME_BG, CHROME_HOVER, CHROME_MUTED,
-    CHROME_ROW, CHROME_SEP, CHROME_TEXT,
+    CHROME_ROW, CHROME_SEP, CHROME_TEXT, TINY_ICON,
 };
 use eframe::egui::{self, Color32, CursorIcon, RichText, Sense, ViewportBuilder, ViewportClass};
+use std::collections::HashSet;
 
 const ROW_H: f32 = 28.0;
 const GRIP_W: f32 = 16.0;
@@ -22,10 +23,32 @@ const CHECK_W: f32 = 18.0;
 const ADD_STEP_ICON: f32 = 14.0;
 /// Match Publish chrome (120×28) so + has room beside the label.
 const ADD_STEP_BTN: egui::Vec2 = egui::vec2(120.0, 28.0);
+const SCENARIO_INDENT: f32 = 14.0;
 
 /// DnD payload for reordering steps (index into the current draft).
 #[derive(Clone, Debug)]
 struct StepDnd(usize);
+
+/// DnD: scenario id (reorder within/between groups).
+#[derive(Clone, Debug)]
+struct ScenarioDnd(String);
+
+/// DnD: named group id (reorder groups).
+#[derive(Clone, Debug)]
+struct GroupDnd(String);
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ExportScopeChoice {
+    SelectedGroup,
+    Everything,
+}
+
+#[derive(Clone, PartialEq, Eq)]
+enum ImportModeChoice {
+    Replace,
+    Merge,
+    IntoGroup { group_id: String, new_name: String },
+}
 
 /// Draw Scenarios as an OS viewport (Bookmarks / Color Rules pattern).
 #[allow(clippy::too_many_arguments)]
@@ -217,19 +240,38 @@ fn paint_left(
     icons: &IconSet,
     status: &mut String,
 ) {
-    // One-row transport: Play / Pause / Step / Add — trash is per-row. Pause is enough to halt.
+    // One-row transport: Play / Pause / Step / Add / Add group — trash is per-row.
     let sel = client.selected_id.clone();
+    let group_sel = client.selected_group_id.clone();
     let st = sel.as_ref().and_then(|id| client.status_for(id).cloned());
+    // Group pause = any member paused (resume those); else pause running members.
+    let group_paused = group_sel.as_ref().is_some_and(|gid| {
+        client
+            .rows
+            .iter()
+            .filter(|r| r.group_id == *gid)
+            .any(|r| client.status_for(&r.id).is_some_and(|s| s.is_paused()))
+    });
+    let paused = if group_sel.is_some() {
+        group_paused
+    } else {
+        st.as_ref().map(|s| s.is_paused()).unwrap_or(false)
+    };
     ui.horizontal(|ui| {
-        let can = sel.is_some() && client.sidecar_up;
-        let paused = st.as_ref().map(|s| s.is_paused()).unwrap_or(false);
+        let can = (sel.is_some() || group_sel.is_some()) && client.sidecar_up;
+        let can_step = sel.is_some() && client.sidecar_up;
         if icons
             .tiny_header(ui, "play", false, "Start")
-            .on_disabled_hover_text("Start selected scenario")
+            .on_disabled_hover_text("Start selected scenario or group")
             .clicked()
             && can
         {
-            if let Some(id) = &sel {
+            if let Some(gid) = &group_sel {
+                match client.start_group(gid) {
+                    Ok(()) => *status = "Group started".into(),
+                    Err(e) => *status = e,
+                }
+            } else if let Some(id) = &sel {
                 match client.start(id) {
                     Ok(()) => *status = format!("Scenario started: {id}"),
                     Err(e) => *status = e,
@@ -241,7 +283,23 @@ fn paint_left(
             .clicked()
             && can
         {
-            if let Some(id) = &sel {
+            if let Some(gid) = &group_sel {
+                let res = if paused {
+                    client.resume_group(gid)
+                } else {
+                    client.pause_group(gid)
+                };
+                match res {
+                    Ok(()) => {
+                        *status = if paused {
+                            "Group resumed".into()
+                        } else {
+                            "Group paused".into()
+                        }
+                    }
+                    Err(e) => *status = e,
+                }
+            } else if let Some(id) = &sel {
                 let res = if paused {
                     client.resume(id)
                 } else {
@@ -259,11 +317,11 @@ fn paint_left(
                 }
             }
         }
-        if icons
-            .tiny_header(ui, "playback", false, "Step once")
-            .clicked()
-            && can
-        {
+        let step_resp = icons.tiny_header(ui, "playback", false, "Step once");
+        if group_sel.is_some() {
+            // Step is single-scenario only — tip explains why Play/Pause still work.
+            step_resp.on_hover_text("Step is only available for a single scenario");
+        } else if step_resp.clicked() && can_step {
             if let Some(id) = &sel {
                 match client.step(id) {
                     Ok(()) => *status = "Scenario stepped".into(),
@@ -279,20 +337,37 @@ fn paint_left(
                 .first()
                 .map(|(id, _)| id.as_str())
                 .unwrap_or("");
-            let row = blank_scenario(profile);
+            let mut row = blank_scenario(profile);
+            // New scenario joins the selected group (incl. Ungrouped "").
+            if let Some(gid) = &group_sel {
+                row.group_id = gid.clone();
+            }
             match client.upsert(&row) {
-                Ok(r) => {
-                    client.select(r.id.clone());
-                    *status = format!("Added scenario {}", r.name);
-                }
+                Ok(r) => *status = format!("Added scenario {}", r.name),
                 Err(e) => *status = e,
             }
         }
+        if icons
+            .tiny_header(ui, "profile_add", false, "Add group")
+            .clicked()
+        {
+            ui.ctx().data_mut(|d| {
+                d.insert_temp(egui::Id::new("scn_add_group_open"), true);
+                d.insert_temp(egui::Id::new("scn_add_group_name"), String::new());
+            });
+        }
     });
+    draw_add_group_modal(ui.ctx(), client, icons, status);
     ui.add_space(4.0);
     ui.label(RichText::new("Scenarios").color(CHROME_MUTED()).small());
 
     let mut delete_id: Option<String> = None;
+    let mut delete_group_id: Option<String> = None;
+    let mut pending_scn_drop: Option<(String, String, String, bool)> = None; // drag, target, target_gid, after
+    let mut pending_group_drop: Option<(String, String, bool)> = None; // drag, target, after
+    let mut pending_drop_on_group: Option<(String, String)> = None; // drag scn, target group_id
+    let is_scn_dragging = egui::DragAndDrop::has_payload_of_type::<ScenarioDnd>(ui.ctx());
+
     // Span the visible left pane so trash stays on the right edge and text ellipsizes.
     let list_w = ui.max_rect().width().max(ui.available_width());
     egui::ScrollArea::vertical()
@@ -302,94 +377,115 @@ fn paint_left(
         .show(ui, |ui| {
             ui.set_min_width(list_w);
             ui.set_max_width(list_w);
-            let rows: Vec<(String, String, bool)> = client
-                .rows
-                .iter()
-                .map(|r| (r.id.clone(), r.name.clone(), r.loop_))
-                .collect();
-            for (id, name, loop_on) in rows {
-                let st = client.status_for(&id);
-                let state = st.map(|s| s.state.as_str()).unwrap_or("stopped");
-                let loop_n = st.map(|s| s.loop_n).unwrap_or(0);
-                let selected = client.selected_id.as_deref() == Some(id.as_str());
-                // Running = green; paused = amber (profiles Connected green pattern).
-                let (fill, text_color) = match (selected, state) {
-                    (true, _) => (CHROME_ACCENT_SOFT(), CHROME_TEXT()),
-                    (false, "running") => (
-                        Color32::from_rgba_unmultiplied(90, 190, 120, 40),
-                        Color32::from_rgb(90, 190, 120),
-                    ),
-                    (false, "paused") => (
-                        Color32::from_rgba_unmultiplied(220, 180, 80, 40),
-                        Color32::from_rgb(220, 180, 80),
-                    ),
-                    _ => (CHROME_ROW(), CHROME_MUTED()),
+
+            // Collapse state: local HashSet of closed group ids (not persisted).
+            let collapsed_key = egui::Id::new("scn_collapsed_groups");
+            let mut collapsed: HashSet<String> = ui
+                .ctx()
+                .data(|d| d.get_temp::<HashSet<String>>(collapsed_key))
+                .unwrap_or_default();
+
+            let groups = client.groups.clone();
+            let mut any_row = false;
+
+            for g in &groups {
+                any_row = true;
+                let members: Vec<(String, String, bool, i64)> = {
+                    let mut v: Vec<_> = client
+                        .rows
+                        .iter()
+                        .filter(|r| r.group_id == g.id)
+                        .map(|r| (r.id.clone(), r.name.clone(), r.loop_, r.sort))
+                        .collect();
+                    v.sort_by_key(|(_, _, _, sort)| *sort);
+                    v
                 };
-                let row_w = list_w.max(ui.available_width());
-                let (rect, resp) =
-                    ui.allocate_exact_size(egui::vec2(row_w, ROW_H), Sense::click());
-                if ui.is_rect_visible(rect) {
-                    ui.painter().rect_filled(rect, 4.0, fill);
-                    if selected {
-                        ui.painter().rect_stroke(
-                            rect,
-                            4.0,
-                            egui::Stroke::new(1.0, CHROME_ACCENT_BORDER()),
-                            egui::StrokeKind::Inside,
+                let open = !collapsed.contains(&g.id);
+                paint_group_header(
+                    ui,
+                    client,
+                    icons,
+                    list_w,
+                    &g.id,
+                    &g.name,
+                    open,
+                    true,
+                    &mut collapsed,
+                    &mut delete_group_id,
+                    &mut pending_group_drop,
+                    &mut pending_drop_on_group,
+                );
+                if open {
+                    for (id, name, loop_on, _) in members {
+                        paint_scenario_row(
+                            ui,
+                            client,
+                            icons,
+                            list_w,
+                            &id,
+                            &name,
+                            loop_on,
+                            &g.id,
+                            &mut delete_id,
+                            &mut pending_scn_drop,
+                            &mut pending_drop_on_group,
                         );
-                    }
-                    let mut label = name;
-                    if label.is_empty() {
-                        label = id.clone();
-                    }
-                    let loop_bit = if loop_on {
-                        format!(" · loop {loop_n}")
-                    } else if loop_n > 0 {
-                        format!(" · ×{loop_n}")
-                    } else {
-                        String::new()
-                    };
-                    let trash_rect = egui::Rect::from_min_size(
-                        egui::pos2((rect.right() - TRASH_W - 4.0).max(rect.left()), rect.top()),
-                        egui::vec2(TRASH_W.min(rect.width()), ROW_H),
-                    );
-                    // Ellipsize so label never paints under the trash icon.
-                    let text_rect = egui::Rect::from_min_max(
-                        egui::pos2(rect.left() + 8.0, rect.top()),
-                        egui::pos2((trash_rect.left() - 6.0).max(rect.left() + 8.0), rect.bottom()),
-                    );
-                    paint_truncated_label(
-                        ui,
-                        text_rect,
-                        format!("{label}  ·  {state}{loop_bit}"),
-                        text_color,
-                        13.0,
-                    );
-                    // Per-row trash (profiles/sims pattern).
-                    let trash_id = egui::Id::new(("scn_trash", id.as_str()));
-                    let trash_resp = ui.interact(trash_rect, trash_id, Sense::click());
-                    if let Some(tex) = icons.get("delete_red") {
-                        let sz = 14.0_f32;
-                        let img = egui::Rect::from_center_size(trash_rect.center(), egui::vec2(sz, sz));
-                        ui.painter().image(
-                            tex.id(),
-                            img,
-                            egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
-                            Color32::WHITE,
-                        );
-                    }
-                    if trash_resp.clicked() {
-                        delete_id = Some(id.clone());
-                    } else if resp.hovered() && !selected && !trash_resp.hovered() {
-                        ui.painter()
-                            .rect_filled(rect, 4.0, CHROME_HOVER().gamma_multiply(0.35));
-                    }
-                    if resp.clicked() && !trash_resp.clicked() {
-                        client.select(id);
                     }
                 }
             }
-            if client.rows.is_empty() {
+
+            // Ungrouped at end — show when non-empty OR while dragging (drop target).
+            let ungrouped: Vec<(String, String, bool, i64)> = {
+                let mut v: Vec<_> = client
+                    .rows
+                    .iter()
+                    .filter(|r| r.group_id.is_empty())
+                    .map(|r| (r.id.clone(), r.name.clone(), r.loop_, r.sort))
+                    .collect();
+                v.sort_by_key(|(_, _, _, sort)| *sort);
+                v
+            };
+            let show_ungrouped = !ungrouped.is_empty() || is_scn_dragging;
+            if show_ungrouped {
+                any_row = true;
+                let ug_key = "";
+                let open = !collapsed.contains(ug_key);
+                paint_group_header(
+                    ui,
+                    client,
+                    icons,
+                    list_w,
+                    ug_key,
+                    "Ungrouped",
+                    open,
+                    false, // no group reorder / trash on Ungrouped
+                    &mut collapsed,
+                    &mut delete_group_id,
+                    &mut pending_group_drop,
+                    &mut pending_drop_on_group,
+                );
+                if open {
+                    for (id, name, loop_on, _) in ungrouped {
+                        paint_scenario_row(
+                            ui,
+                            client,
+                            icons,
+                            list_w,
+                            &id,
+                            &name,
+                            loop_on,
+                            "",
+                            &mut delete_id,
+                            &mut pending_scn_drop,
+                            &mut pending_drop_on_group,
+                        );
+                    }
+                }
+            }
+
+            ui.ctx().data_mut(|d| d.insert_temp(collapsed_key, collapsed));
+
+            if !any_row && client.rows.is_empty() {
                 ui.label(
                     RichText::new("No scenarios yet — Add to author a script.")
                         .color(CHROME_MUTED())
@@ -403,6 +499,533 @@ fn paint_left(
             Ok(()) => *status = "Scenario deleted".into(),
             Err(e) => *status = e,
         }
+    }
+    if let Some(gid) = delete_group_id {
+        match client.delete_group(&gid) {
+            Ok(()) => *status = "Group deleted (members ungrouped)".into(),
+            Err(e) => *status = e,
+        }
+    }
+    if let Some((drag, target, target_gid, after)) = pending_scn_drop {
+        apply_scenario_reorder(client, status, &drag, &target, &target_gid, after);
+    } else if let Some((drag, target_gid)) = pending_drop_on_group {
+        apply_scenario_to_group(client, status, &drag, &target_gid);
+    }
+    if let Some((drag, target, after)) = pending_group_drop {
+        apply_group_reorder(client, status, &drag, &target, after);
+    }
+}
+
+fn paint_group_header(
+    ui: &mut egui::Ui,
+    client: &mut ScenarioClientState,
+    icons: &IconSet,
+    list_w: f32,
+    group_id: &str,
+    title: &str,
+    open: bool,
+    named: bool,
+    collapsed: &mut HashSet<String>,
+    delete_group_id: &mut Option<String>,
+    pending_group_drop: &mut Option<(String, String, bool)>,
+    pending_drop_on_group: &mut Option<(String, String)>,
+) {
+    let selected = client.selected_group_id.as_deref() == Some(group_id);
+    let row_w = list_w.max(ui.available_width());
+    let (rect, drop_resp) = ui.allocate_exact_size(egui::vec2(row_w, ROW_H), Sense::click());
+    let fill = if selected {
+        CHROME_ACCENT_SOFT()
+    } else {
+        Color32::from_rgba_unmultiplied(CHROME_ROW().r(), CHROME_ROW().g(), CHROME_ROW().b(), 180)
+    };
+    ui.painter().rect_filled(rect, 4.0, fill);
+    if selected {
+        ui.painter().rect_stroke(
+            rect,
+            4.0,
+            egui::Stroke::new(1.0, CHROME_ACCENT_BORDER()),
+            egui::StrokeKind::Inside,
+        );
+    }
+
+    let mut x = rect.left() + 2.0;
+    // Grip only on named groups (reorder).
+    if named {
+        let g = egui::Rect::from_min_size(egui::pos2(x, rect.top()), egui::vec2(GRIP_W, ROW_H));
+        icons::paint_drag_grip(ui, g);
+        let grip_id = egui::Id::new(("scn_grp_grip", group_id));
+        let grip_resp = hover_tip::attach(
+            ui.interact(g, grip_id, Sense::drag())
+                .on_hover_cursor(CursorIcon::Grab),
+            "Drag to reorder groups",
+        );
+        if grip_resp.dragged() {
+            grip_resp.dnd_set_drag_payload(GroupDnd(group_id.to_string()));
+        }
+        if ui.ctx().is_being_dragged(grip_id) {
+            if let Some(pos) = ui.ctx().pointer_interact_pos() {
+                let layer = egui::LayerId::new(egui::Order::Tooltip, grip_id);
+                ui.ctx().layer_painter(layer).rect_filled(
+                    egui::Rect::from_center_size(pos, egui::vec2(GRIP_W, ROW_H)),
+                    2.0,
+                    CHROME_HOVER(),
+                );
+            }
+        }
+        x = g.right() + 2.0;
+    }
+
+    // Disclosure triangle.
+    let tri_rect = egui::Rect::from_min_size(egui::pos2(x, rect.top()), egui::vec2(14.0, ROW_H));
+    let tri_resp = ui.interact(
+        tri_rect,
+        egui::Id::new(("scn_grp_tri", group_id)),
+        Sense::click(),
+    );
+    egui::collapsing_header::paint_default_icon(ui, if open { 1.0 } else { 0.0 }, &tri_resp);
+    if tri_resp.clicked() {
+        if open {
+            collapsed.insert(group_id.to_string());
+        } else {
+            collapsed.remove(group_id);
+        }
+    }
+    x = tri_rect.right() + 4.0;
+
+    let trash_rect = if named {
+        egui::Rect::from_min_size(
+            egui::pos2((rect.right() - TRASH_W - 4.0).max(x), rect.top()),
+            egui::vec2(TRASH_W.min(rect.width()), ROW_H),
+        )
+    } else {
+        egui::Rect::NOTHING
+    };
+    let mut trash_clicked = false;
+    if named {
+        let trash_resp = ui.interact(
+            trash_rect,
+            egui::Id::new(("scn_grp_trash", group_id)),
+            Sense::click(),
+        );
+        if let Some(tex) = icons.get("delete_red") {
+            let img = egui::Rect::from_center_size(trash_rect.center(), egui::vec2(14.0, 14.0));
+            ui.painter().image(
+                tex.id(),
+                img,
+                egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+                Color32::WHITE,
+            );
+        }
+        if trash_resp.clicked() {
+            *delete_group_id = Some(group_id.to_string());
+            trash_clicked = true;
+        }
+    }
+    let text_right = if named {
+        (trash_rect.left() - 6.0).max(x)
+    } else {
+        rect.right() - 6.0
+    };
+    paint_truncated_label(
+        ui,
+        egui::Rect::from_min_max(egui::pos2(x, rect.top()), egui::pos2(text_right, rect.bottom())),
+        title.to_string(),
+        CHROME_TEXT(),
+        13.0,
+    );
+
+    // Click header body → select group (not trash/triangle).
+    if drop_resp.clicked() && !tri_resp.clicked() && !trash_clicked {
+        client.select_group(group_id.to_string());
+    }
+
+    // Drop scenario onto group header → move into group (end).
+    if let Some(payload) = drop_resp.dnd_hover_payload::<ScenarioDnd>() {
+        ui.painter().rect_stroke(
+            rect,
+            4.0,
+            egui::Stroke::new(2.0, CHROME_ACCENT_BORDER()),
+            egui::StrokeKind::Inside,
+        );
+        let _ = payload;
+    }
+    if let Some(payload) = drop_resp.dnd_release_payload::<ScenarioDnd>() {
+        *pending_drop_on_group = Some((payload.0.clone(), group_id.to_string()));
+    }
+
+    // Drop group onto group header → reorder named groups.
+    if named {
+        if let Some(payload) = drop_resp.dnd_hover_payload::<GroupDnd>() {
+            if payload.0.as_str() != group_id {
+                let after = drop_resp
+                    .hover_pos()
+                    .map(|p| p.y > rect.center().y)
+                    .unwrap_or(false);
+                let y = if after { rect.bottom() } else { rect.top() };
+                ui.painter().hline(
+                    rect.x_range(),
+                    y,
+                    egui::Stroke::new(2.0, CHROME_ACCENT_BORDER()),
+                );
+            }
+        }
+        if let Some(payload) = drop_resp.dnd_release_payload::<GroupDnd>() {
+            if payload.0.as_str() != group_id {
+                let after = drop_resp
+                    .interact_pointer_pos()
+                    .or_else(|| drop_resp.hover_pos())
+                    .map(|p| p.y > rect.center().y)
+                    .unwrap_or(false);
+                *pending_group_drop = Some((payload.0.clone(), group_id.to_string(), after));
+            }
+        }
+    }
+}
+
+fn paint_scenario_row(
+    ui: &mut egui::Ui,
+    client: &mut ScenarioClientState,
+    icons: &IconSet,
+    list_w: f32,
+    id: &str,
+    name: &str,
+    loop_on: bool,
+    group_id: &str,
+    delete_id: &mut Option<String>,
+    pending_scn_drop: &mut Option<(String, String, String, bool)>,
+    _pending_drop_on_group: &mut Option<(String, String)>,
+) {
+    let st = client.status_for(id);
+    let state = st.map(|s| s.state.as_str()).unwrap_or("stopped");
+    let loop_n = st.map(|s| s.loop_n).unwrap_or(0);
+    let selected = client.selected_id.as_deref() == Some(id);
+    // Running = green; paused = amber (profiles Connected green pattern).
+    let (fill, text_color) = match (selected, state) {
+        (true, _) => (CHROME_ACCENT_SOFT(), CHROME_TEXT()),
+        (false, "running") => (
+            Color32::from_rgba_unmultiplied(90, 190, 120, 40),
+            Color32::from_rgb(90, 190, 120),
+        ),
+        (false, "paused") => (
+            Color32::from_rgba_unmultiplied(220, 180, 80, 40),
+            Color32::from_rgb(220, 180, 80),
+        ),
+        _ => (CHROME_ROW(), CHROME_MUTED()),
+    };
+    let row_w = list_w.max(ui.available_width());
+    let (rect, drop_resp) = ui.allocate_exact_size(egui::vec2(row_w, ROW_H), Sense::click());
+    if !ui.is_rect_visible(rect) {
+        return;
+    }
+    ui.painter().rect_filled(rect, 4.0, fill);
+    if selected {
+        ui.painter().rect_stroke(
+            rect,
+            4.0,
+            egui::Stroke::new(1.0, CHROME_ACCENT_BORDER()),
+            egui::StrokeKind::Inside,
+        );
+    }
+
+    let grip_rect = egui::Rect::from_min_size(
+        egui::pos2(rect.left() + 2.0 + SCENARIO_INDENT, rect.top()),
+        egui::vec2(GRIP_W, ROW_H),
+    );
+    icons::paint_drag_grip(ui, grip_rect);
+    let grip_id = egui::Id::new(("scn_row_grip", id));
+    let grip_resp = hover_tip::attach(
+        ui.interact(grip_rect, grip_id, Sense::drag())
+            .on_hover_cursor(CursorIcon::Grab),
+        "Drag to reorder",
+    );
+    if grip_resp.dragged() {
+        grip_resp.dnd_set_drag_payload(ScenarioDnd(id.to_string()));
+    }
+    if ui.ctx().is_being_dragged(grip_id) {
+        if let Some(pos) = ui.ctx().pointer_interact_pos() {
+            let layer = egui::LayerId::new(egui::Order::Tooltip, grip_id);
+            ui.ctx().layer_painter(layer).rect_filled(
+                egui::Rect::from_center_size(pos, egui::vec2(GRIP_W, ROW_H)),
+                2.0,
+                CHROME_HOVER(),
+            );
+        }
+    }
+
+    let trash_rect = egui::Rect::from_min_size(
+        egui::pos2((rect.right() - TRASH_W - 4.0).max(grip_rect.right()), rect.top()),
+        egui::vec2(TRASH_W.min(rect.width()), ROW_H),
+    );
+    let mut label = name.to_string();
+    if label.is_empty() {
+        label = id.to_string();
+    }
+    let loop_bit = if loop_on {
+        format!(" · loop {loop_n}")
+    } else if loop_n > 0 {
+        format!(" · ×{loop_n}")
+    } else {
+        String::new()
+    };
+    let text_rect = egui::Rect::from_min_max(
+        egui::pos2(grip_rect.right() + 4.0, rect.top()),
+        egui::pos2((trash_rect.left() - 6.0).max(grip_rect.right() + 4.0), rect.bottom()),
+    );
+    paint_truncated_label(
+        ui,
+        text_rect,
+        format!("{label}  ·  {state}{loop_bit}"),
+        text_color,
+        13.0,
+    );
+
+    let trash_resp = ui.interact(
+        trash_rect,
+        egui::Id::new(("scn_trash", id)),
+        Sense::click(),
+    );
+    if let Some(tex) = icons.get("delete_red") {
+        let img = egui::Rect::from_center_size(trash_rect.center(), egui::vec2(14.0, 14.0));
+        ui.painter().image(
+            tex.id(),
+            img,
+            egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+            Color32::WHITE,
+        );
+    }
+    if trash_resp.clicked() {
+        *delete_id = Some(id.to_string());
+    } else if drop_resp.hovered() && !selected && !trash_resp.hovered() && !grip_resp.hovered() {
+        ui.painter()
+            .rect_filled(rect, 4.0, CHROME_HOVER().gamma_multiply(0.35));
+    }
+    if drop_resp.clicked() && !trash_resp.clicked() && !grip_resp.dragged() {
+        client.select_scenario(id.to_string());
+    }
+
+    // Drop scenario relative to this row (same or cross-group).
+    if let Some(payload) = drop_resp.dnd_hover_payload::<ScenarioDnd>() {
+        if payload.0.as_str() != id {
+            let after = drop_resp
+                .hover_pos()
+                .map(|p| p.y > rect.center().y)
+                .unwrap_or(false);
+            let y = if after { rect.bottom() } else { rect.top() };
+            ui.painter().hline(
+                rect.x_range(),
+                y,
+                egui::Stroke::new(2.0, CHROME_ACCENT_BORDER()),
+            );
+        }
+    }
+    if let Some(payload) = drop_resp.dnd_release_payload::<ScenarioDnd>() {
+        if payload.0.as_str() != id {
+            let after = drop_resp
+                .interact_pointer_pos()
+                .or_else(|| drop_resp.hover_pos())
+                .map(|p| p.y > rect.center().y)
+                .unwrap_or(false);
+            *pending_scn_drop = Some((
+                payload.0.clone(),
+                id.to_string(),
+                group_id.to_string(),
+                after,
+            ));
+        }
+    }
+}
+
+fn apply_scenario_reorder(
+    client: &mut ScenarioClientState,
+    status: &mut String,
+    drag_id: &str,
+    target_id: &str,
+    target_gid: &str,
+    after: bool,
+) {
+    let mut members: Vec<String> = client
+        .rows
+        .iter()
+        .filter(|r| r.group_id == target_gid && r.id != drag_id)
+        .map(|r| r.id.clone())
+        .collect();
+    // Preserve current relative order among remaining (already sorted by poll).
+    members.sort_by_key(|id| {
+        client
+            .rows
+            .iter()
+            .find(|r| r.id == *id)
+            .map(|r| r.sort)
+            .unwrap_or(0)
+    });
+    let insert_at = members
+        .iter()
+        .position(|id| id == target_id)
+        .map(|i| if after { i + 1 } else { i })
+        .unwrap_or(members.len());
+    members.insert(insert_at.min(members.len()), drag_id.to_string());
+    let placements: Vec<ScenarioPlacement> = members
+        .into_iter()
+        .enumerate()
+        .map(|(i, id)| ScenarioPlacement {
+            id,
+            group_id: target_gid.to_string(),
+            sort: i as i64,
+        })
+        .collect();
+    match client.reorder(None, placements) {
+        Ok(()) => *status = "Reordered scenarios".into(),
+        Err(e) => *status = e,
+    }
+}
+
+fn apply_scenario_to_group(
+    client: &mut ScenarioClientState,
+    status: &mut String,
+    drag_id: &str,
+    target_gid: &str,
+) {
+    let mut members: Vec<String> = client
+        .rows
+        .iter()
+        .filter(|r| r.group_id == target_gid && r.id != drag_id)
+        .map(|r| r.id.clone())
+        .collect();
+    members.sort_by_key(|id| {
+        client
+            .rows
+            .iter()
+            .find(|r| r.id == *id)
+            .map(|r| r.sort)
+            .unwrap_or(0)
+    });
+    members.push(drag_id.to_string());
+    let placements: Vec<ScenarioPlacement> = members
+        .into_iter()
+        .enumerate()
+        .map(|(i, id)| ScenarioPlacement {
+            id,
+            group_id: target_gid.to_string(),
+            sort: i as i64,
+        })
+        .collect();
+    match client.reorder(None, placements) {
+        Ok(()) => *status = "Moved scenario to group".into(),
+        Err(e) => *status = e,
+    }
+}
+
+fn apply_group_reorder(
+    client: &mut ScenarioClientState,
+    status: &mut String,
+    drag_id: &str,
+    target_id: &str,
+    after: bool,
+) {
+    let mut ids: Vec<String> = client
+        .groups
+        .iter()
+        .filter(|g| g.id != drag_id)
+        .map(|g| g.id.clone())
+        .collect();
+    let insert_at = ids
+        .iter()
+        .position(|id| id == target_id)
+        .map(|i| if after { i + 1 } else { i })
+        .unwrap_or(ids.len());
+    ids.insert(insert_at.min(ids.len()), drag_id.to_string());
+    match client.reorder(Some(ids), Vec::new()) {
+        Ok(()) => *status = "Reordered groups".into(),
+        Err(e) => *status = e,
+    }
+}
+
+fn draw_add_group_modal(
+    ctx: &egui::Context,
+    client: &mut ScenarioClientState,
+    icons: &IconSet,
+    status: &mut String,
+) {
+    let open_key = egui::Id::new("scn_add_group_open");
+    let name_key = egui::Id::new("scn_add_group_name");
+    let open = ctx.data(|d| d.get_temp::<bool>(open_key)).unwrap_or(false);
+    if !open {
+        return;
+    }
+    let mut name = ctx
+        .data(|d| d.get_temp::<String>(name_key))
+        .unwrap_or_default();
+    let mut close = false;
+    let mut do_create = false;
+    egui::Modal::new(egui::Id::new("topicbench_scn_add_group")).show(ctx, |ui| {
+        ui.set_min_width(360.0);
+        ui.set_max_width(400.0);
+        icons::section_header_bar(ui, |ui| {
+            icons::section_icon(ui, icons, "profile_add");
+            icons::section_title(ui, "Add group");
+        });
+        ui.add_space(6.0);
+        let bar_w = ui.available_width();
+        let (bar, _) = ui.allocate_exact_size(egui::vec2(bar_w, 3.0), egui::Sense::hover());
+        ui.painter().rect_filled(bar, 1.5, CHROME_ACCENT_BORDER());
+        ui.add_space(12.0);
+        ui.label(RichText::new("Name").strong());
+        ui.add_space(4.0);
+        let resp = ui.add(
+            egui::TextEdit::singleline(&mut name)
+                .desired_width(ui.available_width())
+                .hint_text("Group name"),
+        );
+        if resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+            do_create = !name.trim().is_empty();
+        }
+        ui.add_space(14.0);
+        ui.separator();
+        ui.add_space(8.0);
+        ui.horizontal(|ui| {
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.spacing_mut().item_spacing.x = 8.0;
+                let ok = ui.add_enabled(
+                    !name.trim().is_empty(),
+                    egui::Button::new(RichText::new("OK").strong())
+                        .fill(CHROME_ACCENT_SOFT())
+                        .stroke(egui::Stroke::new(1.0_f32, CHROME_ACCENT_BORDER()))
+                        .min_size(egui::vec2(120.0, 32.0)),
+                );
+                if ok.clicked() {
+                    do_create = true;
+                }
+                let cancel = if let Some(tex) = icons.get("close_red") {
+                    ui.add(
+                        egui::Button::image_and_text(
+                            egui::Image::new(tex)
+                                .fit_to_exact_size(egui::vec2(TINY_ICON, TINY_ICON)),
+                            "Cancel",
+                        )
+                        .min_size(egui::vec2(104.0, 32.0)),
+                    )
+                } else {
+                    ui.add(egui::Button::new("Cancel").min_size(egui::vec2(104.0, 32.0)))
+                };
+                if cancel.clicked() {
+                    close = true;
+                }
+            });
+        });
+    });
+    ctx.data_mut(|d| d.insert_temp(name_key, name.clone()));
+    if do_create {
+        match client.upsert_group(None, name.trim()) {
+            Ok(g) => *status = format!("Added group {}", g.name),
+            Err(e) => *status = e,
+        }
+        close = true;
+    }
+    if close {
+        ctx.data_mut(|d| {
+            d.insert_temp(open_key, false);
+            d.remove_temp::<String>(name_key);
+        });
     }
 }
 
@@ -420,11 +1043,12 @@ fn paint_right(
     ui.set_max_width(pane_w);
 
     let Some(sel_id) = client.selected_id.clone() else {
-        ui.label(
-            RichText::new("Select a scenario on the left to edit its steps.")
-                .color(CHROME_MUTED())
-                .italics(),
-        );
+        let tip = if client.selected_group_id.is_some() {
+            "Group selected — pick a scenario inside it to edit steps."
+        } else {
+            "Select a scenario on the left to edit its steps."
+        };
+        ui.label(RichText::new(tip).color(CHROME_MUTED()).italics());
         return;
     };
 
@@ -1032,9 +1656,12 @@ fn handle_import_export(
 ) {
     let export_dlg = egui::Id::new("dlg_scn_export");
     let export_text_key = egui::Id::new("dlg_scn_export_text");
+    let export_modal_key = egui::Id::new("scn_export_modal_open");
+    let export_scope_key = egui::Id::new("scn_export_scope");
     let import_dlg = egui::Id::new("dlg_scn_import");
-    let import_mode_dlg = egui::Id::new("dlg_scn_import_mode");
     let import_path_key = egui::Id::new("dlg_scn_import_path");
+    let import_modal_key = egui::Id::new("scn_import_modal_open");
+    let import_choice_key = egui::Id::new("scn_import_choice");
     let armed = client.toolbar_armed();
 
     if icons
@@ -1042,24 +1669,145 @@ fn handle_import_export(
         .clicked()
         && armed
     {
-        match client.export() {
-            Ok(v) => match serde_json::to_string_pretty(&v) {
-                Ok(text) => {
-                    ui.ctx().data_mut(|d| d.insert_temp(export_text_key, text));
-                    crate::ui::native_dialog::begin_path(
-                        ui.ctx(),
-                        export_dlg,
-                        crate::ui::native_dialog::PathOp::SaveFile,
-                        |d| {
-                            d.set_title("Export scenarios")
-                                .set_file_name("scenarios.json")
-                                .add_filter("JSON", &["json"])
-                        },
-                    );
+        let default = if client.selected_group_id.is_some() {
+            ExportScopeChoice::SelectedGroup
+        } else {
+            ExportScopeChoice::Everything
+        };
+        ui.ctx().data_mut(|d| {
+            d.insert_temp(export_modal_key, true);
+            d.insert_temp(export_scope_key, default);
+        });
+    }
+
+    // Export modal (scope) then native SaveFile.
+    let export_open = ui
+        .ctx()
+        .data(|d| d.get_temp::<bool>(export_modal_key))
+        .unwrap_or(false);
+    if export_open {
+        let has_group = client.selected_group_id.is_some();
+        let mut scope = ui
+            .ctx()
+            .data(|d| d.get_temp::<ExportScopeChoice>(export_scope_key))
+            .unwrap_or(if has_group {
+                ExportScopeChoice::SelectedGroup
+            } else {
+                ExportScopeChoice::Everything
+            });
+        let mut close = false;
+        let mut do_export = false;
+        egui::Modal::new(egui::Id::new("topicbench_scn_export")).show(ui.ctx(), |ui| {
+            ui.set_min_width(380.0);
+            ui.set_max_width(420.0);
+            icons::section_header_bar(ui, |ui| {
+                icons::section_icon(ui, icons, "export");
+                icons::section_title(ui, "Export scenarios");
+            });
+            ui.add_space(6.0);
+            let bar_w = ui.available_width();
+            let (bar, _) = ui.allocate_exact_size(egui::vec2(bar_w, 3.0), egui::Sense::hover());
+            ui.painter().rect_filled(bar, 1.5, CHROME_ACCENT_BORDER());
+            ui.add_space(12.0);
+            ui.label(RichText::new("Scope").strong());
+            ui.add_space(4.0);
+            ui.add_enabled_ui(has_group, |ui| {
+                ui.radio_value(
+                    &mut scope,
+                    ExportScopeChoice::SelectedGroup,
+                    "Selected group",
+                );
+            });
+            if !has_group {
+                ui.label(
+                    RichText::new("Select a group (or Ungrouped) on the left")
+                        .small()
+                        .color(CHROME_MUTED()),
+                );
+            }
+            ui.radio_value(&mut scope, ExportScopeChoice::Everything, "Everything");
+            ui.add_space(14.0);
+            ui.separator();
+            ui.add_space(8.0);
+            ui.horizontal(|ui| {
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.spacing_mut().item_spacing.x = 8.0;
+                    let can = has_group || scope == ExportScopeChoice::Everything;
+                    let export_btn = if let Some(tex) = icons.get("export") {
+                        ui.add_enabled(
+                            can,
+                            egui::Button::image_and_text(
+                                egui::Image::new(tex)
+                                    .fit_to_exact_size(egui::vec2(TINY_ICON, TINY_ICON)),
+                                RichText::new("Export…").strong(),
+                            )
+                            .fill(CHROME_ACCENT_SOFT())
+                            .stroke(egui::Stroke::new(1.0_f32, CHROME_ACCENT_BORDER()))
+                            .min_size(egui::vec2(120.0, 32.0)),
+                        )
+                    } else {
+                        ui.add_enabled(
+                            can,
+                            egui::Button::new(RichText::new("Export…").strong())
+                                .fill(CHROME_ACCENT_SOFT())
+                                .stroke(egui::Stroke::new(1.0_f32, CHROME_ACCENT_BORDER()))
+                                .min_size(egui::vec2(120.0, 32.0)),
+                        )
+                    };
+                    if export_btn.clicked() {
+                        do_export = true;
+                    }
+                    let cancel = if let Some(tex) = icons.get("close_red") {
+                        ui.add(
+                            egui::Button::image_and_text(
+                                egui::Image::new(tex)
+                                    .fit_to_exact_size(egui::vec2(TINY_ICON, TINY_ICON)),
+                                "Cancel",
+                            )
+                            .min_size(egui::vec2(104.0, 32.0)),
+                        )
+                    } else {
+                        ui.add(egui::Button::new("Cancel").min_size(egui::vec2(104.0, 32.0)))
+                    };
+                    if cancel.clicked() {
+                        close = true;
+                    }
+                });
+            });
+        });
+        ui.ctx().data_mut(|d| d.insert_temp(export_scope_key, scope));
+        if do_export {
+            let fetched = match scope {
+                ExportScopeChoice::Everything => client.export_all(),
+                ExportScopeChoice::SelectedGroup => {
+                    let gid = client.selected_group_id.clone().unwrap_or_default();
+                    client.export_group(&gid)
                 }
-                Err(e) => *status = format!("json: {e}"),
-            },
-            Err(e) => *status = e,
+            };
+            match fetched {
+                Ok(v) => match serde_json::to_string_pretty(&v) {
+                    Ok(text) => {
+                        ui.ctx().data_mut(|d| d.insert_temp(export_text_key, text));
+                        crate::ui::native_dialog::begin_path(
+                            ui.ctx(),
+                            export_dlg,
+                            crate::ui::native_dialog::PathOp::SaveFile,
+                            |d| {
+                                d.set_title("Export scenarios")
+                                    .set_file_name("scenarios.json")
+                                    .add_filter("JSON", &["json"])
+                            },
+                        );
+                        close = true;
+                    }
+                    Err(e) => *status = format!("json: {e}"),
+                },
+                Err(e) => *status = e,
+            }
+        }
+        if close {
+            ui.ctx()
+                .data_mut(|d| d.insert_temp(export_modal_key, false));
         }
     }
     if let Some(path_opt) = crate::ui::native_dialog::poll_path(ui.ctx(), export_dlg) {
@@ -1096,37 +1844,179 @@ fn handle_import_export(
         );
     }
     if let Some(Some(path)) = crate::ui::native_dialog::poll_path(ui.ctx(), import_dlg) {
-        if client.rows.is_empty() {
-            finish_scenario_import(client, status, &path, "replace");
-        } else {
-            ui.ctx().data_mut(|d| d.insert_temp(import_path_key, path));
-            crate::ui::native_dialog::begin_message(ui.ctx(), import_mode_dlg, |d| {
-                d.set_level(rfd::MessageLevel::Info)
-                    .set_title("Import scenarios")
-                    .set_description(
-                        "Replace the current list, or Merge (upsert by id and append the rest)?\n\
-                         Accepts bare [ … ] or { \"scenarios\": [ … ] }.",
-                    )
-                    .set_buttons(rfd::MessageButtons::YesNoCancelCustom(
-                        "Replace".into(),
-                        "Merge".into(),
-                        "Cancel".into(),
-                    ))
-            });
-        }
+        let default = ImportModeChoice::Merge;
+        ui.ctx().data_mut(|d| {
+            d.insert_temp(import_path_key, path);
+            d.insert_temp(import_modal_key, true);
+            d.insert_temp(import_choice_key, default);
+        });
     }
-    if let Some(result) = crate::ui::native_dialog::poll_message(ui.ctx(), import_mode_dlg) {
-        if let Some(mode) = crate::ui::native_dialog::replace_merge_mode(result) {
+
+    // Import modal (replace / merge / into group).
+    let import_open = ui
+        .ctx()
+        .data(|d| d.get_temp::<bool>(import_modal_key))
+        .unwrap_or(false);
+    if import_open {
+        let groups = client.groups.clone();
+        let mut choice = ui
+            .ctx()
+            .data(|d| d.get_temp::<ImportModeChoice>(import_choice_key))
+            .unwrap_or(ImportModeChoice::Merge);
+        let mut close = false;
+        let mut do_import = false;
+        egui::Modal::new(egui::Id::new("topicbench_scn_import")).show(ui.ctx(), |ui| {
+            ui.set_min_width(400.0);
+            ui.set_max_width(440.0);
+            icons::section_header_bar(ui, |ui| {
+                icons::section_icon(ui, icons, "import");
+                icons::section_title(ui, "Import scenarios");
+            });
+            ui.add_space(6.0);
+            let bar_w = ui.available_width();
+            let (bar, _) = ui.allocate_exact_size(egui::vec2(bar_w, 3.0), egui::Sense::hover());
+            ui.painter().rect_filled(bar, 1.5, CHROME_ACCENT_BORDER());
+            ui.add_space(12.0);
+            ui.label(RichText::new("Mode").strong());
+            ui.add_space(4.0);
+            if ui
+                .radio(
+                    matches!(choice, ImportModeChoice::Replace),
+                    "Replace everything",
+                )
+                .clicked()
+            {
+                choice = ImportModeChoice::Replace;
+            }
+            if ui
+                .radio(
+                    matches!(choice, ImportModeChoice::Merge),
+                    "Merge everything",
+                )
+                .clicked()
+            {
+                choice = ImportModeChoice::Merge;
+            }
+            let into_sel = matches!(choice, ImportModeChoice::IntoGroup { .. });
+            if ui.radio(into_sel, "Into a group").clicked() {
+                choice = ImportModeChoice::IntoGroup {
+                    group_id: String::new(),
+                    new_name: String::new(),
+                };
+            }
+            if let ImportModeChoice::IntoGroup {
+                group_id,
+                new_name,
+            } = &mut choice
+            {
+                ui.add_space(6.0);
+                ui.indent("scn_into_group", |ui| {
+                    let label = if group_id.is_empty() {
+                        "New group…".to_string()
+                    } else {
+                        groups
+                            .iter()
+                            .find(|g| g.id == *group_id)
+                            .map(|g| g.name.clone())
+                            .unwrap_or_else(|| group_id.clone())
+                    };
+                    egui::ComboBox::from_id_salt("scn_import_into_group")
+                        .selected_text(label)
+                        .width(ui.available_width().min(280.0))
+                        .show_ui(ui, |ui| {
+                            if ui
+                                .selectable_label(group_id.is_empty(), "New group…")
+                                .clicked()
+                            {
+                                group_id.clear();
+                            }
+                            for g in &groups {
+                                if ui.selectable_label(group_id == &g.id, &g.name).clicked() {
+                                    *group_id = g.id.clone();
+                                }
+                            }
+                        });
+                    if group_id.is_empty() {
+                        ui.add_space(4.0);
+                        ui.add(
+                            egui::TextEdit::singleline(new_name)
+                                .desired_width(ui.available_width())
+                                .hint_text("New group name"),
+                        );
+                    }
+                });
+            }
+            ui.add_space(14.0);
+            ui.separator();
+            ui.add_space(8.0);
+            ui.horizontal(|ui| {
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.spacing_mut().item_spacing.x = 8.0;
+                    let into_ok = match &choice {
+                        ImportModeChoice::IntoGroup {
+                            group_id,
+                            new_name,
+                        } => !group_id.is_empty() || !new_name.trim().is_empty(),
+                        _ => true,
+                    };
+                    let import_btn = if let Some(tex) = icons.get("import") {
+                        ui.add_enabled(
+                            into_ok,
+                            egui::Button::image_and_text(
+                                egui::Image::new(tex)
+                                    .fit_to_exact_size(egui::vec2(TINY_ICON, TINY_ICON)),
+                                RichText::new("Import").strong(),
+                            )
+                            .fill(CHROME_ACCENT_SOFT())
+                            .stroke(egui::Stroke::new(1.0_f32, CHROME_ACCENT_BORDER()))
+                            .min_size(egui::vec2(120.0, 32.0)),
+                        )
+                    } else {
+                        ui.add_enabled(
+                            into_ok,
+                            egui::Button::new(RichText::new("Import").strong())
+                                .fill(CHROME_ACCENT_SOFT())
+                                .stroke(egui::Stroke::new(1.0_f32, CHROME_ACCENT_BORDER()))
+                                .min_size(egui::vec2(120.0, 32.0)),
+                        )
+                    };
+                    if import_btn.clicked() {
+                        do_import = true;
+                    }
+                    let cancel = if let Some(tex) = icons.get("close_red") {
+                        ui.add(
+                            egui::Button::image_and_text(
+                                egui::Image::new(tex)
+                                    .fit_to_exact_size(egui::vec2(TINY_ICON, TINY_ICON)),
+                                "Cancel",
+                            )
+                            .min_size(egui::vec2(104.0, 32.0)),
+                        )
+                    } else {
+                        ui.add(egui::Button::new("Cancel").min_size(egui::vec2(104.0, 32.0)))
+                    };
+                    if cancel.clicked() {
+                        close = true;
+                    }
+                });
+            });
+        });
+        ui.ctx()
+            .data_mut(|d| d.insert_temp(import_choice_key, choice.clone()));
+        if do_import {
             if let Some(path) = ui
                 .ctx()
                 .data_mut(|d| d.remove_temp::<std::path::PathBuf>(import_path_key))
             {
-                finish_scenario_import(client, status, &path, mode);
+                finish_scenario_import(client, status, &path, &choice);
             }
-        } else {
-            let _ = ui
-                .ctx()
-                .data_mut(|d| d.remove_temp::<std::path::PathBuf>(import_path_key));
+            close = true;
+        }
+        if close {
+            ui.ctx().data_mut(|d| {
+                d.insert_temp(import_modal_key, false);
+                d.remove_temp::<std::path::PathBuf>(import_path_key);
+            });
         }
     }
 }
@@ -1135,11 +2025,25 @@ fn finish_scenario_import(
     client: &mut ScenarioClientState,
     status: &mut String,
     path: &std::path::Path,
-    mode: &str,
+    choice: &ImportModeChoice,
 ) {
+    let (mode, gid, gname) = match choice {
+        ImportModeChoice::Replace => ("replace", None, None),
+        ImportModeChoice::Merge => ("merge", None, None),
+        ImportModeChoice::IntoGroup {
+            group_id,
+            new_name,
+        } => {
+            if group_id.is_empty() {
+                ("into_group", None, Some(new_name.as_str()))
+            } else {
+                ("into_group", Some(group_id.as_str()), None)
+            }
+        }
+    };
     match std::fs::read_to_string(path) {
         Ok(text) => match serde_json::from_str::<serde_json::Value>(&text) {
-            Ok(v) => match client.import_mode(&v, mode) {
+            Ok(v) => match client.import_mode(&v, mode, gid, gname) {
                 Ok(n) => *status = format!("Imported {n} scenarios ({mode})"),
                 Err(e) => *status = e,
             },
