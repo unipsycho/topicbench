@@ -35,6 +35,17 @@ const X_LABEL_H: f32 = 18.0;
 const Y_TICKS: usize = 4;
 const MIN_VP: [f32; 2] = [480.0, 260.0];
 
+/// OS / section title: board name alone when it is already "Combined";
+/// otherwise `Combined: {name}` so custom library names stay labeled.
+fn chrome_title(board_title: &str) -> String {
+    let t = board_title.trim();
+    if t.eq_ignore_ascii_case("combined") {
+        "Combined".into()
+    } else {
+        format!("Combined: {t}")
+    }
+}
+
 /// One plotted series (board-owned buffer; sticky optional).
 struct SeriesPaint<'a> {
     profile_id: &'a str,
@@ -83,7 +94,7 @@ pub fn draw_viewports(
         let Some(board) = store.get(&board_id) else {
             continue;
         };
-        let title = board.display_title();
+        let title = chrome_title(&board.display_title());
         let saved = board.window_geom.unwrap_or_else(|| WinGeom::size(720.0, 360.0));
         let seed = builder_seeds.entry(board_id.clone()).or_insert(saved);
         let mut close = false;
@@ -97,7 +108,7 @@ pub fn draw_viewports(
         ctx.show_viewport_immediate(
             vp_id,
             seed.apply(
-                ViewportBuilder::default().with_title(format!("Combined: {title}")),
+                ViewportBuilder::default().with_title(title.clone()),
                 MIN_VP,
             )
             .with_min_inner_size(MIN_VP),
@@ -121,7 +132,7 @@ pub fn draw_viewports(
                 };
                 match class {
                     ViewportClass::Embedded => {
-                        egui::Window::new(format!("Combined: {title}"))
+                        egui::Window::new(title.clone())
                             .id(egui::Id::new(("combined_win", &board_id)))
                             .title_bar(false)
                             .collapsible(false)
@@ -214,86 +225,105 @@ fn paint_board(
     // Section chrome header (matches Simulation / Export panels).
     let save_id = egui::Id::new(("combined_save_open", board_id));
     let open_id = egui::Id::new(("combined_lib_open", board_id));
+    let header_title = chrome_title(&title);
+    let png_dlg = egui::Id::new(("dlg_combined_png", board_id));
+    let png_h_key = egui::Id::new(("dlg_combined_png_h", board_id));
+    // Capture before the header strip shrinks available height.
+    let export_plot_h = ui.available_height().max(120.0);
     icons::section_header_bar(ui, |ui| {
-        icons::section_icon(ui, icons, "node_graph");
-        icons::section_title(ui, &format!("Combined: {title}"));
-        if series_count > 0 {
-            ui.label(
-                RichText::new(format!("{series_count} series"))
-                    .small()
-                    .color(CHROME_CAPTION()),
+        // Right icons first (fixed strip) so they stay one horizontal row when
+        // the title/combo would otherwise consume the remaining width.
+        ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
+            let icon_gap = 4.0;
+            let icon_cell = TINY_ICON + 4.0; // tiny_header pad 2px each side
+            let n_icons = if series_count > 0 { 5.0 } else { 4.0 };
+            let strip_w = n_icons * icon_cell + (n_icons - 1.0) * icon_gap;
+            ui.allocate_ui_with_layout(
+                egui::vec2(strip_w, icon_cell),
+                egui::Layout::right_to_left(Align::Center),
+                |ui| {
+                    ui.set_max_size(egui::vec2(strip_w, icon_cell));
+                    ui.spacing_mut().item_spacing = egui::vec2(icon_gap, 0.0);
+                    // RTL paint order → visual LTR: save | open | clear | export | close
+                    if icons
+                        .tiny_header(ui, "close_red", false, "Close board")
+                        .clicked()
+                    {
+                        *close = true;
+                    }
+                    if series_count > 0
+                        && icons
+                            .tiny_header(ui, "export", false, "Save Combined graph as PNG")
+                            .clicked()
+                    {
+                        ui.ctx().data_mut(|d| d.insert_temp(png_h_key, export_plot_h));
+                        let name = combined_export_filename();
+                        crate::ui::native_dialog::begin_path(
+                            ui.ctx(),
+                            png_dlg,
+                            crate::ui::native_dialog::PathOp::SaveFile,
+                            move |d| {
+                                d.set_title("Save Combined graph")
+                                    .set_file_name(&name)
+                                    .add_filter("PNG image", &["png"])
+                            },
+                        );
+                    }
+                    if icons
+                        .tiny_header(ui, "delete", false, "Clear display buffer (keep series)")
+                        .clicked()
+                    {
+                        store.clear_display_buffer(board_id);
+                        *status = Some("Combined display buffer cleared".into());
+                    }
+                    if icons
+                        .tiny_header(ui, "import", false, "Recall a saved board")
+                        .clicked()
+                    {
+                        ui.ctx().data_mut(|d| d.insert_temp(open_id, true));
+                    }
+                    if icons
+                        .tiny_header(ui, "save", false, "Save board to library")
+                        .clicked()
+                    {
+                        let draft = store
+                            .get(board_id)
+                            .map(|b| b.display_title())
+                            .unwrap_or_else(|| "Combined".into());
+                        ui.ctx().data_mut(|d| d.insert_temp(save_id, draft));
+                    }
+                },
             );
-        }
-        ui.add_space(8.0);
-        let mut tr = time_range;
-        egui::ComboBox::from_id_salt(("combined_tr", board_id))
-            .selected_text(tr.label())
-            .width(100.0)
-            .show_ui(ui, |ui| {
-                for opt in CombinedTimeRange::ALL {
-                    ui.selectable_value(&mut tr, opt, opt.label());
+
+            // Left chrome fills remaining width.
+            ui.with_layout(egui::Layout::left_to_right(Align::Center), |ui| {
+                ui.spacing_mut().item_spacing.x = 4.0;
+                icons::section_icon(ui, icons, "node_graph");
+                icons::section_title(ui, &header_title);
+                if series_count > 0 {
+                    ui.label(
+                        RichText::new(format!("{series_count} series"))
+                            .small()
+                            .color(CHROME_CAPTION()),
+                    );
+                }
+                ui.add_space(8.0);
+                let mut tr = time_range;
+                egui::ComboBox::from_id_salt(("combined_tr", board_id))
+                    .selected_text(tr.label())
+                    .width(100.0)
+                    .show_ui(ui, |ui| {
+                        for opt in CombinedTimeRange::ALL {
+                            ui.selectable_value(&mut tr, opt, opt.label());
+                        }
+                    });
+                if tr != time_range {
+                    if let Some(b) = store.get_mut(board_id) {
+                        b.time_range = tr;
+                        *persist = true;
+                    }
                 }
             });
-        if tr != time_range {
-            if let Some(b) = store.get_mut(board_id) {
-                b.time_range = tr;
-                *persist = true;
-            }
-        }
-
-        ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
-            ui.spacing_mut().item_spacing.x = 4.0;
-            if icons
-                .tiny_header(ui, "close_red", false, "Close board")
-                .clicked()
-            {
-                *close = true;
-            }
-            let png_dlg = egui::Id::new(("dlg_combined_png", board_id));
-            let png_h_key = egui::Id::new(("dlg_combined_png_h", board_id));
-            if series_count > 0
-                && icons
-                    .tiny_header(ui, "export", false, "Save Combined graph as PNG")
-                    .clicked()
-            {
-                // Export uses on-screen plot height (fills the pop-out).
-                let export_h = ui.available_height().max(120.0);
-                ui.ctx().data_mut(|d| d.insert_temp(png_h_key, export_h));
-                let name = combined_export_filename();
-                crate::ui::native_dialog::begin_path(
-                    ui.ctx(),
-                    png_dlg,
-                    crate::ui::native_dialog::PathOp::SaveFile,
-                    move |d| {
-                        d.set_title("Save Combined graph")
-                            .set_file_name(&name)
-                            .add_filter("PNG image", &["png"])
-                    },
-                );
-            }
-            if icons
-                .tiny_header(ui, "delete", false, "Clear display buffer (keep series)")
-                .clicked()
-            {
-                store.clear_display_buffer(board_id);
-                *status = Some("Combined display buffer cleared".into());
-            }
-            if icons
-                .tiny_header(ui, "import", false, "Recall a saved board")
-                .clicked()
-            {
-                ui.ctx().data_mut(|d| d.insert_temp(open_id, true));
-            }
-            if icons
-                .tiny_header(ui, "save", false, "Save board to library")
-                .clicked()
-            {
-                let draft = store
-                    .get(board_id)
-                    .map(|b| b.display_title())
-                    .unwrap_or_else(|| "Combined".into());
-                ui.ctx().data_mut(|d| d.insert_temp(save_id, draft));
-            }
         });
     });
 
