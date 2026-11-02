@@ -16,12 +16,12 @@ const GRIP_W: f32 = 16.0;
 const TRASH_W: f32 = 22.0;
 const SPLIT_GRAB: f32 = 6.0;
 /// Minimum right column: grip + checkbox + ellipsis + trash (text yields first).
-const RIGHT_COL_MIN: f32 = 140.0;
+const RIGHT_COL_MIN: f32 = 100.0;
 const CHECK_W: f32 = 18.0;
-/// Icon inside Add button — leave margin inside 28px chrome (TINY 24 was flush).
-const ADD_STEP_ICON: f32 = 16.0;
-/// Match Publish button height; width like Simulation toolbar.
-const ADD_STEP_BTN: egui::Vec2 = egui::vec2(100.0, 28.0);
+/// Icon inside Add button — smaller than TINY so padding insets the glyph.
+const ADD_STEP_ICON: f32 = 14.0;
+/// Match Publish chrome (120×28) so + has room beside the label.
+const ADD_STEP_BTN: egui::Vec2 = egui::vec2(120.0, 28.0);
 
 /// DnD payload for reordering steps (index into the current draft).
 #[derive(Clone, Debug)]
@@ -293,10 +293,15 @@ fn paint_left(
     ui.label(RichText::new("Scenarios").color(CHROME_MUTED()).small());
 
     let mut delete_id: Option<String> = None;
+    // Span the visible left pane so trash stays on the right edge and text ellipsizes.
+    let list_w = ui.max_rect().width().max(ui.available_width());
     egui::ScrollArea::vertical()
         .id_salt("scenarios_list")
         .auto_shrink([false, false])
+        .max_width(list_w)
         .show(ui, |ui| {
+            ui.set_min_width(list_w);
+            ui.set_max_width(list_w);
             let rows: Vec<(String, String, bool)> = client
                 .rows
                 .iter()
@@ -320,8 +325,9 @@ fn paint_left(
                     ),
                     _ => (CHROME_ROW(), CHROME_MUTED()),
                 };
+                let row_w = list_w.max(ui.available_width());
                 let (rect, resp) =
-                    ui.allocate_exact_size(egui::vec2(ui.available_width(), ROW_H), Sense::click());
+                    ui.allocate_exact_size(egui::vec2(row_w, ROW_H), Sense::click());
                 if ui.is_rect_visible(rect) {
                     ui.painter().rect_filled(rect, 4.0, fill);
                     if selected {
@@ -344,13 +350,13 @@ fn paint_left(
                         String::new()
                     };
                     let trash_rect = egui::Rect::from_min_size(
-                        egui::pos2(rect.right() - TRASH_W - 4.0, rect.top()),
-                        egui::vec2(TRASH_W, ROW_H),
+                        egui::pos2((rect.right() - TRASH_W - 4.0).max(rect.left()), rect.top()),
+                        egui::vec2(TRASH_W.min(rect.width()), ROW_H),
                     );
                     // Ellipsize so label never paints under the trash icon.
                     let text_rect = egui::Rect::from_min_max(
                         egui::pos2(rect.left() + 8.0, rect.top()),
-                        egui::pos2(trash_rect.left() - 4.0, rect.bottom()),
+                        egui::pos2((trash_rect.left() - 6.0).max(rect.left() + 8.0), rect.bottom()),
                     );
                     paint_truncated_label(
                         ui,
@@ -487,8 +493,9 @@ fn paint_right(
     // Step toolbar — Publish-sized chrome; flat selectable menu (combo style, not boxed buttons).
     ui.horizontal(|ui| {
         ui.label(RichText::new("Steps").color(CHROME_MUTED()).small());
-        // Extra padding so the + sits inset like other TopicBench image+text buttons.
-        ui.spacing_mut().button_padding = egui::vec2(10.0, 5.0);
+        // Inset the + glyph; match Publish padding so icon isn't flush to the chrome edge.
+        ui.spacing_mut().button_padding = egui::vec2(12.0, 5.0);
+        ui.spacing_mut().item_spacing.x = 8.0;
         let add_btn = if let Some(tex) = icons.get("add_blue") {
             egui::Button::image_and_text(
                 egui::Image::new(tex).fit_to_exact_size(egui::vec2(ADD_STEP_ICON, ADD_STEP_ICON)),
@@ -500,6 +507,7 @@ fn paint_right(
         };
         egui::menu::menu_custom_button(ui, add_btn, |ui| {
             ui.set_min_width(140.0);
+            ui.spacing_mut().item_spacing.y = 2.0;
             for (k, label) in [
                 ("publish", "Publish"),
                 ("wait_time", "Wait time"),
@@ -521,14 +529,16 @@ fn paint_right(
     let mut pending_reorder: Option<(usize, usize, bool)> = None;
     let mut delete_step: Option<usize> = None;
 
-    // Cap content to the pane so TextEdit desired widths can't shove icons off-screen.
-    let steps_w = ui.available_width();
+    // Full pane width — rows span the viewport so trash stays on the visible right edge
+    // and text ellipsizes into the middle (never leave empty pane while chopping icons).
+    let pane_w = ui.max_rect().width().max(ui.available_width());
     egui::ScrollArea::vertical()
         .id_salt("scenarios_steps")
         .auto_shrink([false, false])
-        .max_width(steps_w)
+        .max_width(pane_w)
         .show(ui, |ui| {
-            ui.set_max_width(steps_w);
+            ui.set_min_width(pane_w);
+            ui.set_max_width(pane_w);
             let n = draft.steps.len();
             for i in 0..n {
                 let selected = client.selected_step == Some(i);
@@ -544,7 +554,7 @@ fn paint_right(
                 let enabled = draft.steps[i].enabled();
                 let name_preview = draft.steps[i].name().to_string();
 
-                let row_w = ui.available_width().min(steps_w);
+                let row_w = pane_w.max(ui.available_width());
                 let (row_rect, drop_response) =
                     ui.allocate_exact_size(egui::vec2(row_w, ROW_H), Sense::hover());
                 ui.painter().rect_filled(row_rect, 4.0, fill);
@@ -560,15 +570,22 @@ fn paint_right(
                 // Pack chrome first: grip | check | …text… | trash — text yields on narrow.
                 let grip_rect = egui::Rect::from_min_size(
                     egui::pos2(row_rect.left() + 2.0, row_rect.top()),
-                    egui::vec2(GRIP_W, ROW_H),
+                    egui::vec2(GRIP_W.min(row_rect.width()), ROW_H),
                 );
+                let trash_left = (row_rect.right() - TRASH_W - 2.0)
+                    .max(grip_rect.right() + CHECK_W + 4.0)
+                    .min(row_rect.right().max(grip_rect.right()));
                 let trash_rect = egui::Rect::from_min_size(
-                    egui::pos2((row_rect.right() - TRASH_W - 2.0).max(grip_rect.right()), row_rect.top()),
-                    egui::vec2(TRASH_W.min(row_rect.width()), ROW_H),
+                    egui::pos2(trash_left, row_rect.top()),
+                    egui::vec2(
+                        TRASH_W.min((row_rect.right() - trash_left).max(0.0)),
+                        ROW_H,
+                    ),
                 );
+                let check_w = CHECK_W.min((trash_rect.left() - grip_rect.right() - 4.0).max(0.0));
                 let check_rect = egui::Rect::from_min_size(
                     egui::pos2(grip_rect.right() + 2.0, row_rect.top()),
-                    egui::vec2(CHECK_W, ROW_H),
+                    egui::vec2(check_w, ROW_H),
                 );
                 let label_left = check_rect.right() + 4.0;
                 let label_right = (trash_rect.left() - 4.0).max(label_left);
@@ -688,7 +705,7 @@ fn paint_right(
                         .corner_radius(4.0)
                         .inner_margin(egui::Margin::symmetric(8, 6))
                         .show(ui, |ui| {
-                            ui.set_max_width((steps_w - 4.0).max(80.0));
+                            ui.set_max_width((pane_w - 4.0).max(80.0));
                             if edit_step_fields(ui, &mut draft.steps[i], profiles_names) {
                                 dirty = true;
                             }
