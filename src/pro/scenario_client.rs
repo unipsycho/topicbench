@@ -35,6 +35,8 @@ pub enum WaitOp {
     Gte,
     Lt,
     Lte,
+    Contains,
+    NotContains,
 }
 
 /// One step (serde `kind` tag — matches Pro schema).

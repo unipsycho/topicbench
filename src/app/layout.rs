@@ -1094,6 +1094,7 @@ impl MqttMonitorApp {
                     &mut self.status,
                     seed,
                     &mut self.settings.window_scenarios,
+                    &mut self.settings.scenarios_left_width,
                     &mut self.geometry_dirty,
                 );
             } else {
