@@ -1343,17 +1343,18 @@ fn paint_right(
                     draft.steps[i].set_enabled(en);
                     dirty = true;
                 }
-                let label = format!(
-                    "{}. {} {}",
+                let primary = format!(
+                    "{}. {}{}",
                     i + 1,
                     kind,
                     if name_preview.is_empty() {
                         String::new()
                     } else {
-                        format!("· {name_preview}")
+                        format!(" · {name_preview}")
                     }
                 );
-                paint_truncated_label(ui, label_rect, label, CHROME_TEXT(), 13.0);
+                let summary = draft.steps[i].settings_summary();
+                paint_step_row_label(ui, label_rect, &primary, &summary, 13.0);
                 let body_resp = ui.interact(
                     body_rect,
                     egui::Id::new(("scn_step_body", &sel_id, i)),
@@ -1698,6 +1699,56 @@ fn paint_disclosure_chevron(ui: &mut egui::Ui, rect: egui::Rect, open: bool, hov
         painter.line_segment([egui::pos2(c.x - s * 0.35, c.y - s), egui::pos2(c.x + s * 0.55, c.y)], stroke);
         painter.line_segment([egui::pos2(c.x - s * 0.35, c.y + s), egui::pos2(c.x + s * 0.55, c.y)], stroke);
     }
+}
+
+/// Step list: kind/name in text color, muted settings summary after — one clipped line.
+fn paint_step_row_label(
+    ui: &mut egui::Ui,
+    rect: egui::Rect,
+    primary: &str,
+    summary: &str,
+    size: f32,
+) {
+    let max_w = rect.width().max(0.0);
+    if max_w < 4.0 || !ui.is_rect_visible(rect) {
+        return;
+    }
+    let mut job = egui::text::LayoutJob {
+        wrap: egui::text::TextWrapping {
+            max_width: max_w,
+            max_rows: 1,
+            break_anywhere: true,
+            overflow_character: Some('…'),
+        },
+        ..Default::default()
+    };
+    let font = egui::FontId::proportional(size);
+    job.append(
+        primary,
+        0.0,
+        egui::TextFormat {
+            font_id: font.clone(),
+            color: CHROME_TEXT(),
+            ..Default::default()
+        },
+    );
+    if !summary.is_empty() {
+        job.append(
+            &format!(" · {summary}"),
+            0.0,
+            egui::TextFormat {
+                font_id: font,
+                color: CHROME_MUTED(),
+                ..Default::default()
+            },
+        );
+    }
+    let galley = ui.fonts(|f| f.layout_job(job));
+    let pos = egui::pos2(
+        rect.left(),
+        rect.center().y - galley.size().y * 0.5,
+    );
+    ui.painter().galley(pos, galley, CHROME_TEXT());
 }
 
 /// Single-line label clipped with ellipsis so it never paints past `rect`.
