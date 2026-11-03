@@ -18,6 +18,20 @@ impl Qos {
     pub fn as_u8(self) -> u8 {
         self as u8
     }
+
+    pub fn from_u8(v: u8) -> Self {
+        match v {
+            1 => Self::AtLeastOnce,
+            2 => Self::ExactlyOnce,
+            _ => Self::AtMostOnce,
+        }
+    }
+}
+
+impl Default for Qos {
+    fn default() -> Self {
+        Self::AtMostOnce
+    }
 }
 
 /// MQTT 5 publish / inbound message properties (empty = absent).

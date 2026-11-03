@@ -3,6 +3,7 @@
 //! Passwords live in the OS keyring ([`crate::mqtt::secrets`]); `profiles.json`
 //! never writes them (legacy plaintext is migrated on load).
 
+use crate::mqtt::publish::Qos;
 use crate::mqtt::secrets;
 use eframe::egui::Color32;
 use serde::{Deserialize, Serialize};
@@ -176,6 +177,17 @@ pub struct ConnectionProfile {
     /// MQTT 5 session expiry interval in seconds (0 = expire on disconnect). Ignored for 3.1.1.
     #[serde(default)]
     pub session_expiry_secs: u32,
+    /// Register a Last Will on CONNECT (published by the broker on unclean disconnect only).
+    #[serde(default)]
+    pub will_enabled: bool,
+    #[serde(default)]
+    pub will_topic: String,
+    #[serde(default)]
+    pub will_payload: String,
+    #[serde(default)]
+    pub will_qos: Qos,
+    #[serde(default)]
+    pub will_retain: bool,
 }
 
 impl ConnectionProfile {
@@ -251,7 +263,17 @@ impl ConnectionProfile {
             color_rgb: default_profile_color(),
             mqtt_version: MqttVersion::V311,
             session_expiry_secs: 0,
+            will_enabled: false,
+            will_topic: String::new(),
+            will_payload: String::new(),
+            will_qos: Qos::AtMostOnce,
+            will_retain: false,
         }
+    }
+
+    /// True when Last Will should be attached to the next CONNECT.
+    pub fn will_active(&self) -> bool {
+        self.will_enabled && !self.will_topic.trim().is_empty()
     }
 
     pub fn sample_local() -> Self {
@@ -273,6 +295,11 @@ impl ConnectionProfile {
             color_rgb: [90, 190, 120],
             mqtt_version: MqttVersion::V311,
             session_expiry_secs: 0,
+            will_enabled: false,
+            will_topic: String::new(),
+            will_payload: String::new(),
+            will_qos: Qos::AtMostOnce,
+            will_retain: false,
         }
     }
 
@@ -295,6 +322,11 @@ impl ConnectionProfile {
             color_rgb: [200, 140, 80],
             mqtt_version: MqttVersion::V311,
             session_expiry_secs: 0,
+            will_enabled: false,
+            will_topic: String::new(),
+            will_payload: String::new(),
+            will_qos: Qos::AtMostOnce,
+            will_retain: false,
         }
     }
 
