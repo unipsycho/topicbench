@@ -4,7 +4,9 @@ Scripts under `scripts/` build GitHub Release assets from one Linux x64 binary
 (prefer `dist/topicbench-linux-x64` from `scripts/build-linux-glibc235.sh`).
 
 **Canonical Linux download:** bare `topicbench-linux-x64` (also the in-app updater asset).  
-**Not published:** AppImage, `.deb`, and `.rpm` are dropped from Releases / Downloads advertising (prefer AUR later for Arch). Legacy `scripts/build-appimage.sh`, `scripts/build-rpm.sh`, and `nfpm.yaml` may remain in-tree but must not be attached to GitHub Releases or linked from the README.
+**Not published:** AppImage, `.deb`, and `.rpm` are dropped from Releases / Downloads advertising (prefer AUR later for Arch). Legacy `scripts/build-appimage.sh`, `scripts/build-rpm.sh`, `scripts/build-deb.sh`, and `nfpm.yaml` may remain in-tree but must not be attached to GitHub Releases or linked from the README.
+
+`.deb` / `.rpm` via nfpm ship AppStream metainfo (`packaging/ca.agileautomation.TopicBench.metainfo.xml`) so KDE Discover shows **Agile Automation** and SPDX license `MIT OR Apache-2.0`, plus Debian `copyright` under `/usr/share/doc/topicbench/`.
 
 ## Assets to attach each release
 

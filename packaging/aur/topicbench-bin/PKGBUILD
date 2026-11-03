@@ -1,4 +1,4 @@
-# Maintainer: Mike / Agile Automation <mike@agileautomation.ca>
+# Maintainer: Agile Automation <mike@agileautomation.ca>
 # Binary package of TopicBench (OSS) from GitHub Releases.
 # Installs the Release topicbench-linux-x64 ELF to /usr/bin with .desktop +
 # icon, using system libxcb / libxkbcommon / Vulkan|GL.
