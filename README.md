@@ -39,15 +39,15 @@ I'm happy with the performance: among the MQTT desktop tools I've tried, TopicBe
 
 ## Download
 
-Latest free release: **[v1.2.5](https://github.com/unipsycho/topicbench/releases/tag/v1.2.5)** — typical asset sizes below (from that release).
+Latest free release: **[v1.2.6](https://github.com/unipsycho/topicbench/releases/tag/v1.2.6)** — typical asset sizes below (from that release).
 
 | | | Typical size |
 |:--|:--|:--|
-| **Windows** portable (x64) | [TopicBench-windows-x64-portable.zip](https://github.com/unipsycho/topicbench/releases/download/v1.2.5/TopicBench-windows-x64-portable.zip) | ~16 MB |
-| **Windows** exe (x64) | [topicbench-windows-x64.exe](https://github.com/unipsycho/topicbench/releases/download/v1.2.5/topicbench-windows-x64.exe) | ~32 MB |
-| **Linux** binary (x64) | [topicbench-linux-x64](https://github.com/unipsycho/topicbench/releases/download/v1.2.5/topicbench-linux-x64) | ~28 MB |
+| **Windows** portable (x64) | [TopicBench-windows-x64-portable.zip](https://github.com/unipsycho/topicbench/releases/download/v1.2.6/TopicBench-windows-x64-portable.zip) | ~17 MB |
+| **Windows** exe (x64) | [topicbench-windows-x64.exe](https://github.com/unipsycho/topicbench/releases/download/v1.2.6/topicbench-windows-x64.exe) | ~35 MB |
+| **Linux** binary (x64) | [topicbench-linux-x64](https://github.com/unipsycho/topicbench/releases/download/v1.2.6/topicbench-linux-x64) | ~30 MB |
 | **Arch / Omarchy** (AUR) | [`topicbench-bin`](packaging/aur/topicbench-bin) — `yay -S topicbench-bin` | same as Linux binary |
-| SHA-256 checksums | [SHA256SUMS](https://github.com/unipsycho/topicbench/releases/download/v1.2.5/SHA256SUMS) | |
+| SHA-256 checksums | [SHA256SUMS](https://github.com/unipsycho/topicbench/releases/download/v1.2.6/SHA256SUMS) | |
 
 Windows: unzip the portable zip and run `TopicBench.exe`, or use the standalone `.exe`.
 Linux: canonical download is the bare **`topicbench-linux-x64`** binary (glibc **2.35+** — Ubuntu 22.04 / Debian 12 and newer). No AppImage / `.deb` / `.rpm` on Releases.
