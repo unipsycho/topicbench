@@ -9,11 +9,10 @@ mod pro;
 mod ui;
 mod update;
 
-use eframe::egui::{self, IconData};
+use eframe::egui;
 use ui::theme;
 
 fn main() -> eframe::Result<()> {
-    let icon = load_window_icon();
     // Linux: undecorated + transparent for the floating AA splash, then hand off to OS chrome.
     // Windows: start decorated/opaque — winit undecorated + later Decorations(true) leaves a
     // caption-height black strip and Y-offsets hit tests (WS_CAPTION client inset mismatch).
@@ -24,7 +23,8 @@ fn main() -> eframe::Result<()> {
         .with_inner_size([1200.0, 760.0])
         .with_title("TopicBench")
         // Wayland app_id / X11 WM_CLASS — matches StartupWMClass in packaging/*.desktop.
-        .with_app_id("topicbench");
+        // Child pop-outs get the same id via WinGeom::apply (do not invent per-panel ids).
+        .with_app_id(mqtt::window_geom::APP_ID);
     // Prefer last session size from settings.json (eframe also restores when available).
     if let Some(g) = settings.window_main {
         viewport = g.apply(viewport, [400.0, 300.0]);
@@ -37,7 +37,8 @@ fn main() -> eframe::Result<()> {
     {
         viewport = viewport.with_transparent(true).with_decorations(false);
     }
-    if let Some(icon) = icon {
+    // Taskbar/window icon from Mike’s ICO→PNG (also stamped on pop-outs in WinGeom::apply).
+    if let Some(icon) = mqtt::window_geom::app_icon() {
         viewport = viewport.with_icon(icon);
     }
 
@@ -64,16 +65,3 @@ fn main() -> eframe::Result<()> {
         }),
     )
 }
-
-/// Window/taskbar icon — TB monogram (same art as Windows PE app.ico).
-fn load_window_icon() -> Option<IconData> {
-    let bytes = include_bytes!("../assets/icons/topicbench-app-icon-256.png");
-    let img = image::load_from_memory(bytes).ok()?.into_rgba8();
-    let (width, height) = img.dimensions();
-    Some(IconData {
-        rgba: img.into_raw(),
-        width,
-        height,
-    })
-}
-
