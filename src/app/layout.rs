@@ -610,9 +610,11 @@ impl MqttMonitorApp {
             // egui SidePanel clamps display with at_most(available) then stores that rect in
             // PanelState; with default_width that permanently stuck panels after narrow→wide.
             // exact_width re-asserts the desired size each frame so expand restores usable width.
-            // Built-in resize is unusable under Middle overlays — Foreground grip updates settings.
+            // resizable(false): built-in grip extends into Central and steals topic-tree ▶ hits;
+            // Foreground seam grip (below) owns resize instead.
             let r = egui::SidePanel::left("profiles")
                 .exact_width(self.settings.profiles_panel_width)
+                .resizable(false)
                 .show_separator_line(false)
                 .show(ctx, |ui| {
                     reserve_side_panel_space(ui);
@@ -624,6 +626,7 @@ impl MqttMonitorApp {
             // Min ~half of prior 200 — leaves more room for Topic tree when the window shrinks.
             let r = egui::SidePanel::right("publish")
                 .exact_width(self.settings.publish_panel_width)
+                .resizable(false)
                 .show_separator_line(false)
                 .show(ctx, |ui| {
                     reserve_side_panel_space(ui);
@@ -635,6 +638,7 @@ impl MqttMonitorApp {
             // Min ~half of prior 220 — Topic tree keeps search/icons instead of clipping first.
             let r = egui::SidePanel::right("payload")
                 .exact_width(self.settings.payload_panel_width)
+                .resizable(false)
                 .show_separator_line(false)
                 .show(ctx, |ui| {
                     reserve_side_panel_space(ui);
@@ -1176,6 +1180,9 @@ fn side_resize_grab_w(ctx: &egui::Context) -> f32 {
 
 /// Paint a side panel's real UI above the central column (fixes overlap z-order).
 /// Insets content away from [`SideResizeEdge`] so the Foreground resize grip stays hittable.
+///
+/// Area size is pinned every frame via `allocate_exact_size` — otherwise ScrollArea /
+/// wide widgets ratchet `AreaState.size` a few px into the Topic tree and steal ▶ hits.
 fn side_panel_overlay(
     ctx: &egui::Context,
     overlay_id: impl Into<egui::Id>,
@@ -1200,21 +1207,31 @@ fn side_panel_overlay(
         .default_size(content.size())
         .constrain(false)
         .interactable(true)
+        .sense(egui::Sense::click()) // block clicks through to tree/stickies behind
         .show(ctx, |ui| {
-            ui.set_min_size(content.size());
-            ui.set_max_size(content.size());
-            ui.set_clip_rect(content);
-            egui::Frame::side_top_panel(ui.style())
-                .fill(CHROME_BG())
-                .show(ui, |ui| {
-                    ui.set_min_height(ui.available_height());
-                    add_contents(ui);
-                });
+            // Lock AreaState.size to the dock rect — do not let contents grow the layer.
+            let (panel_r, _) = ui.allocate_exact_size(content.size(), egui::Sense::hover());
+            ui.painter().rect_filled(panel_r, 0.0, CHROME_BG());
+            ui.allocate_ui_at_rect(panel_r, |ui| {
+                ui.set_clip_rect(panel_r);
+                ui.set_max_size(panel_r.size());
+                egui::Frame::side_top_panel(ui.style())
+                    .fill(CHROME_BG())
+                    .show(ui, |ui| {
+                        ui.set_min_height(ui.available_height());
+                        ui.set_max_width(ui.available_width());
+                        add_contents(ui);
+                    });
+            });
         });
 }
 
 /// Foreground-layer resize grip + separator for a side panel edge.
 /// Returns true when `width` changed enough to persist (user drag only).
+///
+/// Hit target stays entirely on the panel side of the edge (the overlay seam).
+/// The old straddling rect (`edge ± grab`) covered Topic-tree ▶ toggles and also
+/// let `AreaState.size` ratchet until the line vanished after a few drags.
 fn side_panel_resize_grip(
     ctx: &egui::Context,
     grip_id: impl Into<egui::Id>,
@@ -1228,45 +1245,51 @@ fn side_panel_resize_grip(
         SideResizeEdge::Right => panel_rect.max.x,
         SideResizeEdge::Left => panel_rect.min.x,
     };
-    let grip_rect = egui::Rect::from_x_y_ranges(
-        (edge_x - grab)..=(edge_x + grab),
-        panel_rect.y_range(),
-    );
+    // Panel-side seam only — never extend into Central (tree ▶ / leaf icons).
+    let grip_rect = match edge {
+        SideResizeEdge::Right => {
+            egui::Rect::from_x_y_ranges((edge_x - grab)..=edge_x, panel_rect.y_range())
+        }
+        SideResizeEdge::Left => {
+            egui::Rect::from_x_y_ranges(edge_x..=(edge_x + grab), panel_rect.y_range())
+        }
+    };
 
     let id = grip_id.into();
-    let response = egui::Area::new(id)
+    let area = egui::Area::new(id)
         .order(egui::Order::Foreground)
         .fixed_pos(grip_rect.min)
         .default_size(grip_rect.size())
         .constrain(false)
         .interactable(true)
+        // Area-level drag so the hit target follows pinned size, not a child that can shrink.
+        .sense(egui::Sense::click_and_drag())
         .show(ctx, |ui| {
-            // Allocate in-Area so hit-testing owns the strip (not absolute interact).
-            let (rect, sense) =
-                ui.allocate_exact_size(grip_rect.size(), egui::Sense::click_and_drag());
-            // Keep seam opaque so stickies/tree cannot paint through the grab strip.
+            // Pin size every frame so AreaState cannot ratchet to empty after moves.
+            let (rect, _) = ui.allocate_exact_size(grip_rect.size(), egui::Sense::hover());
             ui.painter().rect_filled(rect, 0.0, CHROME_BG());
-            let hovered = sense.hovered() || sense.dragged();
+            let hovered = ui.rect_contains_pointer(rect);
+            // Area registers its drag widget as `id.with("move")` (egui containers/area.rs).
+            let dragged = ui.ctx().is_being_dragged(id.with("move"));
+            let active = hovered || dragged;
             // Idle uses muted (not sep) — sep≈bg on Gruvbox/Latte made the grip invisible.
-            let stroke = if sense.dragged() {
-                egui::Stroke::new(2.0_f32, CHROME_ACCENT_BORDER())
-            } else if hovered {
+            let stroke = if active {
                 egui::Stroke::new(2.0_f32, CHROME_ACCENT_BORDER())
             } else {
                 egui::Stroke::new(1.5_f32, CHROME_MUTED())
             };
+            // Seam fills panel-side only; separator sits on the central-facing edge.
             let line_x = match edge {
-                SideResizeEdge::Right => rect.max.x - grab,
-                SideResizeEdge::Left => rect.min.x + grab,
+                SideResizeEdge::Right => rect.max.x,
+                SideResizeEdge::Left => rect.min.x,
             };
             ui.painter().vline(line_x, rect.y_range(), stroke);
-            if hovered {
+            if active {
                 ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
             }
-            sense
-        })
-        .inner;
+        });
 
+    let response = area.response;
     let mut changed = false;
     if response.dragged() {
         if let Some(pointer) = response.interact_pointer_pos() {
