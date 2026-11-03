@@ -46,16 +46,13 @@ Latest free release: **[v1.2.5](https://github.com/unipsycho/topicbench/releases
 | **Windows** portable (x64) | [TopicBench-windows-x64-portable.zip](https://github.com/unipsycho/topicbench/releases/download/v1.2.5/TopicBench-windows-x64-portable.zip) | ~16 MB |
 | **Windows** exe (x64) | [topicbench-windows-x64.exe](https://github.com/unipsycho/topicbench/releases/download/v1.2.5/topicbench-windows-x64.exe) | ~32 MB |
 | **Linux** binary (x64) | [topicbench-linux-x64](https://github.com/unipsycho/topicbench/releases/download/v1.2.5/topicbench-linux-x64) | ~28 MB |
-| **Linux** AppImage (x64) | [TopicBench-x86_64.AppImage](https://github.com/unipsycho/topicbench/releases/download/v1.2.5/TopicBench-x86_64.AppImage) | |
-| **Debian / Ubuntu** (.deb) | [topicbench_1.2.5_amd64.deb](https://github.com/unipsycho/topicbench/releases/download/v1.2.5/topicbench_1.2.5_amd64.deb) | ~15 MB |
-| **Fedora / RHEL / openSUSE** (.rpm) | [topicbench-1.2.5-1.x86_64.rpm](https://github.com/unipsycho/topicbench/releases/download/v1.2.5/topicbench-1.2.5-1.x86_64.rpm) | |
 | **Arch / Omarchy** (AUR) | [`topicbench-bin`](packaging/aur/topicbench-bin) — `yay -S topicbench-bin` | same as Linux binary |
 | SHA-256 checksums | [SHA256SUMS](https://github.com/unipsycho/topicbench/releases/download/v1.2.5/SHA256SUMS) | |
 
 Windows: unzip the portable zip and run `TopicBench.exe`, or use the standalone `.exe`.
-Linux binaries target **glibc 2.35+** (Ubuntu 22.04 / Debian 12 and newer).
+Linux: canonical download is the bare **`topicbench-linux-x64`** binary (glibc **2.35+** — Ubuntu 22.04 / Debian 12 and newer). No AppImage / `.deb` / `.rpm` on Releases.
 
-**Updates:** the bare **Linux binary** and **Windows** portable / bare `.exe` can apply updates in place (download → verify SHA-256 → replace their own files). **AppImage**, **`.deb`**, **`.rpm`**, and **AUR** installs still get in-app update notifications; installing the new package is usually manual (system paths aren’t writable by the app). Packaging scripts: [`packaging/README.md`](packaging/README.md).
+**Updates:** the bare **Linux binary** and **Windows** portable / bare `.exe` can apply updates in place (download → verify SHA-256 → replace their own files). **AUR** installs still get in-app update notifications; installing the new package is usually manual. Packaging notes: [`packaging/README.md`](packaging/README.md).
 
 Arch: AUR package installs the Release binary + desktop entry (OSS only). PKGBUILD lives in-tree; publish steps in [`packaging/aur/README.md`](packaging/aur/README.md).
 
