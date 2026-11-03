@@ -17,6 +17,19 @@ Scripts under `scripts/` build GitHub Release assets from one Linux x64 binary
 
 Arch / Omarchy: AUR [`topicbench-bin`](aur/topicbench-bin) wraps `topicbench-linux-x64` (see [`aur/README.md`](aur/README.md)).
 
+## App icon (Linux)
+
+A bare ELF has **no** embedded icon (unlike Windows PE + `assets/icons/app.ico`). Desktop
+menus use `packaging/topicbench.desktop` (`Icon=topicbench`) plus hicolor/pixmap PNGs.
+Regenerate those PNGs from Mike’s ICO after icon art changes:
+
+```bash
+./scripts/regen-app-icons.sh
+```
+
+`.deb` / `.rpm` (nfpm), AppImage, and AUR install the PNGs; the running window also loads
+`assets/icons/topicbench-app-icon-256.png` via egui `with_icon`.
+
 ## Updates behavior
 
 - **Check / notify:** every install polls GitHub Releases latest (Settings → Check now, and quiet startup).

@@ -46,14 +46,18 @@ fi
 
 rm -rf "$APPDIR"
 mkdir -p "$APPDIR/usr/bin" \
-  "$APPDIR/usr/share/applications" \
-  "$APPDIR/usr/share/icons/hicolor/256x256/apps"
+  "$APPDIR/usr/share/applications"
 
 install -m 755 "$BIN" "$APPDIR/usr/bin/topicbench"
 install -m 644 "$ROOT/packaging/topicbench.desktop" "$APPDIR/topicbench.desktop"
 install -m 644 "$ROOT/packaging/topicbench.desktop" "$APPDIR/usr/share/applications/topicbench.desktop"
+# AppImage root icon + hicolor sizes (from assets/icons/app.ico via regen-app-icons.sh)
 install -m 644 "$ROOT/packaging/topicbench.png" "$APPDIR/topicbench.png"
-install -m 644 "$ROOT/packaging/topicbench.png" "$APPDIR/usr/share/icons/hicolor/256x256/apps/topicbench.png"
+for sz in 16 24 32 48 64 128 256 512; do
+  mkdir -p "$APPDIR/usr/share/icons/hicolor/${sz}x${sz}/apps"
+  install -m 644 "$ROOT/packaging/icons/topicbench-${sz}.png" \
+    "$APPDIR/usr/share/icons/hicolor/${sz}x${sz}/apps/topicbench.png"
+done
 
 # AppRun: launch the bundled binary from any cwd
 cat > "$APPDIR/AppRun" <<'EOF'
