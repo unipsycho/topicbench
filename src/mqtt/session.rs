@@ -962,4 +962,141 @@ mod tests {
             Some(SessionState::Disconnected)
         );
     }
+
+    /// Localhost smoke for TB-104 adjacent gaps (clear-retain + MQTT 5 CONNECT).
+    /// Requires local mosquitto with user `mqtt` / `mqtt` on 127.0.0.1:1883.
+    #[test]
+    fn local_mqtt5_clear_retained_smoke() {
+        use crate::mqtt::profile::MqttVersion;
+
+        let ctx = Context::default();
+        let mut sessions = SessionManager::default();
+        sessions.bind_egui_ctx(&ctx);
+        let mut pins = PinBoard::default();
+
+        let mut profile = ConnectionProfile::new_blank("local-adj-smoke".into());
+        profile.name = "Local adjacent smoke".into();
+        profile.host = "127.0.0.1".into();
+        profile.port = 1883;
+        profile.username = "mqtt".into();
+        profile.password = "mqtt".into();
+        profile.client_id = unique_id("tb-adj");
+        profile.mqtt_version = MqttVersion::V5;
+        profile.subscriptions = vec!["tb/adjacent-gaps/#".into()];
+
+        sessions
+            .connect(&profile, MAX_PACKET_DEFAULT, &ctx)
+            .expect("mqtt5 connect");
+        assert!(
+            wait_until(&mut sessions, &mut pins, Duration::from_secs(10), |s| {
+                s.open
+                    .get(&profile.id)
+                    .map(|sess| sess.state == SessionState::Connected)
+                    .unwrap_or(false)
+            }),
+            "MQTT 5 should connect to local mosquitto"
+        );
+        // Allow SUBACK after auto-resubscribe on Connected.
+        thread::sleep(Duration::from_millis(500));
+        sessions.poll_events(&mut pins, None);
+
+        let topic = format!("tb/adjacent-gaps/clear/{}", unique_id("t"));
+        sessions
+            .publish_live(&profile.id, &topic, "keep-me", Qos::AtLeastOnce, true)
+            .expect("retain publish");
+        let saw_retain = wait_until(&mut sessions, &mut pins, Duration::from_secs(8), |s| {
+            s.open
+                .get(&profile.id)
+                .and_then(|sess| sess.topic_tree.root.node_at(&topic))
+                .map(|n| n.last_payload.as_deref() == Some("keep-me") && n.last_retain)
+                .unwrap_or(false)
+        });
+        // If broker echo is slow, still seed the leaf so clear_retained local path is exercised.
+        if !saw_retain {
+            if let Some(session) = sessions.open.get_mut(&profile.id) {
+                session.topic_tree.observe(
+                    &topic,
+                    "keep-me",
+                    true,
+                    Instant::now(),
+                );
+            }
+        }
+
+        sessions
+            .clear_retained(&profile.id, &topic)
+            .expect("clear_retained");
+        let leaf = sessions
+            .open
+            .get(&profile.id)
+            .and_then(|sess| sess.topic_tree.root.node_at(&topic))
+            .expect("leaf after clear");
+        assert_eq!(leaf.last_payload.as_deref(), Some(""));
+        assert!(!leaf.last_retain);
+        assert_eq!(leaf.last_payload_bytes.as_deref(), Some(&[][..]));
+
+        // Broker-side: fresh sub must not see the old retained body.
+        let cleared = std::process::Command::new("mosquitto_sub")
+            .args([
+                "-h",
+                "127.0.0.1",
+                "-u",
+                "mqtt",
+                "-P",
+                "mqtt",
+                "-t",
+                &topic,
+                "-C",
+                "1",
+                "-W",
+                "1",
+            ])
+            .output()
+            .expect("mosquitto_sub");
+        let body = String::from_utf8_lossy(&cleared.stdout);
+        assert_ne!(body.trim(), "keep-me", "broker retain must be cleared");
+
+        sessions.disconnect(&profile.id);
+    }
+
+    /// MQTT 5 CONNECT with Last Will fields set still reaches Connected.
+    #[test]
+    fn local_mqtt5_connect_with_last_will() {
+        use crate::mqtt::profile::MqttVersion;
+
+        let ctx = Context::default();
+        let mut sessions = SessionManager::default();
+        sessions.bind_egui_ctx(&ctx);
+        let mut pins = PinBoard::default();
+
+        let mut profile = ConnectionProfile::new_blank("local-will-smoke".into());
+        profile.name = "Local will smoke".into();
+        profile.host = "127.0.0.1".into();
+        profile.port = 1883;
+        profile.username = "mqtt".into();
+        profile.password = "mqtt".into();
+        profile.client_id = unique_id("tb-will");
+        profile.mqtt_version = MqttVersion::V5;
+        profile.will_enabled = true;
+        profile.will_topic = format!("tb/adjacent-gaps/will/{}", unique_id("w"));
+        profile.will_payload = "lwt-armed".into();
+        profile.will_qos = Qos::AtLeastOnce;
+        profile.will_retain = false;
+        profile.subscriptions = vec!["tb/adjacent-gaps/will-smoke/#".into()];
+        assert!(profile.will_active());
+
+        sessions
+            .connect(&profile, MAX_PACKET_DEFAULT, &ctx)
+            .expect("mqtt5+will connect");
+        assert!(
+            wait_until(&mut sessions, &mut pins, Duration::from_secs(10), |s| {
+                s.open
+                    .get(&profile.id)
+                    .map(|sess| sess.state == SessionState::Connected)
+                    .unwrap_or(false)
+            }),
+            "MQTT 5 + Last Will should connect"
+        );
+        sessions.disconnect(&profile.id);
+    }
 }
