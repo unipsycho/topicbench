@@ -74,11 +74,22 @@ Paid extras for teams that outgrow the free explorer — same app, unlock Pro wh
 - **Topic tree export & import** — JSON hierarchy out, republish onto a target broker
 - **CSV recording** — time-series dumps for Excel
 
-Video summaries:
+Video summaries — click a thumbnail to watch:
 
-- [Scenario player & color rules](https://www.agileautomation.ca/videos/topicbench-scenario-color.mp4)
-- [Simulation & MCP agent](https://www.agileautomation.ca/videos/topicbench-simulation-mcp.mp4)
-- [Themes](https://www.agileautomation.ca/videos/topicbench-themes.mp4)
+<p align="center">
+  <a href="https://www.agileautomation.ca/videos/topicbench-scenario-color.mp4"><img src="https://www.agileautomation.ca/images/products/topicbench-video-scenario.jpg" alt="Scenario player & color rules" width="280"></a>
+  &nbsp;
+  <a href="https://www.agileautomation.ca/videos/topicbench-simulation-mcp.mp4"><img src="https://www.agileautomation.ca/images/products/topicbench-video-simulation-mcp.jpg" alt="Simulation & MCP agent" width="280"></a>
+  &nbsp;
+  <a href="https://www.agileautomation.ca/videos/topicbench-themes.mp4"><img src="https://www.agileautomation.ca/images/products/topicbench-video-themes.jpg" alt="Themes" width="280"></a>
+</p>
+<p align="center">
+  <a href="https://www.agileautomation.ca/videos/topicbench-scenario-color.mp4">Scenario player & color rules</a>
+  ·
+  <a href="https://www.agileautomation.ca/videos/topicbench-simulation-mcp.mp4">Simulation & MCP agent</a>
+  ·
+  <a href="https://www.agileautomation.ca/videos/topicbench-themes.mp4">Themes</a>
+</p>
 
 ### Combined graphs
 
