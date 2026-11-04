@@ -74,6 +74,12 @@ Paid extras for teams that outgrow the free explorer — same app, unlock Pro wh
 - **Topic tree export & import** — JSON hierarchy out, republish onto a target broker
 - **CSV recording** — time-series dumps for Excel
 
+Video summaries:
+
+- [Scenario player & color rules](https://www.agileautomation.ca/videos/topicbench-scenario-color.mp4)
+- [Simulation & MCP agent](https://www.agileautomation.ca/videos/topicbench-simulation-mcp.mp4)
+- [Themes](https://www.agileautomation.ca/videos/topicbench-themes.mp4)
+
 ### Combined graphs
 
 Combined graphs let you overlay multiple channels on a single time-logged graph — useful for correlating data across topics and even across brokers.
