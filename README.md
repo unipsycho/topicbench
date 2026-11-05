@@ -25,7 +25,7 @@ I'm happy with the performance: among the MQTT desktop tools I've tried, TopicBe
 - **Payload inspect** — clear views for JSON and plain text
 - **Stickies & graphs** — pin important topics and watch values over time
 - **Free & open source** — use it, report issues, contribute
-- **Updates via GitHub Releases** — in-app check for every install; bare Linux/Windows binaries can self-replace, packaged installs notify and may need a manual upgrade
+- **Updates via GitHub Releases** — in-app check for every install; bare Linux/Windows binaries can self-replace
 - **100% Rust** — built entirely in Rust for efficient memory and CPU use on large topic trees and lists
 
 ## Features
@@ -46,15 +46,12 @@ Latest free release: **[v1.2.6](https://github.com/unipsycho/topicbench/releases
 | **Windows** portable (x64) | [TopicBench-windows-x64-portable.zip](https://github.com/unipsycho/topicbench/releases/download/v1.2.6/TopicBench-windows-x64-portable.zip) | ~17 MB |
 | **Windows** exe (x64) | [topicbench-windows-x64.exe](https://github.com/unipsycho/topicbench/releases/download/v1.2.6/topicbench-windows-x64.exe) | ~35 MB |
 | **Linux** binary (x64) | [topicbench-linux-x64](https://github.com/unipsycho/topicbench/releases/download/v1.2.6/topicbench-linux-x64) | ~30 MB |
-| **Arch / Omarchy** (AUR) | [`topicbench-bin`](packaging/aur/topicbench-bin) — `yay -S topicbench-bin` | same as Linux binary |
 | SHA-256 checksums | [SHA256SUMS](https://github.com/unipsycho/topicbench/releases/download/v1.2.6/SHA256SUMS) | |
 
 Windows: unzip the portable zip and run `TopicBench.exe`, or use the standalone `.exe`.
 Linux: canonical download is the bare **`topicbench-linux-x64`** binary (glibc **2.35+** — Ubuntu 22.04 / Debian 12 and newer). No AppImage / `.deb` / `.rpm` on Releases.
 
-**Updates:** the bare **Linux binary** and **Windows** portable / bare `.exe` can apply updates in place (download → verify SHA-256 → replace their own files). **AUR** installs still get in-app update notifications; installing the new package is usually manual. Packaging notes: [`packaging/README.md`](packaging/README.md).
-
-Arch: AUR package installs the Release binary + desktop entry (OSS only). PKGBUILD lives in-tree; publish steps in [`packaging/aur/README.md`](packaging/aur/README.md).
+**Updates:** the bare **Linux binary** and **Windows** portable / bare `.exe` can apply updates in place (download → verify SHA-256 → replace their own files).
 
 [All releases](https://github.com/unipsycho/topicbench/releases) · [Source on GitHub](https://github.com/unipsycho/topicbench)
 
