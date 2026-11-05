@@ -590,7 +590,7 @@ impl eframe::App for MqttMonitorApp {
             if crate::mqtt::window_geom::sync_slot(
                 &mut self.settings.window_main,
                 g,
-                [400.0, 300.0],
+                crate::mqtt::window_geom::MIN_MAIN,
             ) {
                 self.geometry_dirty = true;
             }
