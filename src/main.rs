@@ -21,13 +21,15 @@ fn main() -> eframe::Result<()> {
     let settings = mqtt::settings::AppSettings::load();
     let mut viewport = egui::ViewportBuilder::default()
         .with_inner_size([1200.0, 760.0])
+        .with_min_inner_size(mqtt::window_geom::MIN_MAIN)
         .with_title("TopicBench")
         // Wayland app_id / X11 WM_CLASS — matches StartupWMClass in packaging/*.desktop.
         // Child pop-outs get the same id via WinGeom::apply (do not invent per-panel ids).
         .with_app_id(mqtt::window_geom::APP_ID);
     // Prefer last session size from settings.json (eframe also restores when available).
+    // WinGeom::apply clamps w/h to MIN_MAIN and re-stamps with_min_inner_size.
     if let Some(g) = settings.window_main {
-        viewport = g.apply(viewport, [400.0, 300.0]);
+        viewport = g.apply(viewport, mqtt::window_geom::MIN_MAIN);
     }
     #[cfg(windows)]
     {
