@@ -8,6 +8,11 @@ use std::sync::{Arc, OnceLock};
 /// so Hyprland `class` and OmaFloat (`class::title`) can key pop-outs.
 pub const APP_ID: &str = "topicbench";
 
+/// Main shell minimum inner size (points). Captured from Mike’s usable floating
+/// TopicBench window on M17 (hyprctl clients size 627×530) so a restored tiny
+/// settings.json geometry cannot shrink the UI below a workable layout.
+pub const MIN_MAIN: [f32; 2] = [627.0, 530.0];
+
 /// Window/taskbar icon (PNG from Mike’s `assets/icons/app.ico`) — shared by root + pop-outs.
 pub fn app_icon() -> Option<Arc<IconData>> {
     static ICON: OnceLock<Option<Arc<IconData>>> = OnceLock::new();
@@ -76,7 +81,11 @@ impl WinGeom {
     /// Always stamps [`APP_ID`] + app icon so immediate viewports match the root.
     pub fn apply(self, builder: ViewportBuilder, min: [f32; 2]) -> ViewportBuilder {
         let g = self.sane(Vec2::new(min[0], min[1]));
-        let mut b = builder.with_app_id(APP_ID).with_inner_size([g.w, g.h]);
+        // Clamp restore + tell winit/eframe not to shrink below `min`.
+        let mut b = builder
+            .with_app_id(APP_ID)
+            .with_inner_size([g.w, g.h])
+            .with_min_inner_size(min);
         if let Some(icon) = app_icon() {
             b = b.with_icon(icon);
         }
@@ -152,4 +161,19 @@ fn opt_close(a: Option<f32>, b: Option<f32>, eps: f32) -> bool {
 /// Stable map key for a payload pop-out.
 pub fn payload_key(profile_id: &str, topic: &str) -> String {
     format!("{profile_id}\n{topic}")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn main_geom_clamps_to_min_main() {
+        let tiny = WinGeom::size(120.0, 80.0).sane(Vec2::new(MIN_MAIN[0], MIN_MAIN[1]));
+        assert_eq!(tiny.w, MIN_MAIN[0]);
+        assert_eq!(tiny.h, MIN_MAIN[1]);
+        let ok = WinGeom::size(900.0, 700.0).sane(Vec2::new(MIN_MAIN[0], MIN_MAIN[1]));
+        assert_eq!(ok.w, 900.0);
+        assert_eq!(ok.h, 700.0);
+    }
 }
