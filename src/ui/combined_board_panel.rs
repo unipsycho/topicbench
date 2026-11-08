@@ -689,16 +689,19 @@ fn paint_board(
                 return;
             }
 
-            if let Some(edit) =
-                paint_multi_series_plot(ui, &series_refs, fill_plot_h, time_range, board_id, y_min, y_max)
-            {
+            if let Some(edit) = paint_multi_series_plot(
+                ui,
+                icons,
+                &series_refs,
+                fill_plot_h,
+                time_range,
+                board_id,
+                y_min,
+                y_max,
+            ) {
                 if let Some(b) = store.get_mut(board_id) {
-                    match edit {
-                        YLimitEdit::SetMax(v) => b.y_max = Some(v),
-                        YLimitEdit::SetMin(v) => b.y_min = Some(v),
-                        YLimitEdit::ClearMax => b.y_max = None,
-                        YLimitEdit::ClearMin => b.y_min = None,
-                    }
+                    b.y_min = edit.y_min;
+                    b.y_max = edit.y_max;
                     *persist = true;
                 }
             }
@@ -740,15 +743,26 @@ struct SeriesPaintOwned {
     offline: bool,
 }
 
-enum YLimitEdit {
-    SetMax(f64),
-    SetMin(f64),
-    ClearMax,
-    ClearMin,
+/// Applied Y limits from the axis popup (`None` = Auto).
+struct YLimitEdit {
+    y_min: Option<f64>,
+    y_max: Option<f64>,
+}
+
+/// Draft while the Y-scale popup is open (per board).
+#[derive(Clone, Default)]
+struct YScaleDraft {
+    max_auto: bool,
+    max_text: String,
+    min_auto: bool,
+    min_text: String,
+    /// Parse / invert error shown under the fields.
+    err: Option<String>,
 }
 
 fn paint_multi_series_plot(
     ui: &mut egui::Ui,
+    icons: &IconSet,
     series: &[SeriesPaint<'_>],
     height: f32,
     time_range: CombinedTimeRange,
@@ -779,8 +793,9 @@ fn paint_multi_series_plot(
     let mut y_edit: Option<YLimitEdit> = None;
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 4.0;
-        let (label_rect, _) =
-            ui.allocate_exact_size(egui::vec2(Y_LABEL_W, plot_h), egui::Sense::hover());
+        // Whole Y-label column is the hit target (opens min/max popup).
+        let (label_rect, label_resp) =
+            ui.allocate_exact_size(egui::vec2(Y_LABEL_W, plot_h), Sense::click());
         let (rect, response) =
             ui.allocate_exact_size(egui::vec2(plot_w, plot_h), egui::Sense::hover());
 
@@ -797,8 +812,21 @@ fn paint_multi_series_plot(
         painter.rect_filled(rect, 2.0, CHROME_COMBO_BG());
 
         let grid = Stroke::new(1.0_f32, CHROME_SEP());
-        let edit_max_id = egui::Id::new(("combined_y_edit", board_id, "max"));
-        let edit_min_id = egui::Id::new(("combined_y_edit", board_id, "min"));
+        let y_popup_id = egui::Id::new(("combined_y_scale", board_id));
+        let any_manual = y_min.is_some() || y_max.is_some();
+        // Soft accent on the label column when either limit is manual.
+        if any_manual {
+            painter.rect_filled(
+                label_rect,
+                2.0,
+                Color32::from_rgba_unmultiplied(
+                    CHROME_ACCENT_SOFT().r(),
+                    CHROME_ACCENT_SOFT().g(),
+                    CHROME_ACCENT_SOFT().b(),
+                    40,
+                ),
+            );
+        }
         for i in 0..Y_TICKS {
             let frac = i as f32 / (Y_TICKS - 1) as f32;
             let v = y_hi - f64::from(frac) * (y_hi - y_lo);
@@ -813,117 +841,172 @@ fn paint_multi_series_plot(
                 CHROME_MUTED()
             };
             let text = fmt_scale(v);
-            let galley = ui.fonts(|f| f.layout_no_wrap(text.clone(), font.clone(), color));
+            let galley = ui.fonts(|f| f.layout_no_wrap(text, font.clone(), color));
             let mut ty = y - galley.size().y * 0.5;
             ty = ty.clamp(label_rect.top(), label_rect.bottom() - galley.size().y);
             let tx = (label_rect.right() - galley.size().x - 2.0).max(label_rect.left());
-            let label_pos = Pos2::new(tx, ty);
-            painter.galley(label_pos, galley.clone(), color);
-            // Top/bottom ticks: click to set manual Y limit.
-            if is_max || is_min {
-                let hit = egui::Rect::from_min_size(
-                    Pos2::new(label_rect.left(), ty - 2.0),
-                    egui::vec2(label_rect.width(), galley.size().y + 4.0),
-                );
-                let tip = if is_max {
-                    if y_max.is_some() {
-                        "Y max (manual) — click to edit · right-click Auto"
-                    } else {
-                        "Y max (auto) — click to set manual range"
-                    }
-                } else if y_min.is_some() {
-                    "Y min (manual) — click to edit · right-click Auto"
-                } else {
-                    "Y min (auto) — click to set manual range"
-                };
-                let id = if is_max { edit_max_id } else { edit_min_id };
-                let r = ui.interact(hit, id.with("hit"), Sense::click());
-                r.clone().on_hover_text(tip);
-                if r.clicked() {
-                    ui.ctx().data_mut(|d| {
-                        d.insert_temp(id, text);
-                    });
-                }
-                if r.secondary_clicked() {
-                    y_edit = Some(if is_max {
-                        YLimitEdit::ClearMax
-                    } else {
-                        YLimitEdit::ClearMin
-                    });
-                }
-            }
+            painter.galley(Pos2::new(tx, ty), galley, color);
         }
 
-        // Popups to type a manual Y limit.
-        for (id, is_max, auto_v) in [
-            (edit_max_id, true, y_hi),
-            (edit_min_id, false, y_lo),
-        ] {
-            if let Some(mut draft) = ui.ctx().data(|d| d.get_temp::<String>(id)) {
-                let mut dismiss = false;
-                let title = if is_max { "Y max" } else { "Y min" };
-                egui::Window::new(format!("combined_y_{title}_{board_id}"))
-                    .id(id.with("win"))
-                    .title_bar(false)
-                    .collapsible(false)
-                    .resizable(false)
-                    .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
-                    .frame(
-                        egui::Frame::NONE
-                            .fill(CHROME_BG())
-                            .stroke(egui::Stroke::new(1.0_f32, CHROME_SEP()))
-                            .corner_radius(8.0)
-                            .inner_margin(egui::Margin::symmetric(12, 10)),
-                    )
-                    .show(ui.ctx(), |ui| {
-                        ui.set_min_width(220.0);
-                        ui.label(RichText::new(title).strong().color(CHROME_TEXT()));
-                        ui.add_space(4.0);
-                        ui.add(
-                            egui::TextEdit::singleline(&mut draft)
-                                .desired_width(160.0)
-                                .text_color(CHROME_TEXT()),
-                        );
+        let tip = if any_manual {
+            "Y scale (manual) — click to edit · right-click Auto"
+        } else {
+            "Y scale (auto) — click to set min/max"
+        };
+        label_resp.clone().on_hover_text(tip);
+        if label_resp.clicked() {
+            // Seed from current limits; empty Auto fields use data suggestion.
+            let suggest = series_time_value_domain(series, time_range, None, None);
+            let suggest_hi = suggest.as_ref().map(|d| d.y_hi).unwrap_or(y_hi);
+            let suggest_lo = suggest.as_ref().map(|d| d.y_lo).unwrap_or(y_lo);
+            let draft = YScaleDraft {
+                max_auto: y_max.is_none(),
+                max_text: fmt_scale(y_max.unwrap_or(suggest_hi)),
+                min_auto: y_min.is_none(),
+                min_text: fmt_scale(y_min.unwrap_or(suggest_lo)),
+                err: None,
+            };
+            ui.ctx().data_mut(|d| d.insert_temp(y_popup_id, draft));
+        }
+        if label_resp.secondary_clicked() {
+            y_edit = Some(YLimitEdit {
+                y_min: None,
+                y_max: None,
+            });
+        }
+
+        // Styled Y-scale popup (matches Combined Save / Open chrome).
+        if let Some(mut draft) = ui.ctx().data(|d| d.get_temp::<YScaleDraft>(y_popup_id)) {
+            let mut dismiss = false;
+            let suggest = series_time_value_domain(series, time_range, None, None);
+            let suggest_hi = suggest.as_ref().map(|d| d.y_hi).unwrap_or(y_hi);
+            let suggest_lo = suggest.as_ref().map(|d| d.y_lo).unwrap_or(y_lo);
+            egui::Window::new(format!("combined_y_scale_{board_id}"))
+                .id(y_popup_id.with("win"))
+                .title_bar(false)
+                .collapsible(false)
+                .resizable(false)
+                .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+                .frame(
+                    egui::Frame::NONE
+                        .fill(CHROME_BG())
+                        .stroke(egui::Stroke::new(1.0_f32, CHROME_SEP()))
+                        .corner_radius(8.0)
+                        .inner_margin(egui::Margin::symmetric(16, 14)),
+                )
+                .show(ui.ctx(), |ui| {
+                    ui.set_min_width(320.0);
+                    ui.set_max_width(380.0);
+                    icons::section_header_bar(ui, |ui| {
+                        icons::section_icon(ui, icons, "line_graph");
+                        icons::section_title(ui, "Y scale");
+                    });
+                    ui.add_space(6.0);
+                    let bar_w = ui.available_width();
+                    let (bar, _) =
+                        ui.allocate_exact_size(egui::vec2(bar_w, 3.0), Sense::hover());
+                    ui.painter().rect_filled(bar, 1.5, CHROME_ACCENT_BORDER());
+                    ui.add_space(12.0);
+
+                    // Max row
+                    ui.label(RichText::new("Max").strong().color(CHROME_TEXT()));
+                    ui.add_space(4.0);
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = 8.0;
+                        ui.add_enabled_ui(!draft.max_auto, |ui| {
+                            ui.add(
+                                egui::TextEdit::singleline(&mut draft.max_text)
+                                    .desired_width(140.0)
+                                    .text_color(CHROME_TEXT()),
+                            );
+                        });
+                        ui.checkbox(&mut draft.max_auto, "Auto")
+                            .on_hover_text(format!("Auto suggests {}", fmt_scale(suggest_hi)));
+                    });
+                    ui.add_space(10.0);
+
+                    // Min row
+                    ui.label(RichText::new("Min").strong().color(CHROME_TEXT()));
+                    ui.add_space(4.0);
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = 8.0;
+                        ui.add_enabled_ui(!draft.min_auto, |ui| {
+                            ui.add(
+                                egui::TextEdit::singleline(&mut draft.min_text)
+                                    .desired_width(140.0)
+                                    .text_color(CHROME_TEXT()),
+                            );
+                        });
+                        ui.checkbox(&mut draft.min_auto, "Auto")
+                            .on_hover_text(format!("Auto suggests {}", fmt_scale(suggest_lo)));
+                    });
+
+                    if let Some(err) = &draft.err {
                         ui.add_space(8.0);
-                        ui.horizontal(|ui| {
-                            if ui
-                                .add(
-                                    egui::Button::new(RichText::new("Set").strong())
-                                        .fill(CHROME_ACCENT_SOFT())
-                                        .stroke(egui::Stroke::new(1.0_f32, CHROME_ACCENT_BORDER())),
+                        ui.label(RichText::new(err).color(Color32::from_rgb(220, 120, 100)));
+                    }
+
+                    ui.add_space(14.0);
+                    ui.separator();
+                    ui.add_space(8.0);
+                    ui.horizontal(|ui| {
+                        ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
+                            ui.spacing_mut().item_spacing.x = 8.0;
+                            let apply_btn = if let Some(tex) = icons.get("line_graph") {
+                                ui.add(
+                                    egui::Button::image_and_text(
+                                        egui::Image::new(tex)
+                                            .fit_to_exact_size(egui::vec2(TINY_ICON, TINY_ICON)),
+                                        RichText::new("Apply").strong(),
+                                    )
+                                    .fill(CHROME_ACCENT_SOFT())
+                                    .stroke(egui::Stroke::new(1.0_f32, CHROME_ACCENT_BORDER()))
+                                    .min_size(egui::vec2(120.0, 32.0)),
                                 )
-                                .clicked()
-                            {
-                                if let Ok(v) = draft.trim().parse::<f64>() {
-                                    if v.is_finite() {
-                                        y_edit = Some(if is_max {
-                                            YLimitEdit::SetMax(v)
-                                        } else {
-                                            YLimitEdit::SetMin(v)
-                                        });
+                            } else {
+                                ui.add(
+                                    egui::Button::new(RichText::new("Apply").strong())
+                                        .fill(CHROME_ACCENT_SOFT())
+                                        .stroke(egui::Stroke::new(
+                                            1.0_f32,
+                                            CHROME_ACCENT_BORDER(),
+                                        ))
+                                        .min_size(egui::vec2(120.0, 32.0)),
+                                )
+                            };
+                            if apply_btn.clicked() {
+                                match parse_y_scale_draft(&draft) {
+                                    Ok(edit) => {
+                                        y_edit = Some(edit);
                                         dismiss = true;
                                     }
+                                    Err(msg) => draft.err = Some(msg),
                                 }
                             }
-                            if ui.button("Auto").clicked() {
-                                y_edit = Some(if is_max {
-                                    YLimitEdit::ClearMax
-                                } else {
-                                    YLimitEdit::ClearMin
-                                });
-                                dismiss = true;
-                            }
-                            if ui.button("Cancel").clicked() {
+                            let cancel_btn = if let Some(tex) = icons.get("close_red") {
+                                ui.add(
+                                    egui::Button::image_and_text(
+                                        egui::Image::new(tex)
+                                            .fit_to_exact_size(egui::vec2(TINY_ICON, TINY_ICON)),
+                                        "Cancel",
+                                    )
+                                    .min_size(egui::vec2(104.0, 32.0)),
+                                )
+                            } else {
+                                ui.add(
+                                    egui::Button::new("Cancel").min_size(egui::vec2(104.0, 32.0)),
+                                )
+                            };
+                            if cancel_btn.clicked() {
                                 dismiss = true;
                             }
                         });
-                        ui.weak(format!("Auto suggests {}", fmt_scale(auto_v)));
                     });
-                if dismiss {
-                    ui.ctx().data_mut(|d| d.remove_temp::<String>(id));
-                } else {
-                    ui.ctx().data_mut(|d| d.insert_temp(id, draft));
-                }
+                });
+            if dismiss {
+                ui.ctx().data_mut(|d| d.remove_temp::<YScaleDraft>(y_popup_id));
+            } else {
+                ui.ctx().data_mut(|d| d.insert_temp(y_popup_id, draft));
             }
         }
 
@@ -1173,7 +1256,7 @@ fn series_time_value_domain(
         let pad = (raw_span * 0.04).max(raw_span * 1e-6);
         (min_v - pad, max_v + pad)
     };
-    // Manual Y limits (click upper/lower labels); default auto from data.
+    // Manual Y limits (axis popup); default auto from data.
     let mut y_lo = y_min.unwrap_or(auto_lo);
     let mut y_hi = y_max.unwrap_or(auto_hi);
     if y_hi <= y_lo {
@@ -1276,6 +1359,86 @@ fn fmt_scale(v: f64) -> String {
         format!("{v:.2}")
     } else {
         format!("{v:.3}")
+    }
+}
+
+/// Parse popup draft into board limits; `None` means Auto.
+fn parse_y_scale_draft(draft: &YScaleDraft) -> Result<YLimitEdit, String> {
+    let y_max = if draft.max_auto {
+        None
+    } else {
+        let v = draft
+            .max_text
+            .trim()
+            .parse::<f64>()
+            .map_err(|_| "Max must be a number".to_string())?;
+        if !v.is_finite() {
+            return Err("Max must be finite".into());
+        }
+        Some(v)
+    };
+    let y_min = if draft.min_auto {
+        None
+    } else {
+        let v = draft
+            .min_text
+            .trim()
+            .parse::<f64>()
+            .map_err(|_| "Min must be a number".to_string())?;
+        if !v.is_finite() {
+            return Err("Min must be finite".into());
+        }
+        Some(v)
+    };
+    if let (Some(lo), Some(hi)) = (y_min, y_max) {
+        if hi <= lo {
+            return Err("Max must be greater than Min".into());
+        }
+    }
+    Ok(YLimitEdit { y_min, y_max })
+}
+
+#[cfg(test)]
+mod y_scale_tests {
+    use super::*;
+
+    #[test]
+    fn parse_auto_both() {
+        let d = YScaleDraft {
+            max_auto: true,
+            max_text: "x".into(),
+            min_auto: true,
+            min_text: "y".into(),
+            err: None,
+        };
+        let e = parse_y_scale_draft(&d).unwrap();
+        assert!(e.y_min.is_none() && e.y_max.is_none());
+    }
+
+    #[test]
+    fn parse_manual_range() {
+        let d = YScaleDraft {
+            max_auto: false,
+            max_text: "100".into(),
+            min_auto: false,
+            min_text: "0".into(),
+            err: None,
+        };
+        let e = parse_y_scale_draft(&d).unwrap();
+        assert_eq!(e.y_min, Some(0.0));
+        assert_eq!(e.y_max, Some(100.0));
+    }
+
+    #[test]
+    fn parse_rejects_inverted() {
+        let d = YScaleDraft {
+            max_auto: false,
+            max_text: "1".into(),
+            min_auto: false,
+            min_text: "10".into(),
+            err: None,
+        };
+        assert!(parse_y_scale_draft(&d).is_err());
     }
 }
 
