@@ -21,9 +21,12 @@ use image::RgbaImage;
 use std::collections::{BTreeMap, HashMap};
 use std::time::Instant;
 
-/// Authored `topicbench-logo-small` size (logical/UI px). Scaled to fit shared row.
-const RIBBON_LOGO_NATIVE_W: f32 = 164.0;
-const RIBBON_LOGO_NATIVE_H: f32 = 76.0;
+/// Ribbon paint from `topicbench-horizontal-512` at even ÷4 (512×239 → 128×59).
+const RIBBON_LOGO_NATIVE_W: f32 = 128.0;
+const RIBBON_LOGO_NATIVE_H: f32 = 59.0;
+/// About header from the same asset at even ÷2 (→ 256×119).
+const ABOUT_LOGO_NATIVE_W: f32 = 256.0;
+const ABOUT_LOGO_NATIVE_H: f32 = 119.0;
 /// Brand/group band — shared with Profiles/Panels/App via [`RIBBON_ROW_H`].
 const RIBBON_BRAND_H: f32 = RIBBON_ROW_H;
 /// Ribbon panel: brand band + vertical frame margins (4+4 from overlay).
@@ -1348,25 +1351,19 @@ pub(super) fn apply_font_zoom(ctx: &egui::Context, factor: f32) {
     ctx.style_mut(|s| s.text_styles = styles);
 }
 
-/// Paint budget in logical/UI px. Prefer authored 164×76; fit command-cell height.
-/// Uses [`icons::CMD_H`] (not full row) so the mark aligns with icon cells inside groups
-/// (groups have 3px frame pad around CMD_H — logo gets the same visual air).
+/// Paint budget in logical/UI px — even ÷4 of the 512 wordmark; fits CMD_H band.
 fn ribbon_logo_paint_size() -> egui::Vec2 {
-    let max_h = icons::CMD_H; // 64 — matches command cells; 3px air in RIBBON_ROW_H
-    if RIBBON_LOGO_NATIVE_H <= max_h {
-        return egui::vec2(RIBBON_LOGO_NATIVE_W, RIBBON_LOGO_NATIVE_H);
-    }
-    let scale = max_h / RIBBON_LOGO_NATIVE_H;
-    egui::vec2(
-        (RIBBON_LOGO_NATIVE_W * scale).round().max(1.0),
-        (RIBBON_LOGO_NATIVE_H * scale).round().max(1.0),
-    )
+    egui::vec2(RIBBON_LOGO_NATIVE_W, RIBBON_LOGO_NATIVE_H)
 }
 
-/// Topic Bench wordmark — hi-res SVG raster, integer-scaled (same path as AA About).
+/// About header budget — even ÷2 of the same 512 wordmark.
+pub(super) fn about_logo_paint_size() -> egui::Vec2 {
+    egui::vec2(ABOUT_LOGO_NATIVE_W, ABOUT_LOGO_NATIVE_H)
+}
+
+/// Topic Bench wordmark — `topicbench-horizontal-512.png`, even-integer box-downscale.
 ///
-/// Texture is always 1 device px per texel after CPU integer box-downscale (factor 2/3/…);
-/// GPU Nearest never fractional-minifies a tiny PNG into etching.
+/// Display = source ÷ 2/4/6… (never odd factors); texture paints 1 texel = 1 screen px.
 #[derive(Default)]
 pub(super) struct TbLogo {
     entries: HashMap<(u32, u32), (TextureHandle, Vec2)>,
@@ -1392,14 +1389,14 @@ impl TbLogo {
         max_h: f32,
         clickable: bool,
     ) -> egui::Response {
-        const HI: &[u8] = include_bytes!("../../assets/topicbench-logo-hi.png");
+        const SRC: &[u8] = include_bytes!("../../assets/topicbench-horizontal-512.png");
         let ppp = ui.ctx().pixels_per_point().max(0.25);
         let max_w_px = (max_w * ppp).floor().max(1.0) as u32;
         let max_h_px = (max_h * ppp).floor().max(1.0) as u32;
         let key = (max_w_px, max_h_px);
         if !self.entries.contains_key(&key) {
             if let Some(entry) =
-                build_hi_mark(ui.ctx(), HI, max_w_px, max_h_px, ppp, "tb-logo")
+                build_tb_mark(ui.ctx(), SRC, max_w_px, max_h_px, ppp)
             {
                 self.entries.insert(key, entry);
             }
@@ -1493,6 +1490,66 @@ fn nearest_tex_opts() -> TextureOptions {
         minification: egui::TextureFilter::Nearest,
         ..TextureOptions::LINEAR
     }
+}
+
+/// Topic Bench 512 wordmark — downscale by an **even** integer factor only (2×, 4×, …).
+fn build_tb_mark(
+    ctx: &egui::Context,
+    bytes: &[u8],
+    max_w_px: u32,
+    max_h_px: u32,
+    ppp: f32,
+) -> Option<(TextureHandle, Vec2)> {
+    let raw = image::load_from_memory(bytes).ok()?.into_rgba8();
+    let (nw, nh) = raw.dimensions();
+    if nw == 0 || nh == 0 {
+        return None;
+    }
+    let (tex_img, scale_up) = if nw <= max_w_px && nh <= max_h_px {
+        // Prefer even nearest upscale if the slot is larger; else 1:1.
+        let ux = (max_w_px / nw).max(1);
+        let uy = (max_h_px / nh).max(1);
+        let mut up = ux.min(uy).max(1);
+        if up > 1 && up % 2 == 1 {
+            up -= 1;
+        }
+        (raw, up.max(1))
+    } else {
+        let fx = ((nw + max_w_px - 1) / max_w_px).max(1);
+        let fy = ((nh + max_h_px - 1) / max_h_px).max(1);
+        let mut factor = fx.max(fy);
+        if factor < 2 {
+            factor = 2;
+        }
+        if factor % 2 == 1 {
+            factor += 1;
+        }
+        let cw = (nw / factor) * factor;
+        let ch = (nh / factor) * factor;
+        let ox = (nw - cw) / 2;
+        let oy = (nh - ch) / 2;
+        let cropped = image::imageops::crop_imm(&raw, ox, oy, cw, ch).to_image();
+        (integer_box_downscale(&cropped, factor), 1)
+    };
+    let (tw, th) = tex_img.dimensions();
+    let out = if scale_up > 1 {
+        image::imageops::resize(
+            &tex_img,
+            tw * scale_up,
+            th * scale_up,
+            image::imageops::FilterType::Nearest,
+        )
+    } else {
+        tex_img
+    };
+    let (ow, oh) = out.dimensions();
+    let color = ColorImage::from_rgba_unmultiplied([ow as usize, oh as usize], out.as_raw());
+    let tex = ctx.load_texture(
+        format!("tb-logo-{ow}x{oh}"),
+        color,
+        nearest_tex_opts(),
+    );
+    Some((tex, Vec2::new(ow as f32 / ppp, oh as f32 / ppp)))
 }
 
 /// Integer box-downscale so source ÷ factor = display (factor 2/3/…); 1 texel → 1 screen px.
