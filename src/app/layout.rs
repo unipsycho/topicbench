@@ -475,8 +475,9 @@ impl MqttMonitorApp {
                     |ui| {
                         ui.set_height(brand_h);
                         ui.spacing_mut().item_spacing.x = 0.0;
-                        let (logo_rect, _) = ui
-                            .allocate_exact_size(egui::vec2(logo_w, brand_h), egui::Sense::hover());
+                        // Logo click opens About (Modbus / Protocol Bench pattern).
+                        let (logo_rect, logo_resp) = ui
+                            .allocate_exact_size(egui::vec2(logo_w, brand_h), egui::Sense::click());
                         if let Some(logo) = &self.logo {
                             // Center mark in shared row (may be shorter than row if scaled).
                             let logo_pos = egui::pos2(
@@ -491,6 +492,12 @@ impl MqttMonitorApp {
                                     .sense(egui::Sense::hover()),
                             );
                         }
+                        if logo_resp.clicked() {
+                            self.about_open = true;
+                        }
+                        logo_resp
+                            .on_hover_text("About TopicBench")
+                            .on_hover_cursor(egui::CursorIcon::PointingHand);
                         ui.add_space(ver_gap);
                         let (ver_rect, _) = ui.allocate_exact_size(
                             egui::vec2(ver_g.size().x, brand_h),
@@ -1373,6 +1380,26 @@ pub(super) fn load_logo(ctx: &egui::Context) -> Option<TextureHandle> {
         egui::TextureOptions {
             magnification: egui::TextureFilter::Nearest,
             minification: egui::TextureFilter::Nearest,
+            ..egui::TextureOptions::LINEAR
+        },
+    ))
+}
+
+/// About dialog app mark — same art as the window / taskbar icon.
+pub(super) fn load_app_mark(ctx: &egui::Context) -> Option<TextureHandle> {
+    let raw = image::load_from_memory(include_bytes!(
+        "../../assets/icons/topicbench-app-icon-256.png"
+    ))
+    .ok()?
+    .into_rgba8();
+    let size = [raw.width() as usize, raw.height() as usize];
+    let color = egui::ColorImage::from_rgba_unmultiplied(size, raw.as_raw());
+    Some(ctx.load_texture(
+        "tb-app-mark",
+        color,
+        egui::TextureOptions {
+            magnification: egui::TextureFilter::Linear,
+            minification: egui::TextureFilter::Linear,
             ..egui::TextureOptions::LINEAR
         },
     ))
