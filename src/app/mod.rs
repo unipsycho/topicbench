@@ -80,6 +80,8 @@ pub struct MqttMonitorApp {
     shortcuts_open: bool,
     /// About overlay (opened from the top-left TopicBench logo).
     about_open: bool,
+    /// When About last opened — drives the delayed Topic Bench Pro reveal.
+    about_opened_at: Option<Instant>,
     focus_search: bool,
     focus_profile_editor: bool,
     /// Profiles panel was opened by New (auto-close on next Save).
@@ -287,6 +289,7 @@ impl MqttMonitorApp {
             shortcuts_open: false,
             // Dev/screenshot: TOPICBENCH_OPEN_ABOUT=1 opens About once at launch.
             about_open: std::env::var_os("TOPICBENCH_OPEN_ABOUT").is_some(),
+            about_opened_at: None,
             focus_search: false,
             focus_profile_editor: false,
             profiles_auto_opened: false,
