@@ -72,8 +72,6 @@ pub struct MqttMonitorApp {
     /// Shadow of `status` so we detect mutations from any panel/action.
     status_snap: String,
     logo: Option<TextureHandle>,
-    /// App mark for the About dialog (window / taskbar icon art).
-    app_mark: Option<TextureHandle>,
     /// Agile Automation logo kept after splash for the About dialog.
     aa_logo: Option<TextureHandle>,
     icons: IconSet,
@@ -186,7 +184,6 @@ impl MqttMonitorApp {
         // Use our font-zoom chords; disable egui’s pixels_per_point zoom.
         cc.egui_ctx.options_mut(|o| o.zoom_with_keyboard = false);
         let logo = layout::load_logo(&cc.egui_ctx);
-        let app_mark = layout::load_app_mark(&cc.egui_ctx);
         let aa_logo = layout::load_splash_logo(&cc.egui_ctx);
         let splash_logo = aa_logo.clone();
         let icons = IconSet::load(&cc.egui_ctx);
@@ -283,7 +280,6 @@ impl MqttMonitorApp {
             status_changed_at: Instant::now(),
             status_snap: status,
             logo,
-            app_mark,
             aa_logo,
             icons,
             panels,

@@ -359,7 +359,8 @@ impl MqttMonitorApp {
         let mut check_now = false;
         let checking = matches!(self.update_status, UpdateStatus::Checking);
         let status_snapshot = self.update_status.clone();
-        let app_mark = self.app_mark.clone();
+        // Same ribbon wordmark as top-left chrome — one mark, no duplicate title text.
+        let brand_logo = self.logo.clone();
         let aa_logo = self.aa_logo.clone();
 
         let frame = egui::Frame::NONE
@@ -421,25 +422,24 @@ impl MqttMonitorApp {
                 }
 
                 ui.vertical_centered(|ui| {
-                    // Large product mark in an 84px band (Modbus About cue).
-                    let (band, _) = ui.allocate_exact_size(
-                        egui::vec2(ui.available_width(), 84.0),
-                        egui::Sense::hover(),
-                    );
-                    if let Some(mark) = &app_mark {
-                        let size = egui::vec2(72.0, 72.0);
+                    // Ribbon Topic Bench logo only (no TB icon + "Topic Bench" text under it).
+                    if let Some(logo) = &brand_logo {
+                        // Authored 164×76; paint a bit larger than the ribbon for About.
+                        let size = egui::vec2(220.0_f32, (220.0_f32 * 76.0 / 164.0).round());
+                        let (band, _) = ui.allocate_exact_size(
+                            egui::vec2(ui.available_width(), size.y + 8.0),
+                            egui::Sense::hover(),
+                        );
                         let rect = egui::Rect::from_center_size(band.center(), size);
                         ui.put(
                             rect,
-                            egui::Image::new(mark)
+                            egui::Image::new(logo)
                                 .fit_to_exact_size(size)
                                 .maintain_aspect_ratio(true)
                                 .sense(egui::Sense::hover()),
                         );
                     }
-                    ui.add_space(6.0);
-                    paint_about_wordmark(ui);
-                    ui.add_space(6.0);
+                    ui.add_space(10.0);
                     ui.label(RichText::new(ABOUT_SLOGAN).size(13.0).color(Color32::from_rgb(0xf2, 0xf5, 0xf8)));
                     ui.add_space(4.0);
                     ui.label(
@@ -687,30 +687,6 @@ impl MqttMonitorApp {
         }
         let _ = dismiss;
     }
-}
-
-/// "Topic Bench" centered — Bench in Modbus accent orange.
-fn paint_about_wordmark(ui: &mut egui::Ui) {
-    let gap = 4.0_f32;
-    let font = FontId::proportional(24.0);
-    let text = Color32::from_rgb(0xf2, 0xf5, 0xf8);
-    let topic = ui.fonts(|f| f.layout_no_wrap("Topic".to_owned(), font.clone(), text));
-    let bench = ui.fonts(|f| f.layout_no_wrap("Bench".to_owned(), font, ABOUT_ACCENT));
-    let width = topic.size().x + gap + bench.size().x;
-    let height = topic.size().y.max(bench.size().y);
-    let (rect, _) =
-        ui.allocate_exact_size(egui::vec2(ui.available_width(), height), egui::Sense::hover());
-    let origin = egui::pos2(
-        rect.center().x - width * 0.5,
-        rect.center().y - height * 0.5,
-    );
-    let painter = ui.painter();
-    painter.galley(origin, topic, text);
-    painter.galley(
-        egui::pos2(origin.x + width - bench.size().x, origin.y),
-        bench,
-        ABOUT_ACCENT,
-    );
 }
 
 fn about_tag_chip(ui: &mut egui::Ui, tag: &str) {
