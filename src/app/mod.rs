@@ -17,7 +17,7 @@ use crate::ui::payload_panel::{PayloadSearch, PoppedPayload};
 use crate::ui::flash;
 use crate::ui::splash::SplashIntro;
 use crate::update::{self, ReleaseInfo, UpdateService, UpdateStatus};
-use eframe::egui::{self, TextureHandle};
+use eframe::egui::{self};
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
@@ -71,11 +71,18 @@ pub struct MqttMonitorApp {
     status_changed_at: Instant,
     /// Shadow of `status` so we detect mutations from any panel/action.
     status_snap: String,
-    logo: Option<TextureHandle>,
+    /// Topic Bench wordmark (ribbon + About) — hi-res source, integer-scaled per slot.
+    tb_logo: layout::TbLogo,
+    /// Agile Automation mark for About — hi-res source, integer-scaled per slot.
+    aa_about: layout::AaAboutLogo,
     icons: IconSet,
     panels: PanelVisibility,
     settings_open: bool,
     shortcuts_open: bool,
+    /// About overlay (opened from the top-left TopicBench logo).
+    about_open: bool,
+    /// When About last opened — drives the delayed Topic Bench Pro reveal.
+    about_opened_at: Option<Instant>,
     focus_search: bool,
     focus_profile_editor: bool,
     /// Profiles panel was opened by New (auto-close on next Save).
@@ -179,7 +186,6 @@ impl MqttMonitorApp {
         layout::apply_font_zoom(&cc.egui_ctx, settings.font_zoom_factor());
         // Use our font-zoom chords; disable egui’s pixels_per_point zoom.
         cc.egui_ctx.options_mut(|o| o.zoom_with_keyboard = false);
-        let logo = layout::load_logo(&cc.egui_ctx);
         let splash_logo = layout::load_splash_logo(&cc.egui_ctx);
         let icons = IconSet::load(&cc.egui_ctx);
         // Restore ribbon panel open/closed (incl. Payload) from settings.json.
@@ -274,11 +280,15 @@ impl MqttMonitorApp {
             status: status.clone(),
             status_changed_at: Instant::now(),
             status_snap: status,
-            logo,
+            tb_logo: layout::TbLogo::default(),
+            aa_about: layout::AaAboutLogo::default(),
             icons,
             panels,
             settings_open: false,
             shortcuts_open: false,
+            // Dev/screenshot: TOPICBENCH_OPEN_ABOUT=1 opens About once at launch.
+            about_open: std::env::var_os("TOPICBENCH_OPEN_ABOUT").is_some(),
+            about_opened_at: None,
             focus_search: false,
             focus_profile_editor: false,
             profiles_auto_opened: false,
@@ -479,11 +489,18 @@ impl eframe::App for MqttMonitorApp {
                 .iter()
                 .any(|p| p.search.change_flash_active(now));
         let status_fade = status_strip_fade_alpha(self.status_changed_at, now);
+        // About Pro reveal (header + staggered chips) must keep frames flowing —
+        // otherwise idle 1 Hz throttling freezes mid-fade with empty chip slots.
+        let about_animating = self.about_animation_pending(now);
         // Combined boards do NOT get an idle timer — they repaint when MQTT samples
         // land on a board series (`need_repaint` via poll) or the user interacts.
         let hz = crate::mqtt::session::BACKGROUND_UI_HZ_INTERVAL;
         if focused {
-            if need_repaint || flashing || (status_fade > 0.0 && status_fade < 1.0) {
+            if need_repaint
+                || flashing
+                || about_animating
+                || (status_fade > 0.0 && status_fade < 1.0)
+            {
                 ctx.request_repaint();
             } else {
                 // 1 Hz Stats refresh and/or wake when status fade is due.
@@ -499,6 +516,9 @@ impl eframe::App for MqttMonitorApp {
                     ctx.request_repaint_after(w);
                 }
             }
+        } else if about_animating {
+            // Keep About fades smooth even when the window is unfocused.
+            ctx.request_repaint();
         } else {
             // Unfocused / other workspace: ~1 Hz heartbeat — alive, not ANR-prone.
             ctx.request_repaint_after(hz);
@@ -540,9 +560,10 @@ impl eframe::App for MqttMonitorApp {
         }
 
         self.handle_shortcuts(ctx);
-        // Suppress tips under Settings / Shortcuts / Update overlays.
+        // Suppress tips under Settings / Shortcuts / About / Update overlays.
         let block_tips = self.settings_open
             || self.shortcuts_open
+            || self.about_open
             || self.update_modal_open
             || self.bookmarks_open
             || self.color_rules_open
