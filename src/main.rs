@@ -22,7 +22,7 @@ fn main() -> eframe::Result<()> {
     let mut viewport = egui::ViewportBuilder::default()
         .with_inner_size([1200.0, 760.0])
         .with_min_inner_size(mqtt::window_geom::MIN_MAIN)
-        .with_title("TopicBench")
+        .with_title("Topic Bench")
         // Wayland app_id / X11 WM_CLASS — matches StartupWMClass in packaging/*.desktop.
         // Child pop-outs get the same id via WinGeom::apply (do not invent per-panel ids).
         .with_app_id(mqtt::window_geom::APP_ID);
@@ -58,7 +58,7 @@ fn main() -> eframe::Result<()> {
     };
 
     eframe::run_native(
-        "TopicBench",
+        "Topic Bench",
         options,
         Box::new(|cc| {
             // Classic until ThemeClient / settings resolve a Pro palette.
