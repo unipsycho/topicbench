@@ -72,8 +72,8 @@ pub struct MqttMonitorApp {
     /// Shadow of `status` so we detect mutations from any panel/action.
     status_snap: String,
     logo: Option<TextureHandle>,
-    /// Agile Automation logo kept after splash for the About dialog.
-    aa_logo: Option<TextureHandle>,
+    /// Agile Automation mark for About — hi-res source, integer-scaled per slot.
+    aa_about: layout::AaAboutLogo,
     icons: IconSet,
     panels: PanelVisibility,
     settings_open: bool,
@@ -186,8 +186,7 @@ impl MqttMonitorApp {
         // Use our font-zoom chords; disable egui’s pixels_per_point zoom.
         cc.egui_ctx.options_mut(|o| o.zoom_with_keyboard = false);
         let logo = layout::load_logo(&cc.egui_ctx);
-        let aa_logo = layout::load_splash_logo(&cc.egui_ctx);
-        let splash_logo = aa_logo.clone();
+        let splash_logo = layout::load_splash_logo(&cc.egui_ctx);
         let icons = IconSet::load(&cc.egui_ctx);
         // Restore ribbon panel open/closed (incl. Payload) from settings.json.
         let panels = PanelVisibility {
@@ -282,7 +281,7 @@ impl MqttMonitorApp {
             status_changed_at: Instant::now(),
             status_snap: status,
             logo,
-            aa_logo,
+            aa_about: layout::AaAboutLogo::default(),
             icons,
             panels,
             settings_open: false,

@@ -399,7 +399,6 @@ impl MqttMonitorApp {
         }
         let opened_at = self.about_opened_at.unwrap_or_else(Instant::now);
         let elapsed = opened_at.elapsed().as_secs_f32();
-        // Header fades after the 2s hold; chips start only once the header fade finishes.
         let header_alpha =
             ((elapsed - ABOUT_PRO_DELAY_S) / ABOUT_PRO_HEADER_FADE_S).clamp(0.0, 1.0);
         let chips_t0 = ABOUT_PRO_DELAY_S + ABOUT_PRO_HEADER_FADE_S;
@@ -408,9 +407,7 @@ impl MqttMonitorApp {
             let start = chips_t0 + i as f32 * ABOUT_PRO_CHIP_STAGGER_S;
             *a = ((elapsed - start) / ABOUT_PRO_CHIP_FADE_S).clamp(0.0, 1.0);
         }
-        let anim_done = header_alpha >= 1.0 && chip_alphas.iter().all(|a| *a >= 1.0);
-        if !anim_done {
-            // Keep painting through delay + header fade + staggered chip fades.
+        if header_alpha < 1.0 || chip_alphas.iter().any(|a| *a < 1.0) {
             ctx.request_repaint();
         }
 
@@ -418,9 +415,7 @@ impl MqttMonitorApp {
         let mut check_now = false;
         let checking = matches!(self.update_status, UpdateStatus::Checking);
         let status_snapshot = self.update_status.clone();
-        // Same ribbon wordmark as top-left chrome — one mark, no duplicate title text.
         let brand_logo = self.logo.clone();
-        let aa_logo = self.aa_logo.clone();
 
         let frame = egui::Frame::NONE
             .fill(ABOUT_PANE)
@@ -458,7 +453,12 @@ impl MqttMonitorApp {
                     painter.rect_filled(
                         btn_rect,
                         5.0,
-                        Color32::from_rgba_unmultiplied(255, 255, 255, if resp.hovered() { 18 } else { 10 }),
+                        Color32::from_rgba_unmultiplied(
+                            255,
+                            255,
+                            255,
+                            if resp.hovered() { 18 } else { 10 },
+                        ),
                     );
                     painter.line_segment(
                         [
@@ -481,9 +481,8 @@ impl MqttMonitorApp {
                 }
 
                 ui.vertical_centered(|ui| {
-                    // Ribbon Topic Bench logo only (no TB icon + "Topic Bench" text under it).
+                    // Ribbon Topic Bench logo only.
                     if let Some(logo) = &brand_logo {
-                        // Authored 164×76; paint a bit larger than the ribbon for About.
                         let size = egui::vec2(220.0_f32, (220.0_f32 * 76.0 / 164.0).round());
                         let (band, _) = ui.allocate_exact_size(
                             egui::vec2(ui.available_width(), size.y + 8.0),
@@ -499,7 +498,11 @@ impl MqttMonitorApp {
                         );
                     }
                     ui.add_space(10.0);
-                    ui.label(RichText::new(ABOUT_SLOGAN).size(13.0).color(Color32::from_rgb(0xf2, 0xf5, 0xf8)));
+                    ui.label(
+                        RichText::new(ABOUT_SLOGAN)
+                            .size(13.0)
+                            .color(Color32::from_rgb(0xf2, 0xf5, 0xf8)),
+                    );
                     ui.add_space(4.0);
                     ui.label(
                         RichText::new(format!("Version {}", env!("CARGO_PKG_VERSION")))
@@ -507,21 +510,13 @@ impl MqttMonitorApp {
                             .color(Color32::from_rgb(0x8e, 0xa0, 0xb8)),
                     );
                     ui.add_space(18.0);
-                    // Company logo — static (no About hover tip over the artwork).
-                    if let Some(logo) = &aa_logo {
-                        let max_w = ui.available_width().min(280.0);
-                        let aspect = logo.size_vec2().x / logo.size_vec2().y.max(1.0);
-                        let h = 64.0_f32;
-                        let w = (h * aspect).min(max_w);
-                        ui.add(
-                            egui::Image::new(logo)
-                                .fit_to_exact_size(egui::vec2(w, h))
-                                .maintain_aspect_ratio(true)
-                                .sense(egui::Sense::hover()),
-                        );
-                    }
+                });
+
+                // AA logo — hi-res company SVG raster, integer-scaled (needs &mut cache).
+                ui.vertical_centered(|ui| {
+                    self.aa_about
+                        .show_static(ui, ui.available_width().min(280.0), 64.0);
                     ui.add_space(14.0);
-                    // Normal web-link blue (not accent) — Modbus About cue.
                     let link_blue = Color32::from_rgb(74, 144, 226);
                     let site = ui
                         .link(
@@ -538,19 +533,18 @@ impl MqttMonitorApp {
                 });
 
                 ui.add_space(14.0);
-                ui.horizontal_wrapped(|ui| {
-                    ui.spacing_mut().item_spacing = egui::vec2(8.0, 8.0);
-                    for tag in [
-                        "MQTT",
-                        "Multi-broker",
-                        "Stickies",
-                        "Publish",
-                        "Payload",
-                        "Search",
-                    ] {
-                        about_tag_chip(ui, tag, 1.0);
-                    }
-                });
+                // Free chips — LTR within each row; each wrapped row centered as a group.
+                about_centered_chip_rows(
+                    ui,
+                    &[
+                        ("MQTT", 1.0),
+                        ("Multi-broker", 1.0),
+                        ("Stickies", 1.0),
+                        ("Publish", 1.0),
+                        ("Payload", 1.0),
+                        ("Search", 1.0),
+                    ],
+                );
 
                 // Topic Bench Pro — expand after ~2s; header fades, then chips stagger.
                 if header_alpha > 0.01 {
@@ -563,21 +557,18 @@ impl MqttMonitorApp {
                                 .color(with_alpha(CHROME_TEXT(), header_alpha)),
                         );
                     });
-                    // Chip row only once the first chip starts — avoids a blank gap during header fade.
                     if chip_alphas.iter().any(|a| *a > 0.01) {
                         ui.add_space(8.0);
-                        ui.horizontal_wrapped(|ui| {
-                            ui.spacing_mut().item_spacing = egui::vec2(8.0, 8.0);
-                            for (tag, alpha) in ABOUT_PRO_TAGS.iter().zip(chip_alphas.iter()) {
-                                // Keep layout stable once the row exists; invisible chips still reserve.
-                                about_tag_chip(ui, tag, (*alpha).max(0.0));
-                            }
-                        });
+                        let pro: Vec<(&str, f32)> = ABOUT_PRO_TAGS
+                            .iter()
+                            .zip(chip_alphas.iter())
+                            .map(|(t, a)| (*t, *a))
+                            .collect();
+                        about_centered_chip_rows(ui, &pro);
                     }
                 }
 
                 ui.add_space(14.0);
-                // Free GitHub Releases check (wired — Modbus shows the same control).
                 ui.vertical_centered(|ui| {
                     let btn = ui.add_enabled(
                         !checking,
@@ -585,7 +576,8 @@ impl MqttMonitorApp {
                             "Checking…"
                         } else {
                             "Check for Updates"
-                        }).size(13.0))
+                        })
+                        .size(13.0))
                         .min_size(egui::vec2(200.0, 34.0)),
                     );
                     if btn.clicked() {
@@ -775,8 +767,74 @@ impl MqttMonitorApp {
     }
 }
 
-/// Theme-friendly chip — muted/row fill + accent border/text (Classic + Pro palettes).
-fn about_tag_chip(ui: &mut egui::Ui, tag: &str, alpha: f32) {
+/// Chip outer size (pad included) — measure without painting.
+fn about_chip_size(ui: &egui::Ui, tag: &str) -> egui::Vec2 {
+    let galley = ui.fonts(|f| {
+        f.layout_no_wrap(tag.to_owned(), FontId::proportional(12.0), Color32::WHITE)
+    });
+    galley.size() + egui::vec2(10.0, 5.0) * 2.0
+}
+
+/// Pack chips LTR into wrapped rows; center each whole row as a group (not each chip).
+fn about_centered_chip_rows(ui: &mut egui::Ui, tags: &[(&str, f32)]) {
+    if tags.is_empty() {
+        return;
+    }
+    let gap = egui::vec2(8.0, 8.0);
+    let max_w = ui.available_width();
+    let sizes: Vec<egui::Vec2> = tags.iter().map(|(t, _)| about_chip_size(ui, t)).collect();
+
+    // Build rows: keep left-to-right order; wrap when the next chip won't fit.
+    let mut rows: Vec<Vec<usize>> = Vec::new();
+    let mut cur: Vec<usize> = Vec::new();
+    let mut row_w = 0.0_f32;
+    for (i, size) in sizes.iter().enumerate() {
+        let need = if cur.is_empty() {
+            size.x
+        } else {
+            size.x + gap.x
+        };
+        if !cur.is_empty() && row_w + need > max_w {
+            rows.push(std::mem::take(&mut cur));
+            row_w = 0.0;
+        }
+        if cur.is_empty() {
+            row_w = size.x;
+        } else {
+            row_w += gap.x + size.x;
+        }
+        cur.push(i);
+    }
+    if !cur.is_empty() {
+        rows.push(cur);
+    }
+
+    for (ri, row) in rows.iter().enumerate() {
+        if ri > 0 {
+            ui.add_space(gap.y);
+        }
+        let row_w: f32 = row.iter().map(|&i| sizes[i].x).sum::<f32>()
+            + gap.x * (row.len().saturating_sub(1) as f32);
+        let row_h = row
+            .iter()
+            .map(|&i| sizes[i].y)
+            .fold(0.0_f32, f32::max);
+        let (band, _) =
+            ui.allocate_exact_size(egui::vec2(ui.available_width(), row_h), egui::Sense::hover());
+        // Center the group; chips stay LTR packed from the group's left edge.
+        let mut x = band.center().x - row_w * 0.5;
+        let cy = band.center().y;
+        for &i in row {
+            let size = sizes[i];
+            let rect = egui::Rect::from_center_size(egui::pos2(x + size.x * 0.5, cy), size);
+            about_tag_chip_at(ui, rect, tags[i].0, tags[i].1);
+            x += size.x + gap.x;
+        }
+    }
+}
+
+/// Theme-friendly chip painted into `rect` — muted/row fill + accent border/text.
+fn about_tag_chip_at(ui: &mut egui::Ui, rect: egui::Rect, tag: &str, alpha: f32) {
     let ink = with_alpha(CHROME_CAPTION(), alpha);
     let border = with_alpha(CHROME_ACCENT_BORDER(), alpha);
     let fill = {
@@ -792,10 +850,8 @@ fn about_tag_chip(ui: &mut egui::Ui, tag: &str, alpha: f32) {
             alpha * 0.92,
         )
     };
-    let galley = ui.fonts(|f| f.layout_no_wrap(tag.to_owned(), FontId::proportional(12.0), ink));
     let pad = egui::vec2(10.0, 5.0);
-    let size = galley.size() + pad * 2.0;
-    let (rect, _) = ui.allocate_exact_size(size, egui::Sense::hover());
+    let galley = ui.fonts(|f| f.layout_no_wrap(tag.to_owned(), FontId::proportional(12.0), ink));
     let chrome = rect.shrink(0.5);
     let painter = ui.painter();
     painter.rect_filled(chrome, 6.0, fill);
