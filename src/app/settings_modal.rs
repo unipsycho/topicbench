@@ -18,9 +18,21 @@ const COMPANY_LINK: &str = "www.agileautomation.ca";
 const ABOUT_SLOGAN: &str = "Your bench for every imaginable topic.";
 /// Pane fill close to Modbus About (`#1a1e25`).
 const ABOUT_PANE: Color32 = Color32::from_rgb(0x1a, 0x1e, 0x25);
-/// Hold free About, then expand + fade Topic Bench Pro chips.
+/// Hold free About, then expand + fade Topic Bench Pro (header, then staggered chips).
 const ABOUT_PRO_DELAY_S: f32 = 2.0;
-const ABOUT_PRO_FADE_S: f32 = 0.45;
+/// Header / section fade — slower than the first pass (~0.45s).
+const ABOUT_PRO_HEADER_FADE_S: f32 = 1.1;
+/// Each Pro chip fades over ~1s; next chip starts ~0.5s after the previous (overlap).
+const ABOUT_PRO_CHIP_FADE_S: f32 = 1.0;
+const ABOUT_PRO_CHIP_STAGGER_S: f32 = 0.5;
+const ABOUT_PRO_TAGS: [&str; 6] = [
+    "Scenarios",
+    "Simulation",
+    "Color Rules",
+    "Themes",
+    "Combined charts",
+    "MCP",
+];
 /// Soft hairline like Modbus About (`white` @ 22/255).
 fn about_line() -> Color32 {
     Color32::from_rgba_unmultiplied(255, 255, 255, 22)
@@ -370,9 +382,18 @@ impl MqttMonitorApp {
         }
         let opened_at = self.about_opened_at.unwrap_or_else(Instant::now);
         let elapsed = opened_at.elapsed().as_secs_f32();
-        let pro_alpha = ((elapsed - ABOUT_PRO_DELAY_S) / ABOUT_PRO_FADE_S).clamp(0.0, 1.0);
-        if pro_alpha < 1.0 {
-            // Keep painting through the delay + fade.
+        // Header fades after the 2s hold; chips start only once the header fade finishes.
+        let header_alpha =
+            ((elapsed - ABOUT_PRO_DELAY_S) / ABOUT_PRO_HEADER_FADE_S).clamp(0.0, 1.0);
+        let chips_t0 = ABOUT_PRO_DELAY_S + ABOUT_PRO_HEADER_FADE_S;
+        let mut chip_alphas = [0.0_f32; ABOUT_PRO_TAGS.len()];
+        for (i, a) in chip_alphas.iter_mut().enumerate() {
+            let start = chips_t0 + i as f32 * ABOUT_PRO_CHIP_STAGGER_S;
+            *a = ((elapsed - start) / ABOUT_PRO_CHIP_FADE_S).clamp(0.0, 1.0);
+        }
+        let anim_done = header_alpha >= 1.0 && chip_alphas.iter().all(|a| *a >= 1.0);
+        if !anim_done {
+            // Keep painting through delay + header fade + staggered chip fades.
             ctx.request_repaint();
         }
 
@@ -514,29 +535,23 @@ impl MqttMonitorApp {
                     }
                 });
 
-                // Topic Bench Pro — expands height + fades in after ~2s.
-                if pro_alpha > 0.01 {
-                    ui.add_space(16.0 * pro_alpha.max(0.35));
+                // Topic Bench Pro — expand after ~2s; header fades, then chips stagger.
+                if header_alpha > 0.01 {
+                    ui.add_space(16.0 * header_alpha.max(0.35));
                     ui.vertical_centered(|ui| {
                         ui.label(
                             RichText::new("Topic Bench Pro")
                                 .size(14.0)
                                 .strong()
-                                .color(with_alpha(CHROME_TEXT(), pro_alpha)),
+                                .color(with_alpha(CHROME_TEXT(), header_alpha)),
                         );
                     });
-                    ui.add_space(8.0 * pro_alpha.max(0.35));
+                    ui.add_space(8.0 * header_alpha.max(0.35));
+                    // Reserve the chip row as soon as the section opens; each chip fades alone.
                     ui.horizontal_wrapped(|ui| {
                         ui.spacing_mut().item_spacing = egui::vec2(8.0, 8.0);
-                        for tag in [
-                            "Scenarios",
-                            "Simulation",
-                            "Color Rules",
-                            "Themes",
-                            "Combined charts",
-                            "MCP",
-                        ] {
-                            about_tag_chip(ui, tag, pro_alpha);
+                        for (tag, alpha) in ABOUT_PRO_TAGS.iter().zip(chip_alphas.iter()) {
+                            about_tag_chip(ui, tag, *alpha);
                         }
                     });
                 }
