@@ -14,15 +14,19 @@ use crate::ui::{
     topic_tree_panel, traffic_panel,
 };
 use eframe::egui::{
-    self, Align, Color32, FontFamily, FontId, RichText, TextStyle, TextureHandle,
+    self, Align, Color32, ColorImage, FontFamily, FontId, RichText, TextStyle, TextureHandle,
+    TextureOptions, Vec2,
 };
 use image::RgbaImage;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::time::Instant;
 
-/// Authored `topicbench-logo-small` size (logical/UI px). Scaled to fit shared row.
-const RIBBON_LOGO_NATIVE_W: f32 = 164.0;
-const RIBBON_LOGO_NATIVE_H: f32 = 76.0;
+/// Ribbon paint from `topicbench-horizontal.png` (1873×908) — height fits CMD_H band.
+const RIBBON_LOGO_NATIVE_W: f32 = 122.0;
+const RIBBON_LOGO_NATIVE_H: f32 = 59.0;
+/// About header from the same asset (same aspect → 256×124).
+const ABOUT_LOGO_NATIVE_W: f32 = 256.0;
+const ABOUT_LOGO_NATIVE_H: f32 = 124.0;
 /// Brand/group band — shared with Profiles/Panels/App via [`RIBBON_ROW_H`].
 const RIBBON_BRAND_H: f32 = RIBBON_ROW_H;
 /// Ribbon panel: brand band + vertical frame margins (4+4 from overlay).
@@ -475,21 +479,11 @@ impl MqttMonitorApp {
                     |ui| {
                         ui.set_height(brand_h);
                         ui.spacing_mut().item_spacing.x = 0.0;
-                        let (logo_rect, _) = ui
-                            .allocate_exact_size(egui::vec2(logo_w, brand_h), egui::Sense::hover());
-                        if let Some(logo) = &self.logo {
-                            // Center mark in shared row (may be shorter than row if scaled).
-                            let logo_pos = egui::pos2(
-                                logo_rect.left(),
-                                logo_rect.center().y - logo_size.y * 0.5,
-                            );
-                            ui.put(
-                                egui::Rect::from_min_size(logo_pos, logo_size),
-                                egui::Image::new(logo)
-                                    .fit_to_exact_size(logo_size)
-                                    .maintain_aspect_ratio(true)
-                                    .sense(egui::Sense::hover()),
-                            );
+                        // Horizontal wordmark, smooth-downscaled to fit band.
+                        let logo_resp = self.tb_logo.show(ui, logo_size.x, logo_size.y);
+                        let painted = logo_resp.rect;
+                        if logo_resp.clicked() {
+                            self.about_open = true;
                         }
                         ui.add_space(ver_gap);
                         let (ver_rect, _) = ui.allocate_exact_size(
@@ -500,7 +494,7 @@ impl MqttMonitorApp {
                         ui.painter().galley(
                             egui::pos2(
                                 ver_rect.left(),
-                                logo_rect.center().y + logo_size.y * 0.5 - ver_g.size().y,
+                                painted.center().y + painted.height() * 0.5 - ver_g.size().y,
                             ),
                             ver_g,
                             CHROME_MUTED(),
@@ -1357,40 +1351,70 @@ pub(super) fn apply_font_zoom(ctx: &egui::Context, factor: f32) {
     ctx.style_mut(|s| s.text_styles = styles);
 }
 
-/// Ribbon brand: `assets/topicbench-logo-small.png` (logical 164×76; PNG may be 2×).
-/// Splash stays Agile. Nearest sampling; paint size may scale to fit brand band.
-pub(super) fn load_logo(ctx: &egui::Context) -> Option<TextureHandle> {
-    let raw = image::load_from_memory(include_bytes!(
-        "../../assets/topicbench-logo-small.png"
-    ))
-    .ok()?
-    .into_rgba8();
-    let size = [raw.width() as usize, raw.height() as usize];
-    let color = egui::ColorImage::from_rgba_unmultiplied(size, raw.as_raw());
-    Some(ctx.load_texture(
-        "tb-logo-small",
-        color,
-        egui::TextureOptions {
-            magnification: egui::TextureFilter::Nearest,
-            minification: egui::TextureFilter::Nearest,
-            ..egui::TextureOptions::LINEAR
-        },
-    ))
+/// Paint budget in logical/UI px — fits CMD_H band.
+fn ribbon_logo_paint_size() -> egui::Vec2 {
+    egui::vec2(RIBBON_LOGO_NATIVE_W, RIBBON_LOGO_NATIVE_H)
 }
 
-/// Paint size in logical/UI px. Prefer authored 164×76; scale to fit command-cell height.
-/// Uses [`icons::CMD_H`] (not full row) so the mark aligns with icon cells inside groups
-/// (groups have 3px frame pad around CMD_H — logo gets the same visual air).
-fn ribbon_logo_paint_size() -> egui::Vec2 {
-    let max_h = icons::CMD_H; // 64 — matches command cells; 3px air in RIBBON_ROW_H
-    if RIBBON_LOGO_NATIVE_H <= max_h {
-        return egui::vec2(RIBBON_LOGO_NATIVE_W, RIBBON_LOGO_NATIVE_H);
+/// About header budget — same wordmark, larger paint.
+pub(super) fn about_logo_paint_size() -> egui::Vec2 {
+    egui::vec2(ABOUT_LOGO_NATIVE_W, ABOUT_LOGO_NATIVE_H)
+}
+
+/// Topic Bench wordmark — `topicbench-horizontal.png`, smooth aspect-fit downscale.
+#[derive(Default)]
+pub(super) struct TbLogo {
+    entries: HashMap<(u32, u32), (TextureHandle, Vec2)>,
+}
+
+impl TbLogo {
+    /// Ribbon mark — click opens About.
+    pub(super) fn show(&mut self, ui: &mut egui::Ui, max_w: f32, max_h: f32) -> egui::Response {
+        self.show_inner(ui, max_w, max_h, true)
+            .on_hover_text("About Topic Bench")
+            .on_hover_cursor(egui::CursorIcon::PointingHand)
     }
-    let scale = max_h / RIBBON_LOGO_NATIVE_H;
-    egui::vec2(
-        (RIBBON_LOGO_NATIVE_W * scale).round().max(1.0),
-        (RIBBON_LOGO_NATIVE_H * scale).round().max(1.0),
-    )
+
+    /// About header — display only.
+    pub(super) fn show_static(&mut self, ui: &mut egui::Ui, max_w: f32, max_h: f32) -> egui::Response {
+        self.show_inner(ui, max_w, max_h, false)
+    }
+
+    fn show_inner(
+        &mut self,
+        ui: &mut egui::Ui,
+        max_w: f32,
+        max_h: f32,
+        clickable: bool,
+    ) -> egui::Response {
+        const SRC: &[u8] = include_bytes!("../../assets/topicbench-horizontal.png");
+        let ppp = ui.ctx().pixels_per_point().max(0.25);
+        let max_w_px = (max_w * ppp).floor().max(1.0) as u32;
+        let max_h_px = (max_h * ppp).floor().max(1.0) as u32;
+        let key = (max_w_px, max_h_px);
+        if !self.entries.contains_key(&key) {
+            if let Some(entry) =
+                build_tb_mark(ui.ctx(), SRC, max_w_px, max_h_px, ppp)
+            {
+                self.entries.insert(key, entry);
+            }
+        }
+        if let Some((tex, size)) = self.entries.get(&key) {
+            let sense = if clickable {
+                egui::Sense::click()
+            } else {
+                egui::Sense::hover()
+            };
+            ui.add(
+                egui::Image::new(tex)
+                    .fit_to_exact_size(*size)
+                    .texture_options(linear_tex_opts())
+                    .sense(sense),
+            )
+        } else {
+            ui.allocate_response(Vec2::ZERO, egui::Sense::hover())
+        }
+    }
 }
 
 /// Larger AA mark for the startup splash (~half-window paint).
@@ -1420,6 +1444,146 @@ pub(super) fn load_splash_logo(ctx: &egui::Context) -> Option<TextureHandle> {
             ..egui::TextureOptions::LINEAR
         },
     ))
+}
+
+/// About-dialog AA logo — full wordmark (icon + AGILE AUTOMATION), integer-scaled.
+///
+/// Hi PNG is a 2× of the authored wide mark (~1463×471); never the truncated SVG crop.
+#[derive(Default)]
+pub(super) struct AaAboutLogo {
+    entries: HashMap<(u32, u32), (TextureHandle, Vec2)>,
+}
+
+impl AaAboutLogo {
+    /// Display-only mark (no hover tip over the artwork).
+    pub(super) fn show_static(&mut self, ui: &mut egui::Ui, max_w: f32, max_h: f32) -> egui::Response {
+        const HI: &[u8] = include_bytes!("../../assets/agile-automation-logo-hi.png");
+        let ppp = ui.ctx().pixels_per_point().max(0.25);
+        let max_w_px = (max_w * ppp).floor().max(1.0) as u32;
+        let max_h_px = (max_h * ppp).floor().max(1.0) as u32;
+        let key = (max_w_px, max_h_px);
+        if !self.entries.contains_key(&key) {
+            if let Some(entry) =
+                build_hi_mark(ui.ctx(), HI, max_w_px, max_h_px, ppp, "aa-about")
+            {
+                self.entries.insert(key, entry);
+            }
+        }
+        if let Some((tex, size)) = self.entries.get(&key) {
+            ui.add(
+                egui::Image::new(tex)
+                    .fit_to_exact_size(*size)
+                    .texture_options(nearest_tex_opts())
+                    .sense(egui::Sense::hover()),
+            )
+        } else {
+            ui.allocate_response(Vec2::ZERO, egui::Sense::hover())
+        }
+    }
+}
+
+fn nearest_tex_opts() -> TextureOptions {
+    TextureOptions {
+        magnification: egui::TextureFilter::Nearest,
+        minification: egui::TextureFilter::Nearest,
+        ..TextureOptions::LINEAR
+    }
+}
+
+fn linear_tex_opts() -> TextureOptions {
+    TextureOptions {
+        magnification: egui::TextureFilter::Linear,
+        minification: egui::TextureFilter::Linear,
+        ..TextureOptions::LINEAR
+    }
+}
+
+/// Topic Bench horizontal wordmark — smooth aspect-fit into the paint box.
+fn build_tb_mark(
+    ctx: &egui::Context,
+    bytes: &[u8],
+    max_w_px: u32,
+    max_h_px: u32,
+    ppp: f32,
+) -> Option<(TextureHandle, Vec2)> {
+    let raw = image::load_from_memory(bytes).ok()?.into_rgba8();
+    let (nw, nh) = raw.dimensions();
+    if nw == 0 || nh == 0 {
+        return None;
+    }
+    let sx = max_w_px as f32 / nw as f32;
+    let sy = max_h_px as f32 / nh as f32;
+    let scale = sx.min(sy).min(1.0);
+    let ow = (nw as f32 * scale).floor().max(1.0) as u32;
+    let oh = (nh as f32 * scale).floor().max(1.0) as u32;
+    let out = if ow == nw && oh == nh {
+        raw
+    } else {
+        image::imageops::resize(
+            &raw,
+            ow,
+            oh,
+            image::imageops::FilterType::Triangle,
+        )
+    };
+    let color = ColorImage::from_rgba_unmultiplied([ow as usize, oh as usize], out.as_raw());
+    let tex = ctx.load_texture(
+        format!("tb-logo-{ow}x{oh}"),
+        color,
+        linear_tex_opts(),
+    );
+    Some((tex, Vec2::new(ow as f32 / ppp, oh as f32 / ppp)))
+}
+
+/// Integer box-downscale so source ÷ factor = display (factor 2/3/…); 1 texel → 1 screen px.
+fn build_hi_mark(
+    ctx: &egui::Context,
+    bytes: &[u8],
+    max_w_px: u32,
+    max_h_px: u32,
+    ppp: f32,
+    tex_prefix: &str,
+) -> Option<(TextureHandle, Vec2)> {
+    let raw = image::load_from_memory(bytes).ok()?.into_rgba8();
+    let (nw, nh) = raw.dimensions();
+    if nw == 0 || nh == 0 {
+        return None;
+    }
+    // Prefer downscale by an integer factor when source is larger. Never invent detail.
+    let (tex_img, scale_up) = if nw <= max_w_px && nh <= max_h_px {
+        let ux = (max_w_px / nw).max(1);
+        let uy = (max_h_px / nh).max(1);
+        (raw, ux.min(uy).max(1))
+    } else {
+        let fx = ((nw + max_w_px - 1) / max_w_px).max(1);
+        let fy = ((nh + max_h_px - 1) / max_h_px).max(1);
+        let factor = fx.max(fy);
+        let cw = (nw / factor) * factor;
+        let ch = (nh / factor) * factor;
+        let ox = (nw - cw) / 2;
+        let oy = (nh - ch) / 2;
+        let cropped = image::imageops::crop_imm(&raw, ox, oy, cw, ch).to_image();
+        (integer_box_downscale(&cropped, factor), 1)
+    };
+    let (tw, th) = tex_img.dimensions();
+    let out = if scale_up > 1 {
+        image::imageops::resize(
+            &tex_img,
+            tw * scale_up,
+            th * scale_up,
+            image::imageops::FilterType::Nearest,
+        )
+    } else {
+        tex_img
+    };
+    let (ow, oh) = out.dimensions();
+    let color = ColorImage::from_rgba_unmultiplied([ow as usize, oh as usize], out.as_raw());
+    let tex = ctx.load_texture(
+        format!("{tex_prefix}-{ow}x{oh}"),
+        color,
+        nearest_tex_opts(),
+    );
+    Some((tex, Vec2::new(ow as f32 / ppp, oh as f32 / ppp)))
 }
 
 fn integer_box_downscale(src: &RgbaImage, factor: u32) -> RgbaImage {

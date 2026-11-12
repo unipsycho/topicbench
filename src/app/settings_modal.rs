@@ -1,15 +1,66 @@
-//! Settings + keyboard-shortcuts + update-available overlay modals.
+//! Settings + keyboard-shortcuts + About + update-available overlay modals.
 
 use super::MqttMonitorApp;
 use crate::mqtt::settings::AppSettings;
 use crate::ui::icons::{
-    CHROME_ACCENT_BORDER, CHROME_ACCENT_SOFT, CHROME_MUTED, CHROME_SEP, CHROME_TEXT,
+    CHROME_ACCENT_BORDER, CHROME_ACCENT_SOFT, CHROME_CAPTION, CHROME_MUTED, CHROME_ROW,
+    CHROME_SEP, CHROME_TEXT,
 };
 use crate::ui::{settings_panel, shortcuts};
 use crate::update::{self, InstallOutcome, UpdateEvent, UpdateStatus};
-use eframe::egui::{self, RichText};
+use eframe::egui::{self, Color32, FontId, RichText};
+use std::time::Instant;
+
+/// Company site opened from the About dialog (Modbus / Protocol Bench parity).
+const COMPANY_URL: &str = "https://www.agileautomation.ca";
+const COMPANY_LINK: &str = "www.agileautomation.ca";
+/// Mike’s wording; sentence case + period to match Chart / Modbus slogan presentation.
+const ABOUT_SLOGAN: &str = "Your bench for every imaginable topic.";
+/// Pane fill close to Modbus About (`#1a1e25`).
+const ABOUT_PANE: Color32 = Color32::from_rgb(0x1a, 0x1e, 0x25);
+/// Hold free About, then expand + fade Topic Bench Pro (header, then staggered chips).
+const ABOUT_PRO_DELAY_S: f32 = 2.0;
+/// Header / section fade — slower than the first pass (~0.45s).
+const ABOUT_PRO_HEADER_FADE_S: f32 = 1.1;
+/// Each Pro chip fades over ~1s; next chip starts ~0.5s after the previous (overlap).
+const ABOUT_PRO_CHIP_FADE_S: f32 = 1.0;
+const ABOUT_PRO_CHIP_STAGGER_S: f32 = 0.5;
+const ABOUT_PRO_TAGS: [&str; 6] = [
+    "Scenarios",
+    "Simulation",
+    "Color Rules",
+    "Themes",
+    "Combined charts",
+    "MCP",
+];
+/// Soft hairline like Modbus About (`white` @ 22/255).
+fn about_line() -> Color32 {
+    Color32::from_rgba_unmultiplied(255, 255, 255, 22)
+}
+
+fn with_alpha(c: Color32, a: f32) -> Color32 {
+    let a = (c.a() as f32 * a.clamp(0.0, 1.0)).round() as u8;
+    Color32::from_rgba_unmultiplied(c.r(), c.g(), c.b(), a)
+}
 
 impl MqttMonitorApp {
+    /// True while About’s Pro header/chip fades still need frames (idle throttle bypass).
+    pub(super) fn about_animation_pending(&self, now: Instant) -> bool {
+        if !self.about_open {
+            return false;
+        }
+        let Some(opened) = self.about_opened_at else {
+            // Open but timer not stamped yet — next overlay draw starts it.
+            return true;
+        };
+        let elapsed = now.saturating_duration_since(opened).as_secs_f32();
+        let chips_t0 = ABOUT_PRO_DELAY_S + ABOUT_PRO_HEADER_FADE_S;
+        let last_chip_end = chips_t0
+            + (ABOUT_PRO_TAGS.len().saturating_sub(1) as f32) * ABOUT_PRO_CHIP_STAGGER_S
+            + ABOUT_PRO_CHIP_FADE_S;
+        elapsed < last_chip_end
+    }
+
     /// Open Settings with a draft snapshot of current settings.
     pub(super) fn open_settings(&mut self) {
         self.settings_draft = Some(self.settings.clone());
@@ -158,6 +209,10 @@ impl MqttMonitorApp {
 
     /// Overlays last so they own pointer/hover above Payload and other panels.
     pub(super) fn draw_overlays(&mut self, ctx: &egui::Context) {
+        if self.about_open {
+            self.draw_about_modal(ctx);
+        }
+
         if self.shortcuts_open {
             let mut close_shortcuts = false;
             let modal = egui::Modal::new(egui::Id::new("mqtt_master_shortcuts")).show(ctx, |ui| {
@@ -314,6 +369,256 @@ impl MqttMonitorApp {
         }
     }
 
+    /// About — Modbus Bench Window + scrim; Pro chips fade in after ~2s.
+    fn draw_about_modal(&mut self, ctx: &egui::Context) {
+        // Scrim — click outside closes (Modbus / Protocol Bench pattern).
+        let screen = ctx.screen_rect();
+        let scrim = egui::Area::new(egui::Id::new("tb_about_scrim"))
+            .order(egui::Order::Middle)
+            .fixed_pos(screen.min)
+            .interactable(true)
+            .show(ctx, |ui| {
+                let (rect, resp) = ui.allocate_exact_size(screen.size(), egui::Sense::click());
+                ui.painter()
+                    .rect_filled(rect, egui::Rounding::ZERO, Color32::from_black_alpha(78));
+                resp
+            });
+        if scrim.inner.clicked() {
+            self.about_open = false;
+            self.about_opened_at = None;
+            return;
+        }
+        if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+            self.about_open = false;
+            self.about_opened_at = None;
+            return;
+        }
+
+        if self.about_opened_at.is_none() {
+            self.about_opened_at = Some(Instant::now());
+        }
+        let opened_at = self.about_opened_at.unwrap_or_else(Instant::now);
+        let elapsed = opened_at.elapsed().as_secs_f32();
+        let header_alpha =
+            ((elapsed - ABOUT_PRO_DELAY_S) / ABOUT_PRO_HEADER_FADE_S).clamp(0.0, 1.0);
+        let chips_t0 = ABOUT_PRO_DELAY_S + ABOUT_PRO_HEADER_FADE_S;
+        let mut chip_alphas = [0.0_f32; ABOUT_PRO_TAGS.len()];
+        for (i, a) in chip_alphas.iter_mut().enumerate() {
+            let start = chips_t0 + i as f32 * ABOUT_PRO_CHIP_STAGGER_S;
+            *a = ((elapsed - start) / ABOUT_PRO_CHIP_FADE_S).clamp(0.0, 1.0);
+        }
+        if header_alpha < 1.0 || chip_alphas.iter().any(|a| *a < 1.0) {
+            ctx.request_repaint();
+        }
+
+        let mut open = true;
+        let mut check_now = false;
+        let checking = matches!(self.update_status, UpdateStatus::Checking);
+        let status_snapshot = self.update_status.clone();
+
+        let frame = egui::Frame::NONE
+            .fill(ABOUT_PANE)
+            .stroke(egui::Stroke::new(1.0_f32, about_line()))
+            .corner_radius(10.0)
+            .inner_margin(egui::Margin::symmetric(24, 18));
+        egui::Window::new("About Topic Bench")
+            .id(egui::Id::new("topicbench_about"))
+            .title_bar(false)
+            .collapsible(false)
+            .resizable(false)
+            .order(egui::Order::Foreground)
+            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+            .frame(frame)
+            .show(ctx, |ui| {
+                ui.set_min_width(420.0);
+
+                // Close X on the corner — muted chrome (Modbus), no layout row.
+                {
+                    let area = ui.available_rect_before_wrap();
+                    let btn = 26.0;
+                    let btn_rect = egui::Rect::from_min_size(
+                        egui::pos2(area.right() - btn, area.top()),
+                        egui::vec2(btn, btn),
+                    );
+                    let resp = ui.interact(btn_rect, ui.id().with("about_close"), egui::Sense::click());
+                    let ink = if resp.hovered() {
+                        CHROME_TEXT()
+                    } else {
+                        CHROME_MUTED()
+                    };
+                    let stroke = egui::Stroke::new(1.6_f32, ink);
+                    let pad = 7.0_f32;
+                    let painter = ui.painter();
+                    painter.rect_filled(
+                        btn_rect,
+                        5.0,
+                        Color32::from_rgba_unmultiplied(
+                            255,
+                            255,
+                            255,
+                            if resp.hovered() { 18 } else { 10 },
+                        ),
+                    );
+                    painter.line_segment(
+                        [
+                            egui::pos2(btn_rect.left() + pad, btn_rect.top() + pad),
+                            egui::pos2(btn_rect.right() - pad, btn_rect.bottom() - pad),
+                        ],
+                        stroke,
+                    );
+                    painter.line_segment(
+                        [
+                            egui::pos2(btn_rect.right() - pad, btn_rect.top() + pad),
+                            egui::pos2(btn_rect.left() + pad, btn_rect.bottom() - pad),
+                        ],
+                        stroke,
+                    );
+                    if resp.clicked() {
+                        open = false;
+                    }
+                    resp.on_hover_text("Close");
+                }
+
+                ui.vertical_centered(|ui| {
+                    // Same horizontal wordmark as ribbon — smooth downscale.
+                    let size = super::layout::about_logo_paint_size();
+                    self.tb_logo.show_static(ui, size.x, size.y);
+                    ui.add_space(10.0);
+                    ui.label(
+                        RichText::new(ABOUT_SLOGAN)
+                            .size(13.0)
+                            .color(Color32::from_rgb(0xf2, 0xf5, 0xf8)),
+                    );
+                    ui.add_space(4.0);
+                    ui.label(
+                        RichText::new(format!("Version {}", env!("CARGO_PKG_VERSION")))
+                            .size(13.0)
+                            .color(Color32::from_rgb(0x8e, 0xa0, 0xb8)),
+                    );
+                    ui.add_space(18.0);
+                });
+
+                // AA full wordmark (icon + AGILE AUTOMATION) — width-led box, no squash/crop.
+                ui.vertical_centered(|ui| {
+                    let max_w = ui.available_width().min(320.0);
+                    // Authored AA mark ~1463×471 — height follows width so AUTOMATION stays in frame.
+                    let max_h = (max_w * 471.0 / 1463.0).ceil().max(48.0);
+                    self.aa_about.show_static(ui, max_w, max_h);
+                    ui.add_space(14.0);
+                    let link_blue = Color32::from_rgb(74, 144, 226);
+                    let site = ui
+                        .link(
+                            RichText::new(COMPANY_LINK)
+                                .size(13.0)
+                                .color(link_blue)
+                                .underline(),
+                        )
+                        .on_hover_text(COMPANY_URL)
+                        .on_hover_cursor(egui::CursorIcon::PointingHand);
+                    if site.clicked() {
+                        let _ = update::open_url(COMPANY_URL);
+                    }
+                });
+
+                ui.add_space(14.0);
+                // Free chips — LTR within each row; each wrapped row centered as a group.
+                about_centered_chip_rows(
+                    ui,
+                    &[
+                        ("MQTT", 1.0),
+                        ("Multi-broker", 1.0),
+                        ("Stickies", 1.0),
+                        ("Publish", 1.0),
+                        ("Payload", 1.0),
+                        ("Search", 1.0),
+                    ],
+                );
+
+                // Topic Bench Pro — expand after ~2s; header fades, then chips stagger.
+                if header_alpha > 0.01 {
+                    ui.add_space(16.0 * header_alpha.max(0.35));
+                    ui.vertical_centered(|ui| {
+                        ui.label(
+                            RichText::new("Topic Bench Pro")
+                                .size(14.0)
+                                .strong()
+                                .color(with_alpha(CHROME_TEXT(), header_alpha)),
+                        );
+                    });
+                    if chip_alphas.iter().any(|a| *a > 0.01) {
+                        ui.add_space(8.0);
+                        let pro: Vec<(&str, f32)> = ABOUT_PRO_TAGS
+                            .iter()
+                            .zip(chip_alphas.iter())
+                            .map(|(t, a)| (*t, *a))
+                            .collect();
+                        about_centered_chip_rows(ui, &pro);
+                    }
+                }
+
+                ui.add_space(14.0);
+                ui.vertical_centered(|ui| {
+                    let btn = ui.add_enabled(
+                        !checking,
+                        egui::Button::new(RichText::new(if checking {
+                            "Checking…"
+                        } else {
+                            "Check for Updates"
+                        })
+                        .size(13.0))
+                        .min_size(egui::vec2(200.0, 34.0)),
+                    );
+                    if btn.clicked() {
+                        check_now = true;
+                    }
+                    ui.add_space(6.0);
+                    match &status_snapshot {
+                        UpdateStatus::Idle => {}
+                        UpdateStatus::Checking => {
+                            ui.label(
+                                RichText::new("Checking for updates…")
+                                    .size(12.0)
+                                    .color(CHROME_MUTED()),
+                            );
+                        }
+                        UpdateStatus::UpToDate { latest } => {
+                            ui.label(
+                                RichText::new(format!("You're up to date ({latest})."))
+                                    .size(12.0)
+                                    .color(Color32::from_rgb(140, 210, 160)),
+                            );
+                        }
+                        UpdateStatus::Available(info) => {
+                            ui.label(
+                                RichText::new(format!("Update available: {}", info.tag))
+                                    .size(12.0)
+                                    .color(Color32::from_rgb(240, 190, 120)),
+                            );
+                        }
+                        UpdateStatus::Installing => {
+                            ui.label(RichText::new("Installing…").size(12.0).color(CHROME_MUTED()));
+                        }
+                        UpdateStatus::Error(msg) | UpdateStatus::InstallFailed(msg) => {
+                            ui.label(
+                                RichText::new(format!("Couldn't check: {msg}"))
+                                    .size(12.0)
+                                    .color(Color32::from_rgb(230, 140, 140)),
+                            );
+                        }
+                    }
+                });
+                ui.add_space(4.0);
+            });
+
+        if check_now {
+            self.request_update_check(false);
+        }
+        if !open {
+            self.about_opened_at = None;
+        }
+        self.about_open = open;
+    }
+
     fn draw_update_modal(&mut self, ctx: &egui::Context) {
         let Some(info) = self.update_offer.clone() else {
             self.update_modal_open = false;
@@ -448,4 +753,101 @@ impl MqttMonitorApp {
         }
         let _ = dismiss;
     }
+}
+
+/// Chip outer size (pad included) — measure without painting.
+fn about_chip_size(ui: &egui::Ui, tag: &str) -> egui::Vec2 {
+    let galley = ui.fonts(|f| {
+        f.layout_no_wrap(tag.to_owned(), FontId::proportional(12.0), Color32::WHITE)
+    });
+    galley.size() + egui::vec2(10.0, 5.0) * 2.0
+}
+
+/// Pack chips LTR into wrapped rows; center each whole row as a group (not each chip).
+fn about_centered_chip_rows(ui: &mut egui::Ui, tags: &[(&str, f32)]) {
+    if tags.is_empty() {
+        return;
+    }
+    let gap = egui::vec2(8.0, 8.0);
+    let max_w = ui.available_width();
+    let sizes: Vec<egui::Vec2> = tags.iter().map(|(t, _)| about_chip_size(ui, t)).collect();
+
+    // Build rows: keep left-to-right order; wrap when the next chip won't fit.
+    let mut rows: Vec<Vec<usize>> = Vec::new();
+    let mut cur: Vec<usize> = Vec::new();
+    let mut row_w = 0.0_f32;
+    for (i, size) in sizes.iter().enumerate() {
+        let need = if cur.is_empty() {
+            size.x
+        } else {
+            size.x + gap.x
+        };
+        if !cur.is_empty() && row_w + need > max_w {
+            rows.push(std::mem::take(&mut cur));
+            row_w = 0.0;
+        }
+        if cur.is_empty() {
+            row_w = size.x;
+        } else {
+            row_w += gap.x + size.x;
+        }
+        cur.push(i);
+    }
+    if !cur.is_empty() {
+        rows.push(cur);
+    }
+
+    for (ri, row) in rows.iter().enumerate() {
+        if ri > 0 {
+            ui.add_space(gap.y);
+        }
+        let row_w: f32 = row.iter().map(|&i| sizes[i].x).sum::<f32>()
+            + gap.x * (row.len().saturating_sub(1) as f32);
+        let row_h = row
+            .iter()
+            .map(|&i| sizes[i].y)
+            .fold(0.0_f32, f32::max);
+        let (band, _) =
+            ui.allocate_exact_size(egui::vec2(ui.available_width(), row_h), egui::Sense::hover());
+        // Center the group; chips stay LTR packed from the group's left edge.
+        let mut x = band.center().x - row_w * 0.5;
+        let cy = band.center().y;
+        for &i in row {
+            let size = sizes[i];
+            let rect = egui::Rect::from_center_size(egui::pos2(x + size.x * 0.5, cy), size);
+            about_tag_chip_at(ui, rect, tags[i].0, tags[i].1);
+            x += size.x + gap.x;
+        }
+    }
+}
+
+/// Theme-friendly chip painted into `rect` — muted/row fill + accent border/text.
+fn about_tag_chip_at(ui: &mut egui::Ui, rect: egui::Rect, tag: &str, alpha: f32) {
+    let ink = with_alpha(CHROME_CAPTION(), alpha);
+    let border = with_alpha(CHROME_ACCENT_BORDER(), alpha);
+    let fill = {
+        let row = CHROME_ROW();
+        let soft = CHROME_ACCENT_SOFT();
+        // Neutral wash: mostly row, slight accent soft — not a loud orange pill.
+        with_alpha(
+            Color32::from_rgb(
+                ((row.r() as u16 * 3 + soft.r() as u16) / 4) as u8,
+                ((row.g() as u16 * 3 + soft.g() as u16) / 4) as u8,
+                ((row.b() as u16 * 3 + soft.b() as u16) / 4) as u8,
+            ),
+            alpha * 0.92,
+        )
+    };
+    let pad = egui::vec2(10.0, 5.0);
+    let galley = ui.fonts(|f| f.layout_no_wrap(tag.to_owned(), FontId::proportional(12.0), ink));
+    let chrome = rect.shrink(0.5);
+    let painter = ui.painter();
+    painter.rect_filled(chrome, 6.0, fill);
+    painter.rect_stroke(
+        chrome,
+        6.0,
+        egui::Stroke::new(1.0_f32, border),
+        egui::StrokeKind::Middle,
+    );
+    painter.galley(egui::pos2(rect.left() + pad.x, rect.top() + pad.y), galley, ink);
 }
