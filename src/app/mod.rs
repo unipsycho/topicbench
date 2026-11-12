@@ -17,7 +17,7 @@ use crate::ui::payload_panel::{PayloadSearch, PoppedPayload};
 use crate::ui::flash;
 use crate::ui::splash::SplashIntro;
 use crate::update::{self, ReleaseInfo, UpdateService, UpdateStatus};
-use eframe::egui::{self, TextureHandle};
+use eframe::egui::{self};
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
@@ -71,7 +71,8 @@ pub struct MqttMonitorApp {
     status_changed_at: Instant,
     /// Shadow of `status` so we detect mutations from any panel/action.
     status_snap: String,
-    logo: Option<TextureHandle>,
+    /// Topic Bench wordmark (ribbon + About) — hi-res source, integer-scaled per slot.
+    tb_logo: layout::TbLogo,
     /// Agile Automation mark for About — hi-res source, integer-scaled per slot.
     aa_about: layout::AaAboutLogo,
     icons: IconSet,
@@ -185,7 +186,6 @@ impl MqttMonitorApp {
         layout::apply_font_zoom(&cc.egui_ctx, settings.font_zoom_factor());
         // Use our font-zoom chords; disable egui’s pixels_per_point zoom.
         cc.egui_ctx.options_mut(|o| o.zoom_with_keyboard = false);
-        let logo = layout::load_logo(&cc.egui_ctx);
         let splash_logo = layout::load_splash_logo(&cc.egui_ctx);
         let icons = IconSet::load(&cc.egui_ctx);
         // Restore ribbon panel open/closed (incl. Payload) from settings.json.
@@ -280,7 +280,7 @@ impl MqttMonitorApp {
             status: status.clone(),
             status_changed_at: Instant::now(),
             status_snap: status,
-            logo,
+            tb_logo: layout::TbLogo::default(),
             aa_about: layout::AaAboutLogo::default(),
             icons,
             panels,
