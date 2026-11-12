@@ -480,10 +480,9 @@ impl MqttMonitorApp {
                 }
 
                 ui.vertical_centered(|ui| {
-                    // Same hi-res wordmark as ribbon — integer-scaled (no fractional stretch).
-                    let about_w = 220.0_f32;
-                    let about_h = (about_w * 76.0 / 164.0).round();
-                    self.tb_logo.show_static(ui, about_w, about_h);
+                    // Same 512 wordmark as ribbon — even ÷2 (256×119), no fractional stretch.
+                    let size = super::layout::about_logo_paint_size();
+                    self.tb_logo.show_static(ui, size.x, size.y);
                     ui.add_space(10.0);
                     ui.label(
                         RichText::new(ABOUT_SLOGAN)
