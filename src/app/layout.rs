@@ -14,10 +14,11 @@ use crate::ui::{
     topic_tree_panel, traffic_panel,
 };
 use eframe::egui::{
-    self, Align, Color32, FontFamily, FontId, RichText, TextStyle, TextureHandle,
+    self, Align, Color32, ColorImage, FontFamily, FontId, RichText, TextStyle, TextureHandle,
+    TextureOptions, Vec2,
 };
 use image::RgbaImage;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::time::Instant;
 
 /// Authored `topicbench-logo-small` size (logical/UI px). Scaled to fit shared row.
@@ -1427,6 +1428,97 @@ pub(super) fn load_splash_logo(ctx: &egui::Context) -> Option<TextureHandle> {
             ..egui::TextureOptions::LINEAR
         },
     ))
+}
+
+/// About-dialog AA logo — hi-res company SVG raster, integer-scaled like Modbus/Chart Bench.
+///
+/// Source is several× the ~64px About paint size so GPU never upscales a tiny bitmap.
+#[derive(Default)]
+pub(super) struct AaAboutLogo {
+    entries: HashMap<(u32, u32), (TextureHandle, Vec2)>,
+}
+
+impl AaAboutLogo {
+    /// Display-only mark (no hover tip over the artwork).
+    pub(super) fn show_static(&mut self, ui: &mut egui::Ui, max_w: f32, max_h: f32) -> egui::Response {
+        const HI: &[u8] = include_bytes!("../../assets/agile-automation-logo-hi.png");
+        let ppp = ui.ctx().pixels_per_point().max(0.25);
+        let max_w_px = (max_w * ppp).floor().max(1.0) as u32;
+        let max_h_px = (max_h * ppp).floor().max(1.0) as u32;
+        let key = (max_w_px, max_h_px);
+        if !self.entries.contains_key(&key) {
+            if let Some(entry) = build_about_aa_mark(ui.ctx(), HI, max_w_px, max_h_px, ppp) {
+                self.entries.insert(key, entry);
+            }
+        }
+        if let Some((tex, size)) = self.entries.get(&key) {
+            ui.add(
+                egui::Image::new(tex)
+                    .fit_to_exact_size(*size)
+                    .texture_options(TextureOptions {
+                        magnification: egui::TextureFilter::Nearest,
+                        minification: egui::TextureFilter::Nearest,
+                        ..TextureOptions::LINEAR
+                    })
+                    .sense(egui::Sense::hover()),
+            )
+        } else {
+            ui.allocate_response(Vec2::ZERO, egui::Sense::hover())
+        }
+    }
+}
+
+/// Integer box-downscale (or nearest upscale) so one tex pixel → one screen pixel.
+fn build_about_aa_mark(
+    ctx: &egui::Context,
+    bytes: &[u8],
+    max_w_px: u32,
+    max_h_px: u32,
+    ppp: f32,
+) -> Option<(TextureHandle, Vec2)> {
+    let raw = image::load_from_memory(bytes).ok()?.into_rgba8();
+    let (nw, nh) = raw.dimensions();
+    if nw == 0 || nh == 0 {
+        return None;
+    }
+    let (tex_img, scale_up) = if nw <= max_w_px && nh <= max_h_px {
+        let ux = (max_w_px / nw).max(1);
+        let uy = (max_h_px / nh).max(1);
+        (raw, ux.min(uy).max(1))
+    } else {
+        let fx = ((nw + max_w_px - 1) / max_w_px).max(1);
+        let fy = ((nh + max_h_px - 1) / max_h_px).max(1);
+        let factor = fx.max(fy);
+        let cw = (nw / factor) * factor;
+        let ch = (nh / factor) * factor;
+        let ox = (nw - cw) / 2;
+        let oy = (nh - ch) / 2;
+        let cropped = image::imageops::crop_imm(&raw, ox, oy, cw, ch).to_image();
+        (integer_box_downscale(&cropped, factor), 1)
+    };
+    let (tw, th) = tex_img.dimensions();
+    let out = if scale_up > 1 {
+        image::imageops::resize(
+            &tex_img,
+            tw * scale_up,
+            th * scale_up,
+            image::imageops::FilterType::Nearest,
+        )
+    } else {
+        tex_img
+    };
+    let (ow, oh) = out.dimensions();
+    let color = ColorImage::from_rgba_unmultiplied([ow as usize, oh as usize], out.as_raw());
+    let tex = ctx.load_texture(
+        format!("aa-about-{ow}x{oh}"),
+        color,
+        TextureOptions {
+            magnification: egui::TextureFilter::Nearest,
+            minification: egui::TextureFilter::Nearest,
+            ..TextureOptions::LINEAR
+        },
+    );
+    Some((tex, Vec2::new(ow as f32 / ppp, oh as f32 / ppp)))
 }
 
 fn integer_box_downscale(src: &RgbaImage, factor: u32) -> RgbaImage {
