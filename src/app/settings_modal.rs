@@ -415,7 +415,6 @@ impl MqttMonitorApp {
         let mut check_now = false;
         let checking = matches!(self.update_status, UpdateStatus::Checking);
         let status_snapshot = self.update_status.clone();
-        let brand_logo = self.logo.clone();
 
         let frame = egui::Frame::NONE
             .fill(ABOUT_PANE)
@@ -481,22 +480,10 @@ impl MqttMonitorApp {
                 }
 
                 ui.vertical_centered(|ui| {
-                    // Ribbon Topic Bench logo only.
-                    if let Some(logo) = &brand_logo {
-                        let size = egui::vec2(220.0_f32, (220.0_f32 * 76.0 / 164.0).round());
-                        let (band, _) = ui.allocate_exact_size(
-                            egui::vec2(ui.available_width(), size.y + 8.0),
-                            egui::Sense::hover(),
-                        );
-                        let rect = egui::Rect::from_center_size(band.center(), size);
-                        ui.put(
-                            rect,
-                            egui::Image::new(logo)
-                                .fit_to_exact_size(size)
-                                .maintain_aspect_ratio(true)
-                                .sense(egui::Sense::hover()),
-                        );
-                    }
+                    // Same hi-res wordmark as ribbon — integer-scaled (no fractional stretch).
+                    let about_w = 220.0_f32;
+                    let about_h = (about_w * 76.0 / 164.0).round();
+                    self.tb_logo.show_static(ui, about_w, about_h);
                     ui.add_space(10.0);
                     ui.label(
                         RichText::new(ABOUT_SLOGAN)
