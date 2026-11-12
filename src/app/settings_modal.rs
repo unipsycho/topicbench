@@ -480,7 +480,7 @@ impl MqttMonitorApp {
                 }
 
                 ui.vertical_centered(|ui| {
-                    // Same 512 wordmark as ribbon — even ÷2 (256×119), no fractional stretch.
+                    // Same horizontal wordmark as ribbon — smooth downscale.
                     let size = super::layout::about_logo_paint_size();
                     self.tb_logo.show_static(ui, size.x, size.y);
                     ui.add_space(10.0);
@@ -498,10 +498,12 @@ impl MqttMonitorApp {
                     ui.add_space(18.0);
                 });
 
-                // AA logo — hi-res company SVG raster, integer-scaled (needs &mut cache).
+                // AA full wordmark (icon + AGILE AUTOMATION) — width-led box, no squash/crop.
                 ui.vertical_centered(|ui| {
-                    self.aa_about
-                        .show_static(ui, ui.available_width().min(280.0), 64.0);
+                    let max_w = ui.available_width().min(320.0);
+                    // Authored AA mark ~1463×471 — height follows width so AUTOMATION stays in frame.
+                    let max_h = (max_w * 471.0 / 1463.0).ceil().max(48.0);
+                    self.aa_about.show_static(ui, max_w, max_h);
                     ui.add_space(14.0);
                     let link_blue = Color32::from_rgb(74, 144, 226);
                     let site = ui
