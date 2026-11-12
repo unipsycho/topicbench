@@ -44,6 +44,23 @@ fn with_alpha(c: Color32, a: f32) -> Color32 {
 }
 
 impl MqttMonitorApp {
+    /// True while About’s Pro header/chip fades still need frames (idle throttle bypass).
+    pub(super) fn about_animation_pending(&self, now: Instant) -> bool {
+        if !self.about_open {
+            return false;
+        }
+        let Some(opened) = self.about_opened_at else {
+            // Open but timer not stamped yet — next overlay draw starts it.
+            return true;
+        };
+        let elapsed = now.saturating_duration_since(opened).as_secs_f32();
+        let chips_t0 = ABOUT_PRO_DELAY_S + ABOUT_PRO_HEADER_FADE_S;
+        let last_chip_end = chips_t0
+            + (ABOUT_PRO_TAGS.len().saturating_sub(1) as f32) * ABOUT_PRO_CHIP_STAGGER_S
+            + ABOUT_PRO_CHIP_FADE_S;
+        elapsed < last_chip_end
+    }
+
     /// Open Settings with a draft snapshot of current settings.
     pub(super) fn open_settings(&mut self) {
         self.settings_draft = Some(self.settings.clone());
@@ -546,14 +563,17 @@ impl MqttMonitorApp {
                                 .color(with_alpha(CHROME_TEXT(), header_alpha)),
                         );
                     });
-                    ui.add_space(8.0 * header_alpha.max(0.35));
-                    // Reserve the chip row as soon as the section opens; each chip fades alone.
-                    ui.horizontal_wrapped(|ui| {
-                        ui.spacing_mut().item_spacing = egui::vec2(8.0, 8.0);
-                        for (tag, alpha) in ABOUT_PRO_TAGS.iter().zip(chip_alphas.iter()) {
-                            about_tag_chip(ui, tag, *alpha);
-                        }
-                    });
+                    // Chip row only once the first chip starts — avoids a blank gap during header fade.
+                    if chip_alphas.iter().any(|a| *a > 0.01) {
+                        ui.add_space(8.0);
+                        ui.horizontal_wrapped(|ui| {
+                            ui.spacing_mut().item_spacing = egui::vec2(8.0, 8.0);
+                            for (tag, alpha) in ABOUT_PRO_TAGS.iter().zip(chip_alphas.iter()) {
+                                // Keep layout stable once the row exists; invisible chips still reserve.
+                                about_tag_chip(ui, tag, (*alpha).max(0.0));
+                            }
+                        });
+                    }
                 }
 
                 ui.add_space(14.0);
