@@ -72,10 +72,16 @@ pub struct MqttMonitorApp {
     /// Shadow of `status` so we detect mutations from any panel/action.
     status_snap: String,
     logo: Option<TextureHandle>,
+    /// App mark for the About dialog (window / taskbar icon art).
+    app_mark: Option<TextureHandle>,
+    /// Agile Automation logo kept after splash for the About dialog.
+    aa_logo: Option<TextureHandle>,
     icons: IconSet,
     panels: PanelVisibility,
     settings_open: bool,
     shortcuts_open: bool,
+    /// About overlay (opened from the top-left TopicBench logo).
+    about_open: bool,
     focus_search: bool,
     focus_profile_editor: bool,
     /// Profiles panel was opened by New (auto-close on next Save).
@@ -180,7 +186,9 @@ impl MqttMonitorApp {
         // Use our font-zoom chords; disable egui’s pixels_per_point zoom.
         cc.egui_ctx.options_mut(|o| o.zoom_with_keyboard = false);
         let logo = layout::load_logo(&cc.egui_ctx);
-        let splash_logo = layout::load_splash_logo(&cc.egui_ctx);
+        let app_mark = layout::load_app_mark(&cc.egui_ctx);
+        let aa_logo = layout::load_splash_logo(&cc.egui_ctx);
+        let splash_logo = aa_logo.clone();
         let icons = IconSet::load(&cc.egui_ctx);
         // Restore ribbon panel open/closed (incl. Payload) from settings.json.
         let panels = PanelVisibility {
@@ -275,10 +283,14 @@ impl MqttMonitorApp {
             status_changed_at: Instant::now(),
             status_snap: status,
             logo,
+            app_mark,
+            aa_logo,
             icons,
             panels,
             settings_open: false,
             shortcuts_open: false,
+            // Dev/screenshot: TOPICBENCH_OPEN_ABOUT=1 opens About once at launch.
+            about_open: std::env::var_os("TOPICBENCH_OPEN_ABOUT").is_some(),
             focus_search: false,
             focus_profile_editor: false,
             profiles_auto_opened: false,
@@ -540,9 +552,10 @@ impl eframe::App for MqttMonitorApp {
         }
 
         self.handle_shortcuts(ctx);
-        // Suppress tips under Settings / Shortcuts / Update overlays.
+        // Suppress tips under Settings / Shortcuts / About / Update overlays.
         let block_tips = self.settings_open
             || self.shortcuts_open
+            || self.about_open
             || self.update_modal_open
             || self.bookmarks_open
             || self.color_rules_open
