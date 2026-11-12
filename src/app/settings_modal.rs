@@ -3,24 +3,32 @@
 use super::MqttMonitorApp;
 use crate::mqtt::settings::AppSettings;
 use crate::ui::icons::{
-    CHROME_ACCENT_BORDER, CHROME_ACCENT_SOFT, CHROME_MUTED, CHROME_SEP, CHROME_TEXT,
+    CHROME_ACCENT_BORDER, CHROME_ACCENT_SOFT, CHROME_CAPTION, CHROME_MUTED, CHROME_ROW,
+    CHROME_SEP, CHROME_TEXT,
 };
 use crate::ui::{settings_panel, shortcuts};
 use crate::update::{self, InstallOutcome, UpdateEvent, UpdateStatus};
 use eframe::egui::{self, Color32, FontId, RichText};
+use std::time::Instant;
 
 /// Company site opened from the About dialog (Modbus / Protocol Bench parity).
 const COMPANY_URL: &str = "https://www.agileautomation.ca";
 const COMPANY_LINK: &str = "www.agileautomation.ca";
 /// Mike’s wording; sentence case + period to match Chart / Modbus slogan presentation.
 const ABOUT_SLOGAN: &str = "Your bench for every imaginable topic.";
-/// Modbus Bench default accent (`#ffb020`) — Bench wordmark + feature chips.
-const ABOUT_ACCENT: Color32 = Color32::from_rgb(0xff, 0xb0, 0x20);
 /// Pane fill close to Modbus About (`#1a1e25`).
 const ABOUT_PANE: Color32 = Color32::from_rgb(0x1a, 0x1e, 0x25);
+/// Hold free About, then expand + fade Topic Bench Pro chips.
+const ABOUT_PRO_DELAY_S: f32 = 2.0;
+const ABOUT_PRO_FADE_S: f32 = 0.45;
 /// Soft hairline like Modbus About (`white` @ 22/255).
 fn about_line() -> Color32 {
     Color32::from_rgba_unmultiplied(255, 255, 255, 22)
+}
+
+fn with_alpha(c: Color32, a: f32) -> Color32 {
+    let a = (c.a() as f32 * a.clamp(0.0, 1.0)).round() as u8;
+    Color32::from_rgba_unmultiplied(c.r(), c.g(), c.b(), a)
 }
 
 impl MqttMonitorApp {
@@ -332,7 +340,7 @@ impl MqttMonitorApp {
         }
     }
 
-    /// About — Modbus Bench Window + scrim (rounded pane, orange Bench accent).
+    /// About — Modbus Bench Window + scrim; Pro chips fade in after ~2s.
     fn draw_about_modal(&mut self, ctx: &egui::Context) {
         // Scrim — click outside closes (Modbus / Protocol Bench pattern).
         let screen = ctx.screen_rect();
@@ -348,11 +356,24 @@ impl MqttMonitorApp {
             });
         if scrim.inner.clicked() {
             self.about_open = false;
+            self.about_opened_at = None;
             return;
         }
         if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
             self.about_open = false;
+            self.about_opened_at = None;
             return;
+        }
+
+        if self.about_opened_at.is_none() {
+            self.about_opened_at = Some(Instant::now());
+        }
+        let opened_at = self.about_opened_at.unwrap_or_else(Instant::now);
+        let elapsed = opened_at.elapsed().as_secs_f32();
+        let pro_alpha = ((elapsed - ABOUT_PRO_DELAY_S) / ABOUT_PRO_FADE_S).clamp(0.0, 1.0);
+        if pro_alpha < 1.0 {
+            // Keep painting through the delay + fade.
+            ctx.request_repaint();
         }
 
         let mut open = true;
@@ -462,7 +483,7 @@ impl MqttMonitorApp {
                         );
                     }
                     ui.add_space(14.0);
-                    // Normal web-link blue (not accent orange) — Modbus About cue.
+                    // Normal web-link blue (not accent) — Modbus About cue.
                     let link_blue = Color32::from_rgb(74, 144, 226);
                     let site = ui
                         .link(
@@ -489,9 +510,36 @@ impl MqttMonitorApp {
                         "Payload",
                         "Search",
                     ] {
-                        about_tag_chip(ui, tag);
+                        about_tag_chip(ui, tag, 1.0);
                     }
                 });
+
+                // Topic Bench Pro — expands height + fades in after ~2s.
+                if pro_alpha > 0.01 {
+                    ui.add_space(16.0 * pro_alpha.max(0.35));
+                    ui.vertical_centered(|ui| {
+                        ui.label(
+                            RichText::new("Topic Bench Pro")
+                                .size(14.0)
+                                .strong()
+                                .color(with_alpha(CHROME_TEXT(), pro_alpha)),
+                        );
+                    });
+                    ui.add_space(8.0 * pro_alpha.max(0.35));
+                    ui.horizontal_wrapped(|ui| {
+                        ui.spacing_mut().item_spacing = egui::vec2(8.0, 8.0);
+                        for tag in [
+                            "Scenarios",
+                            "Simulation",
+                            "Color Rules",
+                            "Themes",
+                            "Combined charts",
+                            "MCP",
+                        ] {
+                            about_tag_chip(ui, tag, pro_alpha);
+                        }
+                    });
+                }
 
                 ui.add_space(14.0);
                 // Free GitHub Releases check (wired — Modbus shows the same control).
@@ -549,6 +597,9 @@ impl MqttMonitorApp {
 
         if check_now {
             self.request_update_check(false);
+        }
+        if !open {
+            self.about_opened_at = None;
         }
         self.about_open = open;
     }
@@ -689,27 +740,35 @@ impl MqttMonitorApp {
     }
 }
 
-fn about_tag_chip(ui: &mut egui::Ui, tag: &str) {
-    let accent = ABOUT_ACCENT;
-    let galley = ui.fonts(|f| {
-        f.layout_no_wrap(tag.to_owned(), FontId::proportional(12.0), accent)
-    });
+/// Theme-friendly chip — muted/row fill + accent border/text (Classic + Pro palettes).
+fn about_tag_chip(ui: &mut egui::Ui, tag: &str, alpha: f32) {
+    let ink = with_alpha(CHROME_CAPTION(), alpha);
+    let border = with_alpha(CHROME_ACCENT_BORDER(), alpha);
+    let fill = {
+        let row = CHROME_ROW();
+        let soft = CHROME_ACCENT_SOFT();
+        // Neutral wash: mostly row, slight accent soft — not a loud orange pill.
+        with_alpha(
+            Color32::from_rgb(
+                ((row.r() as u16 * 3 + soft.r() as u16) / 4) as u8,
+                ((row.g() as u16 * 3 + soft.g() as u16) / 4) as u8,
+                ((row.b() as u16 * 3 + soft.b() as u16) / 4) as u8,
+            ),
+            alpha * 0.92,
+        )
+    };
+    let galley = ui.fonts(|f| f.layout_no_wrap(tag.to_owned(), FontId::proportional(12.0), ink));
     let pad = egui::vec2(10.0, 5.0);
     let size = galley.size() + pad * 2.0;
     let (rect, _) = ui.allocate_exact_size(size, egui::Sense::hover());
     let chrome = rect.shrink(0.5);
     let painter = ui.painter();
-    let wash = Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), 40);
-    painter.rect_filled(chrome, 6.0, wash);
+    painter.rect_filled(chrome, 6.0, fill);
     painter.rect_stroke(
         chrome,
         6.0,
-        egui::Stroke::new(1.0_f32, accent),
+        egui::Stroke::new(1.0_f32, border),
         egui::StrokeKind::Middle,
     );
-    painter.galley(
-        egui::pos2(rect.left() + pad.x, rect.top() + pad.y),
-        galley,
-        accent,
-    );
+    painter.galley(egui::pos2(rect.left() + pad.x, rect.top() + pad.y), galley, ink);
 }
