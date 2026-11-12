@@ -490,11 +490,18 @@ impl eframe::App for MqttMonitorApp {
                 .iter()
                 .any(|p| p.search.change_flash_active(now));
         let status_fade = status_strip_fade_alpha(self.status_changed_at, now);
+        // About Pro reveal (header + staggered chips) must keep frames flowing —
+        // otherwise idle 1 Hz throttling freezes mid-fade with empty chip slots.
+        let about_animating = self.about_animation_pending(now);
         // Combined boards do NOT get an idle timer — they repaint when MQTT samples
         // land on a board series (`need_repaint` via poll) or the user interacts.
         let hz = crate::mqtt::session::BACKGROUND_UI_HZ_INTERVAL;
         if focused {
-            if need_repaint || flashing || (status_fade > 0.0 && status_fade < 1.0) {
+            if need_repaint
+                || flashing
+                || about_animating
+                || (status_fade > 0.0 && status_fade < 1.0)
+            {
                 ctx.request_repaint();
             } else {
                 // 1 Hz Stats refresh and/or wake when status fade is due.
@@ -510,6 +517,9 @@ impl eframe::App for MqttMonitorApp {
                     ctx.request_repaint_after(w);
                 }
             }
+        } else if about_animating {
+            // Keep About fades smooth even when the window is unfocused.
+            ctx.request_repaint();
         } else {
             // Unfocused / other workspace: ~1 Hz heartbeat — alive, not ANR-prone.
             ctx.request_repaint_after(hz);
