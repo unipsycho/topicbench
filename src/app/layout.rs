@@ -1385,27 +1385,6 @@ pub(super) fn load_logo(ctx: &egui::Context) -> Option<TextureHandle> {
     ))
 }
 
-/// About dialog app mark — SVG-rendered TB icon with transparent rounded corners
-/// (no white fringe against the dark About panel).
-pub(super) fn load_app_mark(ctx: &egui::Context) -> Option<TextureHandle> {
-    let raw = image::load_from_memory(include_bytes!(
-        "../../assets/icons/topicbench-about-mark.png"
-    ))
-    .ok()?
-    .into_rgba8();
-    let size = [raw.width() as usize, raw.height() as usize];
-    let color = egui::ColorImage::from_rgba_unmultiplied(size, raw.as_raw());
-    Some(ctx.load_texture(
-        "tb-about-mark",
-        color,
-        egui::TextureOptions {
-            magnification: egui::TextureFilter::Linear,
-            minification: egui::TextureFilter::Linear,
-            ..egui::TextureOptions::LINEAR
-        },
-    ))
-}
-
 /// Paint size in logical/UI px. Prefer authored 164×76; scale to fit command-cell height.
 /// Uses [`icons::CMD_H`] (not full row) so the mark aligns with icon cells inside groups
 /// (groups have 3px frame pad around CMD_H — logo gets the same visual air).
