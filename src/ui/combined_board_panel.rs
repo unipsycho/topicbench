@@ -244,7 +244,7 @@ fn paint_board(
                 |ui| {
                     ui.set_max_size(egui::vec2(strip_w, icon_cell));
                     ui.spacing_mut().item_spacing = egui::vec2(icon_gap, 0.0);
-                    // RTL paint order → visual LTR: save | open | clear | export | close
+                    // RTL paint order → visual LTR: save | delete | import | export | close
                     if icons
                         .tiny_header(ui, "close_red", false, "Close board")
                         .clicked()
@@ -270,17 +270,17 @@ fn paint_board(
                         );
                     }
                     if icons
+                        .tiny_header(ui, "import", false, "Recall a saved board")
+                        .clicked()
+                    {
+                        ui.ctx().data_mut(|d| d.insert_temp(open_id, true));
+                    }
+                    if icons
                         .tiny_header(ui, "delete", false, "Clear display buffer (keep series)")
                         .clicked()
                     {
                         store.clear_display_buffer(board_id);
                         *status = Some("Combined display buffer cleared".into());
-                    }
-                    if icons
-                        .tiny_header(ui, "import", false, "Recall a saved board")
-                        .clicked()
-                    {
-                        ui.ctx().data_mut(|d| d.insert_temp(open_id, true));
                     }
                     if icons
                         .tiny_header(ui, "save", false, "Save board to library")
