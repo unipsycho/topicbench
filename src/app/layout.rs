@@ -21,12 +21,12 @@ use image::RgbaImage;
 use std::collections::{BTreeMap, HashMap};
 use std::time::Instant;
 
-/// Ribbon paint from `topicbench-horizontal-512` at even ÷4 (512×239 → 128×59).
-const RIBBON_LOGO_NATIVE_W: f32 = 128.0;
+/// Ribbon paint from `topicbench-horizontal.png` (1873×908) — height fits CMD_H band.
+const RIBBON_LOGO_NATIVE_W: f32 = 122.0;
 const RIBBON_LOGO_NATIVE_H: f32 = 59.0;
-/// About header from the same asset at even ÷2 (→ 256×119).
+/// About header from the same asset (same aspect → 256×124).
 const ABOUT_LOGO_NATIVE_W: f32 = 256.0;
-const ABOUT_LOGO_NATIVE_H: f32 = 119.0;
+const ABOUT_LOGO_NATIVE_H: f32 = 124.0;
 /// Brand/group band — shared with Profiles/Panels/App via [`RIBBON_ROW_H`].
 const RIBBON_BRAND_H: f32 = RIBBON_ROW_H;
 /// Ribbon panel: brand band + vertical frame margins (4+4 from overlay).
@@ -479,7 +479,7 @@ impl MqttMonitorApp {
                     |ui| {
                         ui.set_height(brand_h);
                         ui.spacing_mut().item_spacing.x = 0.0;
-                        // Hi-res wordmark, integer-scaled to fit band (1 texel = 1 screen px).
+                        // Horizontal wordmark, smooth-downscaled to fit band.
                         let logo_resp = self.tb_logo.show(ui, logo_size.x, logo_size.y);
                         let painted = logo_resp.rect;
                         if logo_resp.clicked() {
@@ -1351,19 +1351,17 @@ pub(super) fn apply_font_zoom(ctx: &egui::Context, factor: f32) {
     ctx.style_mut(|s| s.text_styles = styles);
 }
 
-/// Paint budget in logical/UI px — even ÷4 of the 512 wordmark; fits CMD_H band.
+/// Paint budget in logical/UI px — fits CMD_H band.
 fn ribbon_logo_paint_size() -> egui::Vec2 {
     egui::vec2(RIBBON_LOGO_NATIVE_W, RIBBON_LOGO_NATIVE_H)
 }
 
-/// About header budget — even ÷2 of the same 512 wordmark.
+/// About header budget — same wordmark, larger paint.
 pub(super) fn about_logo_paint_size() -> egui::Vec2 {
     egui::vec2(ABOUT_LOGO_NATIVE_W, ABOUT_LOGO_NATIVE_H)
 }
 
-/// Topic Bench wordmark — `topicbench-horizontal-512.png`, even-integer box-downscale.
-///
-/// Display = source ÷ 2/4/6… (never odd factors); texture paints 1 texel = 1 screen px.
+/// Topic Bench wordmark — `topicbench-horizontal.png`, smooth aspect-fit downscale.
 #[derive(Default)]
 pub(super) struct TbLogo {
     entries: HashMap<(u32, u32), (TextureHandle, Vec2)>,
@@ -1389,7 +1387,7 @@ impl TbLogo {
         max_h: f32,
         clickable: bool,
     ) -> egui::Response {
-        const SRC: &[u8] = include_bytes!("../../assets/topicbench-horizontal-512.png");
+        const SRC: &[u8] = include_bytes!("../../assets/topicbench-horizontal.png");
         let ppp = ui.ctx().pixels_per_point().max(0.25);
         let max_w_px = (max_w * ppp).floor().max(1.0) as u32;
         let max_h_px = (max_h * ppp).floor().max(1.0) as u32;
@@ -1410,7 +1408,7 @@ impl TbLogo {
             ui.add(
                 egui::Image::new(tex)
                     .fit_to_exact_size(*size)
-                    .texture_options(nearest_tex_opts())
+                    .texture_options(linear_tex_opts())
                     .sense(sense),
             )
         } else {
@@ -1448,9 +1446,9 @@ pub(super) fn load_splash_logo(ctx: &egui::Context) -> Option<TextureHandle> {
     ))
 }
 
-/// About-dialog AA logo — hi-res company SVG raster, integer-scaled like Modbus/Chart Bench.
+/// About-dialog AA logo — full wordmark (icon + AGILE AUTOMATION), integer-scaled.
 ///
-/// Source is several× the ~64px About paint size so GPU never upscales a tiny bitmap.
+/// Hi PNG is a 2× of the authored wide mark (~1463×471); never the truncated SVG crop.
 #[derive(Default)]
 pub(super) struct AaAboutLogo {
     entries: HashMap<(u32, u32), (TextureHandle, Vec2)>,
@@ -1492,7 +1490,15 @@ fn nearest_tex_opts() -> TextureOptions {
     }
 }
 
-/// Topic Bench 512 wordmark — downscale by an **even** integer factor only (2×, 4×, …).
+fn linear_tex_opts() -> TextureOptions {
+    TextureOptions {
+        magnification: egui::TextureFilter::Linear,
+        minification: egui::TextureFilter::Linear,
+        ..TextureOptions::LINEAR
+    }
+}
+
+/// Topic Bench horizontal wordmark — smooth aspect-fit into the paint box.
 fn build_tb_mark(
     ctx: &egui::Context,
     bytes: &[u8],
@@ -1505,49 +1511,26 @@ fn build_tb_mark(
     if nw == 0 || nh == 0 {
         return None;
     }
-    let (tex_img, scale_up) = if nw <= max_w_px && nh <= max_h_px {
-        // Prefer even nearest upscale if the slot is larger; else 1:1.
-        let ux = (max_w_px / nw).max(1);
-        let uy = (max_h_px / nh).max(1);
-        let mut up = ux.min(uy).max(1);
-        if up > 1 && up % 2 == 1 {
-            up -= 1;
-        }
-        (raw, up.max(1))
+    let sx = max_w_px as f32 / nw as f32;
+    let sy = max_h_px as f32 / nh as f32;
+    let scale = sx.min(sy).min(1.0);
+    let ow = (nw as f32 * scale).floor().max(1.0) as u32;
+    let oh = (nh as f32 * scale).floor().max(1.0) as u32;
+    let out = if ow == nw && oh == nh {
+        raw
     } else {
-        let fx = ((nw + max_w_px - 1) / max_w_px).max(1);
-        let fy = ((nh + max_h_px - 1) / max_h_px).max(1);
-        let mut factor = fx.max(fy);
-        if factor < 2 {
-            factor = 2;
-        }
-        if factor % 2 == 1 {
-            factor += 1;
-        }
-        let cw = (nw / factor) * factor;
-        let ch = (nh / factor) * factor;
-        let ox = (nw - cw) / 2;
-        let oy = (nh - ch) / 2;
-        let cropped = image::imageops::crop_imm(&raw, ox, oy, cw, ch).to_image();
-        (integer_box_downscale(&cropped, factor), 1)
-    };
-    let (tw, th) = tex_img.dimensions();
-    let out = if scale_up > 1 {
         image::imageops::resize(
-            &tex_img,
-            tw * scale_up,
-            th * scale_up,
-            image::imageops::FilterType::Nearest,
+            &raw,
+            ow,
+            oh,
+            image::imageops::FilterType::Triangle,
         )
-    } else {
-        tex_img
     };
-    let (ow, oh) = out.dimensions();
     let color = ColorImage::from_rgba_unmultiplied([ow as usize, oh as usize], out.as_raw());
     let tex = ctx.load_texture(
         format!("tb-logo-{ow}x{oh}"),
         color,
-        nearest_tex_opts(),
+        linear_tex_opts(),
     );
     Some((tex, Vec2::new(ow as f32 / ppp, oh as f32 / ppp)))
 }
