@@ -496,7 +496,7 @@ impl MqttMonitorApp {
                             self.about_open = true;
                         }
                         logo_resp
-                            .on_hover_text("About TopicBench")
+                            .on_hover_text("About Topic Bench")
                             .on_hover_cursor(egui::CursorIcon::PointingHand);
                         ui.add_space(ver_gap);
                         let (ver_rect, _) = ui.allocate_exact_size(
@@ -1385,17 +1385,18 @@ pub(super) fn load_logo(ctx: &egui::Context) -> Option<TextureHandle> {
     ))
 }
 
-/// About dialog app mark — same art as the window / taskbar icon.
+/// About dialog app mark — SVG-rendered TB icon with transparent rounded corners
+/// (no white fringe against the dark About panel).
 pub(super) fn load_app_mark(ctx: &egui::Context) -> Option<TextureHandle> {
     let raw = image::load_from_memory(include_bytes!(
-        "../../assets/icons/topicbench-app-icon-256.png"
+        "../../assets/icons/topicbench-about-mark.png"
     ))
     .ok()?
     .into_rgba8();
     let size = [raw.width() as usize, raw.height() as usize];
     let color = egui::ColorImage::from_rgba_unmultiplied(size, raw.as_raw());
     Some(ctx.load_texture(
-        "tb-app-mark",
+        "tb-about-mark",
         color,
         egui::TextureOptions {
             magnification: egui::TextureFilter::Linear,
