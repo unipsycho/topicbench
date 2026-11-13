@@ -626,6 +626,15 @@ fn draw_node(
                     ui.interact(toggle_rect, toggle_id.with("tree_toggle"), egui::Sense::click());
                 let openness = state.openness(ui.ctx());
                 egui::collapsing_header::paint_default_icon(ui, openness, &toggle_resp);
+                // Folder/branch chevron — name the role so operators know it is not a topic glyph.
+                let toggle_resp = hover_tip::attach_at_pointer(
+                    toggle_resp,
+                    if was_open {
+                        "Collapse folder"
+                    } else {
+                        "Expand folder"
+                    },
+                );
 
                 ui.spacing_mut().item_spacing.x = 4.0;
                 let label_resp = egui::Frame::NONE
@@ -779,7 +788,9 @@ fn revision_count_label(ui: &mut egui::Ui, count: u64) {
     let row_h = ui
         .text_style_height(&egui::TextStyle::Small)
         .max(ui.spacing().interact_size.y * 0.45);
-    let (rect, _) = ui.allocate_exact_size(egui::vec2(slot_w, row_h), egui::Sense::hover());
+    let (rect, response) =
+        ui.allocate_exact_size(egui::vec2(slot_w, row_h), egui::Sense::hover());
+    let _ = hover_tip::attach_at_pointer(response, "Message count");
     let galley = ui.fonts(|f| f.layout_no_wrap(text, font, color));
     let pos = egui::pos2(
         rect.right() - pad_r - galley.size().x,
@@ -789,6 +800,7 @@ fn revision_count_label(ui: &mut egui::Ui, count: u64) {
 }
 
 /// Dense row: `[copy topic][sticky][bookmark?] gray_topic = [copy payload] highlighted… #n`
+/// Each left glyph + copy-payload + `#n` carries an egui hover tip (pointer-anchored).
 /// Single-click selects for Payload; double-click fills Publish.
 #[allow(clippy::too_many_arguments)]
 fn leaf_row(
