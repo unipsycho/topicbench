@@ -62,7 +62,7 @@ Paid extras for teams that outgrow the free explorer — same app, unlock Pro wh
 - **MCP server** — connect, subscribe, publish, and wait from Cursor / CI against live sessions
 - **Topic & payload simulation** — generators and formulas for whole payloads or JSON fields
 - **Record → simulate** — capture live traffic, then suggest Simulate rows from the tape
-- **Scenario player** — sequenced, timed multi-topic publish scripts
+- **Scenarios** — multi-step publish / wait scripts that drive or simulate hardware reactions
 - **Combined multi-topic graph** — shared time axis across Graph stickies
 - **History scrubber** — scrub per-topic history in the Payload panel
 - **Topic bookmarks** — jump list into deep trees
@@ -87,6 +87,10 @@ Video summaries — click a thumbnail to watch:
   ·
   <a href="https://www.agileautomation.ca/videos/topicbench-themes.mp4">Themes</a>
 </p>
+
+### Scenarios
+
+Scenarios play back authored multi-step scripts against your live sessions — publish, wait, then react — so you can exercise real hardware responses or stand in for devices that aren’t on the bench. Each step can target a broker profile, delay for a fixed or randomized interval, or wait until a topic or JSON field matches before continuing. Organize related runs into groups, import and export the set, and control playback with pause, stop, or loop.
 
 ### Combined graphs
 
