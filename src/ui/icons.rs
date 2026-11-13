@@ -386,6 +386,7 @@ impl IconSet {
 
     /// Topic-tree row button. Glyph and hit target are [`tree_row_icon_px`]
     /// (no extra pad) so the row stays as tall as the text.
+    /// Tips use pointer anchoring so dense leaf glyphs stay readable.
     pub fn tiny_tree(
         &self,
         ui: &mut egui::Ui,
@@ -393,7 +394,16 @@ impl IconSet {
         selected: bool,
         tip: &str,
     ) -> egui::Response {
-        self.paint_tiny(ui, name, selected, tip, tree_row_icon_px(ui), 0.0, false)
+        self.paint_tiny(
+            ui,
+            name,
+            selected,
+            tip,
+            tree_row_icon_px(ui),
+            0.0,
+            false,
+            true,
+        )
     }
 
     fn tiny_with_pad(
@@ -405,9 +415,10 @@ impl IconSet {
         pad: f32,
         on_header: bool,
     ) -> egui::Response {
-        self.paint_tiny(ui, name, selected, tip, TINY_ICON, pad, on_header)
+        self.paint_tiny(ui, name, selected, tip, TINY_ICON, pad, on_header, false)
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn paint_tiny(
         &self,
         ui: &mut egui::Ui,
@@ -417,10 +428,15 @@ impl IconSet {
         icon_px: f32,
         pad: f32,
         on_header: bool,
+        tip_at_pointer: bool,
     ) -> egui::Response {
         let size = Vec2::splat(icon_px + pad * 2.0);
         let (rect, response) = ui.allocate_exact_size(size, Sense::click());
-        let response = crate::ui::hover_tip::attach(response, tip);
+        let response = if tip_at_pointer {
+            crate::ui::hover_tip::attach_at_pointer(response, tip)
+        } else {
+            crate::ui::hover_tip::attach(response, tip)
+        };
         if selected {
             let fill = if on_header {
                 CHROME_HEADER_SELECTED()

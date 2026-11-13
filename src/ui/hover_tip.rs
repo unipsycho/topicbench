@@ -26,3 +26,13 @@ pub fn attach(response: Response, tip: impl Into<WidgetText>) -> Response {
         response.on_hover_text(tip)
     }
 }
+
+/// Like [`attach`], but anchor the tip at the pointer — better for dense tree-row glyphs.
+pub fn attach_at_pointer(response: Response, tip: impl Into<WidgetText>) -> Response {
+    let blocked = is_blocked(&response.ctx);
+    if blocked && response.layer_id.order != Order::Foreground {
+        response
+    } else {
+        response.on_hover_text_at_pointer(tip)
+    }
+}
