@@ -25,7 +25,7 @@ I'm happy with the performance: among the MQTT desktop tools I've tried, TopicBe
 - **Payload inspect** — clear views for JSON and plain text
 - **Stickies & graphs** — pin important topics and watch values over time
 - **Free & open source** — use it, report issues, contribute
-- **Updates via GitHub Releases** — in-app check for every install; bare Linux/Windows binaries can self-replace
+- **Updates via GitHub Releases** — in-app check for every install; bare Linux/Windows binaries self-replace (Linux elevates via `pkexec`/`sudo` when installed under root-owned paths such as `/usr/bin`)
 - **100% Rust** — built entirely in Rust for efficient memory and CPU use on large topic trees and lists
 
 ## Features
