@@ -1,4 +1,12 @@
 //! Download release asset, verify SHA-256, replace running binary, relaunch.
+//!
+//! On Unix, if the executable directory is not writable (e.g. `/usr/bin` from a
+//! system-wide copy), stage the payload in a temp dir and elevate via `pkexec`
+//! (GUI polkit prompt) or non-interactive `sudo -n` to perform the atomic
+//! rename dance while preserving owner/mode. Release-page fallback remains when
+//! elevation is refused or unavailable. `.deb`/`apt` is not published on
+//! Releases, so there is no package-aware automatic path — elevated binary
+//! replace is the intended fix for root-owned install locations.
 
 use super::github::{self, ReleaseInfo, ASSET_NAME, SHA256SUMS_NAME};
 use sha2::{Digest, Sha256};
@@ -13,6 +21,15 @@ pub enum InstallOutcome {
     ReplacedAndRelaunched,
     /// Assets/checksum missing or apply failed — opened the release page instead.
     OpenedBrowser { reason: String },
+}
+
+/// How the Unix replace path will apply the new binary.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReplaceMethod {
+    /// Executable directory is writable — rename dance in place.
+    Direct,
+    /// Need root to write beside the binary (e.g. `/usr/bin`).
+    Elevated,
 }
 
 /// Prefer in-place install; fall back to opening the release HTML URL.
@@ -88,6 +105,32 @@ fn parse_sha256_for_asset(text: &str, asset_name: &str) -> Option<String> {
     None
 }
 
+/// True when `dir` allows creating a new file (probe + remove).
+pub fn dir_is_writable(dir: &Path) -> bool {
+    let probe = dir.join(format!(".topicbench-write-test-{}", std::process::id()));
+    match fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&probe)
+    {
+        Ok(_) => {
+            let _ = fs::remove_file(&probe);
+            true
+        }
+        Err(_) => false,
+    }
+}
+
+/// Choose direct vs elevated replace from the executable's parent directory.
+pub fn replace_method_for_exe(exe: &Path) -> ReplaceMethod {
+    let dir = exe.parent().unwrap_or_else(|| Path::new("."));
+    if dir_is_writable(dir) {
+        ReplaceMethod::Direct
+    } else {
+        ReplaceMethod::Elevated
+    }
+}
+
 #[cfg(target_os = "windows")]
 fn replace_and_relaunch(exe: &Path, new_bytes: &[u8]) -> Result<(), String> {
     let dir = exe.parent().unwrap_or_else(|| Path::new("."));
@@ -117,6 +160,25 @@ fn replace_and_relaunch(exe: &Path, new_bytes: &[u8]) -> Result<(), String> {
 
 #[cfg(not(target_os = "windows"))]
 fn replace_and_relaunch(exe: &Path, new_bytes: &[u8]) -> Result<(), String> {
+    match replace_method_for_exe(exe) {
+        ReplaceMethod::Direct => {
+            if let Err(e) = replace_direct(exe, new_bytes) {
+                // Probe can race with permissions; retry via elevation on EACCES-style errors.
+                if looks_like_permission_denied(&e) {
+                    replace_elevated(exe, new_bytes)?;
+                } else {
+                    return Err(e);
+                }
+            }
+        }
+        ReplaceMethod::Elevated => replace_elevated(exe, new_bytes)?,
+    }
+    spawn_relaunch(exe)?;
+    std::process::exit(0);
+}
+
+#[cfg(not(target_os = "windows"))]
+fn replace_direct(exe: &Path, new_bytes: &[u8]) -> Result<(), String> {
     let dir = exe.parent().unwrap_or_else(|| Path::new("."));
     let staging = dir.join(format!(
         "{}.new",
@@ -126,15 +188,7 @@ fn replace_and_relaunch(exe: &Path, new_bytes: &[u8]) -> Result<(), String> {
     ));
     let backup = backup_path(exe);
     write_bytes(&staging, new_bytes)?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let mut perms = fs::metadata(&staging)
-            .map_err(|e| format!("stat staging: {e}"))?
-            .permissions();
-        perms.set_mode(0o755);
-        fs::set_permissions(&staging, perms).map_err(|e| format!("chmod staging: {e}"))?;
-    }
+    set_executable(&staging)?;
 
     if backup.exists() {
         let _ = fs::remove_file(&backup);
@@ -145,9 +199,151 @@ fn replace_and_relaunch(exe: &Path, new_bytes: &[u8]) -> Result<(), String> {
         let _ = fs::rename(&backup, exe);
         return Err(format!("rename staging→current: {e}"));
     }
+    Ok(())
+}
 
-    spawn_relaunch(exe)?;
-    std::process::exit(0);
+/// Stage in `$TMPDIR`, then `pkexec` / `sudo -n` to swap into a root-owned path.
+#[cfg(not(target_os = "windows"))]
+fn replace_elevated(exe: &Path, new_bytes: &[u8]) -> Result<(), String> {
+    let tmp = std::env::temp_dir().join(format!(
+        "topicbench-update-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0)
+    ));
+    write_bytes(&tmp, new_bytes)?;
+    set_executable(&tmp)?;
+
+    let exe_s = exe.to_string_lossy().into_owned();
+    let tmp_s = tmp.to_string_lossy().into_owned();
+    // GNU coreutils `stat` (Debian/Ubuntu). Preserve owner/mode across the swap.
+    let script = r#"
+set -e
+SRC="$1"
+DST="$2"
+BAK="${DST}.bak"
+NEW="${DST}.new"
+OWNER=$(stat -c '%u:%g' "$DST")
+MODE=$(stat -c '%a' "$DST")
+cp -f "$SRC" "$NEW"
+chmod "$MODE" "$NEW"
+chown "$OWNER" "$NEW"
+mv -f "$DST" "$BAK"
+mv -f "$NEW" "$DST"
+rm -f "$SRC"
+"#;
+
+    run_elevated(script, &tmp_s, &exe_s).map_err(|e| {
+        let _ = fs::remove_file(&tmp);
+        e
+    })?;
+    Ok(())
+}
+
+/// Match os/fs permission failures (and our `create …: Permission denied` strings).
+pub fn looks_like_permission_denied(err: &str) -> bool {
+    let lower = err.to_ascii_lowercase();
+    lower.contains("permission denied")
+        || lower.contains("os error 13")
+        || lower.contains("read-only file system")
+}
+
+/// Run `script` as root with `$1=src`, `$2=dst`. Prefer pkexec (polkit GUI).
+#[cfg(not(target_os = "windows"))]
+fn run_elevated(script: &str, src: &str, dst: &str) -> Result<(), String> {
+    if command_exists("pkexec") {
+        let out = Command::new("pkexec")
+            .arg("/bin/sh")
+            .arg("-c")
+            .arg(script)
+            .arg("topicbench-elevate")
+            .arg(src)
+            .arg(dst)
+            .output()
+            .map_err(|e| format!("pkexec: {e}"))?;
+        if out.status.success() {
+            return Ok(());
+        }
+        let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
+        let code = out.status.code().unwrap_or(-1);
+        // User dismissed the polkit dialog, or policy denied — don't try sudo noise.
+        if code == 126 || code == 127 || stderr.to_lowercase().contains("dismissed") {
+            return Err(format!(
+                "elevation refused or unavailable (pkexec exit {code}{}) — authorize the prompt or install manually",
+                if stderr.is_empty() {
+                    String::new()
+                } else {
+                    format!(": {stderr}")
+                }
+            ));
+        }
+        // Fall through to sudo -n when pkexec exists but failed for another reason.
+        if !stderr.is_empty() {
+            // Keep trying sudo below; remember pkexec detail if sudo also fails.
+            if let Err(sudo_err) = run_sudo_n(script, src, dst) {
+                return Err(format!(
+                    "elevated install failed (pkexec: {stderr}; {sudo_err})"
+                ));
+            }
+            return Ok(());
+        }
+    }
+
+    run_sudo_n(script, src, dst)
+}
+
+#[cfg(not(target_os = "windows"))]
+fn run_sudo_n(script: &str, src: &str, dst: &str) -> Result<(), String> {
+    if !command_exists("sudo") {
+        return Err(
+            "install directory not writable and neither pkexec nor sudo is available — open the release page to update manually"
+                .into(),
+        );
+    }
+    let out = Command::new("sudo")
+        .arg("-n")
+        .arg("/bin/sh")
+        .arg("-c")
+        .arg(script)
+        .arg("topicbench-elevate")
+        .arg(src)
+        .arg(dst)
+        .output()
+        .map_err(|e| format!("sudo: {e}"))?;
+    if out.status.success() {
+        return Ok(());
+    }
+    let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
+    Err(format!(
+        "elevation refused or unavailable (sudo -n{}) — authorize pkexec/sudo or install manually",
+        if stderr.is_empty() {
+            String::new()
+        } else {
+            format!(": {stderr}")
+        }
+    ))
+}
+
+#[cfg(not(target_os = "windows"))]
+fn command_exists(name: &str) -> bool {
+    Command::new("sh")
+        .arg("-c")
+        .arg(format!("command -v {name} >/dev/null 2>&1"))
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
+#[cfg(unix)]
+fn set_executable(path: &Path) -> Result<(), String> {
+    use std::os::unix::fs::PermissionsExt;
+    let mut perms = fs::metadata(path)
+        .map_err(|e| format!("stat staging: {e}"))?
+        .permissions();
+    perms.set_mode(0o755);
+    fs::set_permissions(path, perms).map_err(|e| format!("chmod staging: {e}"))
 }
 
 fn backup_path(exe: &Path) -> PathBuf {
@@ -177,6 +373,7 @@ fn spawn_relaunch(exe: &Path) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
     fn parse_sha_sums() {
@@ -194,5 +391,46 @@ bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb *topicbench-win
             Some("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
         );
         assert!(parse_sha256_for_asset(text, "missing").is_none());
+    }
+
+    #[test]
+    fn writable_temp_dir_uses_direct_replace() {
+        let dir = std::env::temp_dir().join(format!(
+            "topicbench-writetest-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        let exe = dir.join("topicbench");
+        fs::write(&exe, b"old").unwrap();
+        assert!(dir_is_writable(&dir));
+        assert_eq!(replace_method_for_exe(&exe), ReplaceMethod::Direct);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn nonwritable_dir_selects_elevated() {
+        // `/usr/bin` is root-owned on typical Linux CI/dev images; skip if somehow writable.
+        let usr_bin = Path::new("/usr/bin");
+        if !usr_bin.is_dir() || dir_is_writable(usr_bin) {
+            return;
+        }
+        let exe = usr_bin.join("topicbench");
+        assert_eq!(replace_method_for_exe(&exe), ReplaceMethod::Elevated);
+    }
+
+    #[test]
+    fn permission_denied_detection() {
+        assert!(looks_like_permission_denied(
+            "create /usr/bin/topicbench.new: Permission denied (os error 13)"
+        ));
+        assert!(looks_like_permission_denied(
+            "rename current→backup: os error 13"
+        ));
+        assert!(!looks_like_permission_denied(
+            "SHA-256 mismatch (got aaa, expected bbb)"
+        ));
     }
 }
