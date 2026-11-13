@@ -22,8 +22,9 @@ Arch / Omarchy: AUR [`topicbench-bin`](aur/topicbench-bin) wraps `topicbench-lin
 ## Updates behavior
 
 - **Check / notify:** every install polls GitHub Releases latest (Settings → Check now, and quiet startup).
-- **Apply in place:** only when the running binary path is user-writable — typically the bare Linux binary or Windows portable / bare `.exe`.
-- **AUR:** users still get the update banner; install usually falls back to the release page / `yay` so they can fetch the new package.
+- **Apply in place:** when the running binary's directory is writable — typically the bare Linux binary or Windows portable / bare `.exe`.
+- **Root-owned paths (e.g. `/usr/bin`):** Linux stages the verified payload in a temp dir, then elevates via `pkexec` (polkit GUI) or `sudo -n` to swap the binary while preserving owner/mode. If elevation is refused or unavailable, the updater opens the release page with a clear error (same fallback as missing assets).
+- **AUR:** users still get the update banner; package-managed installs may still prefer `yay`/pacman when elevation is declined, but an elevated in-place swap works when the user authorizes it.
 
 ## Build + upload (M17)
 
