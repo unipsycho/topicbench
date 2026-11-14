@@ -1506,14 +1506,15 @@ fn edit_step_fields(
             ui.horizontal(|ui| {
                 ui.label(RichText::new("Topic").color(CHROME_MUTED()).small());
                 let tw = (ui.available_width() - 8.0).clamp(40.0, 280.0);
-                if ui
-                    .add(
-                        egui::TextEdit::singleline(topic)
-                            .id_salt(("scn_step_topic", sid.as_str()))
-                            .desired_width(tw),
-                    )
-                    .changed()
-                {
+                // Same commit-on-blur as Simulation — never upsert partial topics
+                // while typing (Play mid-edit would otherwise publish the drip).
+                if crate::ui::commit_text::commit_on_blur_text_edit(
+                    ui,
+                    ("scn_step_topic", sid.as_str()),
+                    topic,
+                    tw,
+                    "topic",
+                ) {
                     dirty = true;
                 }
             });
@@ -1604,14 +1605,13 @@ fn edit_step_fields(
             ui.horizontal(|ui| {
                 ui.label(RichText::new("Topic").color(CHROME_MUTED()).small());
                 let tw = (ui.available_width() * 0.55).clamp(40.0, 220.0);
-                if ui
-                    .add(
-                        egui::TextEdit::singleline(topic)
-                            .id_salt(("scn_wv_topic", sid.as_str()))
-                            .desired_width(tw),
-                    )
-                    .changed()
-                {
+                if crate::ui::commit_text::commit_on_blur_text_edit(
+                    ui,
+                    ("scn_wv_topic", sid.as_str()),
+                    topic,
+                    tw,
+                    "topic",
+                ) {
                     dirty = true;
                 }
                 ui.label(RichText::new("Field").color(CHROME_MUTED()).small());

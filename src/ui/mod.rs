@@ -3,6 +3,7 @@
 pub mod bookmarks_panel;
 pub mod clipboard;
 pub mod color_rules_panel;
+pub mod commit_text;
 pub mod combined_board_panel;
 pub mod flash;
 pub mod hover_tip;
