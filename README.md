@@ -19,8 +19,10 @@ I'm happy with the performance: among the MQTT desktop tools I've tried, TopicBe
 - **Simultaneous multi-broker** — connect to several brokers at once and monitor or search their topics in a single window
 - **Multi-broker profiles** — save hosts, TLS/WSS options, and credentials (passwords in the OS keyring)
 - **Live topic tree** — subscribe with wildcards and browse traffic as it arrives; keep multiple trees in view
+- **Filter by recency or retain** — show only topics updated in the last 5 s – 5 min, or only retained topics, on top of the text search
 - **Flexible windowing** — move panels and arrange the layout for how you work
 - **Search & highlight** — find topics and payloads without leaving the desktop UI
+- **Live traffic** — full-width message stream with its own filter, match highlighting, next / previous match, and scroll-back through the last 500 messages
 - **Publish & recent** — send messages quickly and keep recent payloads handy
 - **Payload inspect** — clear views for JSON and plain text
 - **Stickies & graphs** — pin important topics and watch values over time
@@ -30,7 +32,7 @@ I'm happy with the performance: among the MQTT desktop tools I've tried, TopicBe
 
 ## Features
 
-- Connection profiles (MQTT TCP / WebSocket, optional TLS)
+- Connection profiles (MQTT TCP / WebSocket, optional TLS) with auto-save and collapsible Connection / Credentials / Last Will / Subscriptions sections
 - Concurrent live sessions across brokers in one window
 - Topic subscriptions with `+` / `#`
 - Shared sticky board across profiles
