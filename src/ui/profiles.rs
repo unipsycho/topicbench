@@ -12,7 +12,7 @@ use crate::mqtt::subscribe;
 use crate::ui::clipboard;
 use crate::ui::flash;
 use crate::ui::icons::{
-    self, IconSet, CHROME_ACCENT_BORDER, CHROME_ACCENT_SOFT, CHROME_CAPTION, CHROME_HOVER,
+    self, IconSet, CHROME_ACCENT_BORDER, CHROME_ACCENT_SOFT, CHROME_HOVER,
     CHROME_HEADING, CHROME_ROW, CHROME_SECTION, CHROME_TEXT, TINY_ICON,
 };
 use eframe::egui::{self, Color32, CursorIcon, RichText, Sense};
@@ -25,12 +25,6 @@ struct ProfileDnd(String);
 
 const ROW_H: f32 = 26.0;
 const GRIP_W: f32 = 16.0;
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum ProfileListFilter {
-    All,
-    ConnectedOnly,
-}
 
 /// Id salt for the profile Name field (Ctrl+E / F2 focus).
 pub const PROFILE_NAME_ID: &str = "profile_edit_name";
@@ -127,39 +121,129 @@ fn paint_profile_row_body(
     }
 }
 
+const AUTOSAVE_DELAY: std::time::Duration = std::time::Duration::from_millis(500);
+
+fn delete_pending_id() -> egui::Id {
+    egui::Id::new("profiles_delete_pending")
+}
+
+/// Ask for confirmation before deleting `id` (used by the row trash and the Delete shortcut).
+pub fn request_delete(ctx: &egui::Context, id: &str) {
+    ctx.data_mut(|d| d.insert_temp(delete_pending_id(), id.to_string()));
+}
+
+/// Write pending edits to disk now (no-op when nothing changed).
+fn flush_autosave(_ctx: &egui::Context, profiles: &mut ProfileStore, status: &mut String) {
+    if profiles.dirty_since.take().is_none() {
+        return;
+    }
+    if let Err(e) = profiles.save() {
+        *status = format!("Auto-save failed: {e}");
+    }
+}
+
+/// Collapsible sub-section: clickable header row (arrow + icon + title) over an indented body.
+fn collapsible_section(
+    ui: &mut egui::Ui,
+    icons: &IconSet,
+    key: &str,
+    icon: &str,
+    title: &str,
+    default_open: bool,
+    body: impl FnOnce(&mut egui::Ui),
+) {
+    let id = ui.make_persistent_id(("profile_section", key));
+    let mut state =
+        egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), id, default_open);
+    let (rect, resp) =
+        ui.allocate_exact_size(egui::vec2(ui.available_width(), 28.0), Sense::click());
+    let fill = if resp.hovered() {
+        CHROME_HOVER()
+    } else {
+        CHROME_SECTION()
+    };
+    ui.painter().rect_filled(rect, 3.0, fill);
+    // Disclosure triangle.
+    let c = egui::pos2(rect.left() + 12.0, rect.center().y);
+    let pts = if state.is_open() {
+        vec![
+            egui::pos2(c.x - 4.0, c.y - 2.5),
+            egui::pos2(c.x + 4.0, c.y - 2.5),
+            egui::pos2(c.x, c.y + 3.5),
+        ]
+    } else {
+        vec![
+            egui::pos2(c.x - 2.5, c.y - 4.0),
+            egui::pos2(c.x - 2.5, c.y + 4.0),
+            egui::pos2(c.x + 3.5, c.y),
+        ]
+    };
+    ui.painter()
+        .add(egui::Shape::convex_polygon(pts, CHROME_HEADING(), egui::Stroke::NONE));
+    let mut x = rect.left() + 24.0;
+    if let Some(tex) = icons.get(icon) {
+        let r = egui::Rect::from_center_size(
+            egui::pos2(x + TINY_ICON * 0.5, rect.center().y),
+            egui::vec2(TINY_ICON, TINY_ICON),
+        );
+        egui::Image::new(tex)
+            .fit_to_exact_size(egui::vec2(TINY_ICON, TINY_ICON))
+            .paint_at(ui, r);
+        x += TINY_ICON + 6.0;
+    }
+    ui.painter().text(
+        egui::pos2(x, rect.center().y),
+        egui::Align2::LEFT_CENTER,
+        title,
+        egui::FontId::proportional(15.0),
+        CHROME_HEADING(),
+    );
+    if resp.clicked() {
+        state.toggle(ui);
+    }
+    let open = state.is_open();
+    state.store(ui.ctx());
+    if open {
+        egui::Frame::NONE
+            .inner_margin(egui::Margin {
+                left: 6,
+                right: 2,
+                top: 4,
+                bottom: 4,
+            })
+            .show(ui, body);
+    }
+    ui.add_space(4.0);
+}
+
+/// Returns true when the header's "New profile" button was clicked.
 pub fn draw(
     ui: &mut egui::Ui,
     profiles: &mut ProfileStore,
     sessions: &mut SessionManager,
     pins: &mut PinBoard,
     settings: &mut AppSettings,
-    list_filter: &mut ProfileListFilter,
     icons: &IconSet,
     draft_filter: &mut String,
     status: &mut String,
     ctx: &egui::Context,
     request_editor_focus: &mut bool,
     show_password: &mut bool,
-) {
+) -> bool {
+    let mut new_clicked = false;
     icons::section_header_bar(ui, |ui| {
         icons::section_icon(ui, icons, "profile");
         icons::section_title(ui, "Profiles");
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if icons
+                .tiny_header(ui, "profile_add", false, "New profile (Ctrl+N)")
+                .clicked()
+            {
+                new_clicked = true;
+            }
+        });
     });
     ui.add_space(4.0);
-
-    // Filter sits above the list, visually distinct (chrome strip, not a list row).
-    egui::Frame::NONE
-        .fill(CHROME_SECTION())
-        .corner_radius(3.0)
-        .inner_margin(egui::Margin::symmetric(8, 5))
-        .show(ui, |ui| {
-            ui.horizontal(|ui| {
-                ui.label(RichText::new("Show").small().color(CHROME_CAPTION()));
-                ui.selectable_value(list_filter, ProfileListFilter::All, "All");
-                ui.selectable_value(list_filter, ProfileListFilter::ConnectedOnly, "Connected");
-            });
-        });
-    ui.add_space(6.0);
 
     // Selectable full-width list rows; drag-reorder only from the left grip handle.
     let now = Instant::now();
@@ -167,15 +251,12 @@ pub fn draw(
     let row_bg = CHROME_ROW();
     let row_bg_sel = CHROME_ACCENT_SOFT();
     let mut pending_reorder: Option<(String, String, bool)> = None;
+    let mut select_clicked: Option<String> = None;
     for id in &ids {
         let Some(profile) = profiles.profiles.get(id) else {
             continue;
         };
         let session = sessions.open.get(id);
-        let connected = session.map(|s| s.state == SessionState::Connected).unwrap_or(false);
-        if *list_filter == ProfileListFilter::ConnectedOnly && !connected {
-            continue;
-        }
 
         let selected = profiles.selected_id.as_deref() == Some(id.as_str());
         let state = session.map(|s| s.state);
@@ -194,9 +275,14 @@ pub fn draw(
             egui::pos2(row_rect.left() + 2.0, row_rect.top()),
             egui::vec2(GRIP_W, ROW_H),
         );
+        let del_w = TINY_ICON + 6.0;
+        let del_rect = egui::Rect::from_min_size(
+            egui::pos2(row_rect.right() - del_w - 2.0, row_rect.top()),
+            egui::vec2(del_w, ROW_H),
+        );
         let body_rect = egui::Rect::from_min_max(
             egui::pos2(grip_rect.right() + 2.0, row_rect.top()),
-            row_rect.right_bottom(),
+            egui::pos2(del_rect.left() - 2.0, row_rect.bottom()),
         );
 
         icons::paint_drag_grip(ui, grip_rect);
@@ -242,6 +328,33 @@ pub fn draw(
             Sense::click(),
         );
 
+        // Delete (red trash) at the right edge → confirmation dialog.
+        let del_resp = hover_tip::attach(
+            ui.interact(
+                del_rect,
+                egui::Id::new(("profile_del", id.as_str())),
+                Sense::click(),
+            ),
+            "Delete profile",
+        );
+        if del_resp.hovered() {
+            ui.painter().rect_filled(del_rect, 2.0, CHROME_HOVER());
+        }
+        if let Some(tex) = icons.get("delete_red") {
+            egui::Image::new(tex)
+                .fit_to_exact_size(egui::vec2(TINY_ICON, TINY_ICON))
+                .paint_at(
+                    ui,
+                    egui::Rect::from_center_size(
+                        del_rect.center(),
+                        egui::vec2(TINY_ICON, TINY_ICON),
+                    ),
+                );
+        }
+        if del_resp.clicked() {
+            request_delete(ctx, id);
+        }
+
         // Drop target = whole row (insert before/after by pointer Y).
         if let Some(payload) = drop_response.dnd_hover_payload::<ProfileDnd>() {
             if payload.0.as_str() != id.as_str() {
@@ -257,7 +370,7 @@ pub fn draw(
                 ui.painter().hline(
                     drop_response.rect.x_range(),
                     y,
-                    egui::Stroke::new(2.0, CHROME_ACCENT_BORDER()),
+                    egui::Stroke::new(2.0_f32, CHROME_ACCENT_BORDER()),
                 );
                 ui.painter().rect_filled(
                     drop_response.rect,
@@ -283,12 +396,17 @@ pub fn draw(
         }
 
         if body_response.clicked() {
-            if profiles.selected_id.as_deref() != Some(id.as_str()) {
-                *show_password = false;
-            }
-            profiles.selected_id = Some(id.clone());
+            select_clicked = Some(id.clone());
         }
         // No inter-row gap — tighter Profiles list.
+    }
+    if let Some(id) = select_clicked {
+        if profiles.selected_id.as_deref() != Some(id.as_str()) {
+            // Persist edits to the profile we're leaving before switching.
+            flush_autosave(ctx, profiles, status);
+            *show_password = false;
+        }
+        profiles.selected_id = Some(id);
     }
     if let Some((dragged, target, after)) = pending_reorder {
         if profiles.reorder(&dragged, &target, after) {
@@ -304,418 +422,503 @@ pub fn draw(
     ui.add_space(4.0);
 
     let selected_id = profiles.selected_id.clone();
-    if let Some(id) = selected_id {
-        if profiles.profiles.contains_key(&id) {
-            icons::section_header_bar(ui, |ui| {
-                icons::section_title(ui, "Edit");
-            });
-            if let Some(profile) = profiles.profiles.get_mut(&id) {
-                ui.horizontal(|ui| {
-                    hover_tip::attach(
-                        ui.label("Name"),
-                        shortcuts::tip("Focus profile editor", "Ctrl+E / F2"),
-                    );
-                    let resp = hover_tip::attach(
-                        ui.add(
-                            egui::TextEdit::singleline(&mut profile.name).id_salt(PROFILE_NAME_ID),
-                        ),
-                        shortcuts::tip("Focus profile editor", "Ctrl+E / F2"),
-                    );
-                    if *request_editor_focus {
-                        resp.request_focus();
-                        *request_editor_focus = false;
-                    }
-                });
-                ui.horizontal(|ui| {
-                    ui.label("Color");
-                    let mut rgb = profile.color_rgb;
-                    let color_resp = hover_tip::attach(
-                        ui.color_edit_button_srgb(&mut rgb),
-                        "Topic tree + sticky labels",
-                    );
-                    if color_resp.changed() {
-                        profile.color_rgb = rgb;
-                    }
-                });
-                ui.horizontal(|ui| {
-                    ui.label("Host");
-                    ui.text_edit_singleline(&mut profile.host);
-                });
-                // Port + MQTT / WebSocket beside it; TLS turns MQTT→MQTTS and WS→WSS.
-                ui.horizontal(|ui| {
-                    ui.label("Port");
-                    ui.add(egui::DragValue::new(&mut profile.port).range(1..=65535));
-                    let prev = profile.transport;
-                    egui::ComboBox::from_id_salt(("profile_transport", id.as_str()))
-                        .selected_text(profile.transport.label())
-                        .width(100.0)
-                        .show_ui(ui, |ui| {
-                            ui.selectable_value(
-                                &mut profile.transport,
-                                ProfileTransport::Mqtt,
-                                "MQTT",
-                            );
-                            ui.selectable_value(
-                                &mut profile.transport,
-                                ProfileTransport::WebSocket,
-                                "WebSocket",
-                            );
-                        });
-                    if profile.transport != prev {
-                        nudge_port_for_transport(profile, prev);
-                    }
-                    ui.weak(profile.protocol_badge());
-                });
-                if profile.transport == ProfileTransport::WebSocket {
-                    ui.horizontal(|ui| {
-                        ui.label("WS path");
-                        ui.add(
-                            egui::TextEdit::singleline(&mut profile.ws_path)
-                                .desired_width(160.0)
-                                .hint_text("/mqtt"),
-                        );
-                    });
-                }
-                ui.horizontal(|ui| {
-                    ui.label("MQTT");
-                    egui::ComboBox::from_id_salt(("profile_mqtt_ver", id.as_str()))
-                        .selected_text(profile.mqtt_version.label())
-                        .width(72.0)
-                        .show_ui(ui, |ui| {
-                            ui.selectable_value(
-                                &mut profile.mqtt_version,
-                                MqttVersion::V311,
-                                "3.1.1",
-                            );
-                            ui.selectable_value(&mut profile.mqtt_version, MqttVersion::V5, "5");
-                        });
-                    if profile.mqtt_version.is_v5() {
-                        ui.label("Session expiry (s)");
-                        hover_tip::attach(
-                            ui.add(
-                                egui::DragValue::new(&mut profile.session_expiry_secs)
-                                    .range(0..=u32::MAX)
-                                    .speed(1.0),
-                            ),
-                            "MQTT 5 session expiry interval. 0 = expire on disconnect (like clean session).",
-                        );
-                    }
-                });
-                ui.horizontal(|ui| {
-                    ui.label("Client ID");
-                    // Static ID kept when Unique is off; disabled while UUID overrides CONNECT.
-                    let edit = egui::TextEdit::singleline(&mut profile.client_id);
-                    if profile.unique_client_id {
-                        ui.add_enabled(false, edit);
-                    } else {
-                        ui.add(edit);
-                    }
-                });
-                hover_tip::attach(
-                    ui.checkbox(&mut profile.unique_client_id, "Unique client ID (UUID)"),
-                    "Use a fresh UUID as the MQTT client ID on each connect. Avoids \"client already connected\" when multiple TopicBench instances share this profile.",
-                );
-                ui.horizontal(|ui| {
-                    ui.label("Username");
-                    ui.text_edit_singleline(&mut profile.username);
-                });
-                // Password + Show/Hide text toggle (masked by default).
-                ui.horizontal(|ui| {
-                    ui.label("Password");
-                    ui.add(
-                        egui::TextEdit::singleline(&mut profile.password)
-                            .password(!*show_password)
-                            .desired_width(160.0),
-                    );
-                    let label = if *show_password { "Hide" } else { "Show" };
-                    if ui
-                        .small_button(label)
-                        .on_hover_text(if *show_password {
-                            "Hide password"
-                        } else {
-                            "Show password"
-                        })
-                        .clicked()
-                    {
-                        *show_password = !*show_password;
-                    }
-                });
-                let tls_label = if profile.transport == ProfileTransport::WebSocket {
-                    "Use TLS (WSS)"
-                } else {
-                    "Use TLS"
-                };
-                hover_tip::attach(
-                    ui.checkbox(&mut profile.use_tls, tls_label),
-                    "TLS for MQTT TCP, or WSS for WebSocket (HTTPS-style encryption)",
-                );
-                // Optional certs folder for AWS IoT–style CA + client cert + key.
-                ui.horizontal(|ui| {
-                    icons::tiny_image(ui, icons, "tls_security");
-                    ui.label("Certs folder");
-                    ui.add(
-                        egui::TextEdit::singleline(&mut profile.certs_dir)
-                            .desired_width(140.0)
-                            .hint_text("/path/to/certs"),
-                    );
-                    // Off-thread native dialog — avoid Linux Wayland "app hung" ANR.
-                    let certs_dlg = egui::Id::new("dlg_certs_folder");
-                    if icons
-                        .tiny(ui, "certificates", false, "Choose certs folder")
-                        .clicked()
-                    {
-                        crate::ui::native_dialog::begin_path(
-                            ui.ctx(),
-                            certs_dlg,
-                            crate::ui::native_dialog::PathOp::PickFolder,
-                            |d| d.set_title("MQTT TLS / WSS certs folder"),
-                        );
-                    }
-                    if let Some(Some(path)) =
-                        crate::ui::native_dialog::poll_path(ui.ctx(), certs_dlg)
-                    {
-                        profile.certs_dir = path.display().to_string();
-                        profile.use_tls = true;
-                    }
-                    if !profile.certs_dir.trim().is_empty()
-                        && icons
-                            .tiny(ui, "close_red", false, "Clear certs folder")
-                            .clicked()
-                    {
-                        profile.certs_dir.clear();
-                    }
-                });
-                // Show which three files were auto-detected (or the error).
-                let certs_trim = profile.certs_dir.trim().to_string();
-                if !certs_trim.is_empty() {
-                    match certs::discover(Path::new(&certs_trim)) {
-                        Ok(resolved) => {
-                            ui.weak(format!(
-                                "CA: {}  ·  Cert: {}  ·  Key: {}",
-                                resolved.ca_name(),
-                                resolved.cert_name(),
-                                resolved.key_name()
-                            ));
-                            if profile.transport == ProfileTransport::Mqtt && profile.port == 1883 {
-                                ui.weak("Tip: AWS IoT typically uses port 8883 with TLS.");
-                            }
-                        }
-                        Err(e) => {
-                            ui.colored_label(Color32::from_rgb(220, 140, 100), e);
-                        }
-                    }
-                }
-                // Last Will — broker publishes on unclean disconnect only.
-                ui.add_space(6.0);
-                egui::CollapsingHeader::new("Last Will")
-                    .id_salt(("profile_lwt", id.as_str()))
-                    .default_open(profile.will_enabled)
-                    .show(ui, |ui| {
-                        hover_tip::attach(
-                            ui.checkbox(&mut profile.will_enabled, "Enable Last Will"),
-                            "Broker publishes this message only if the client disconnects uncleanly (crash / network drop). Graceful Disconnect discards the will.",
-                        );
-                        ui.add_enabled_ui(profile.will_enabled, |ui| {
-                            ui.horizontal(|ui| {
-                                icons::tiny_image(ui, icons, "last_will_security");
-                                ui.label("Topic");
-                                ui.add(
-                                    egui::TextEdit::singleline(&mut profile.will_topic)
-                                        .desired_width(200.0)
-                                        .hint_text("status/topicbench"),
-                                );
-                            });
-                            ui.horizontal(|ui| {
-                                ui.label("Payload");
-                                ui.add(
-                                    egui::TextEdit::singleline(&mut profile.will_payload)
-                                        .desired_width(200.0)
-                                        .hint_text("offline"),
-                                );
-                            });
-                            ui.horizontal(|ui| {
-                                ui.label("QoS");
-                                ui.selectable_value(&mut profile.will_qos, Qos::AtMostOnce, "0");
-                                ui.selectable_value(&mut profile.will_qos, Qos::AtLeastOnce, "1");
-                                ui.selectable_value(&mut profile.will_qos, Qos::ExactlyOnce, "2");
-                                ui.checkbox(&mut profile.will_retain, "Retain");
-                            });
-                        });
-                    });
-                sessions.sync_profile_name(&id, &profile.name);
-            }
-
-            if let Some(session) = sessions.open.get(&id) {
-                ui.weak(&session.detail);
-            }
-
-            // Profile subscriptions (saved with profile; applied on connect)
-            ui.add_space(8.0);
-            ui.separator();
-            icons::section_header_bar(ui, |ui| {
-                icons::section_icon(ui, icons, "subscribe_topic");
-                icons::section_title(ui, "Subscriptions");
-            });
-            ui.weak("Topic filters for this profile (`+` / `#` OK). Saved with the profile.");
-
-            // Topic filters as a Profiles-style list (row strip + centered red trash).
-            let mut remove_at: Option<usize> = None;
-            let sub_row_bg = CHROME_ROW();
-            if let Some(profile) = profiles.profiles.get(&id) {
-                if profile.subscriptions.is_empty() {
-                    ui.weak("No filters yet.");
-                } else {
-                    for (i, sub) in profile.subscriptions.iter().enumerate() {
-                        // Full-height remove hit target; paint delete_red at its center
-                        // (nested layouts left the glyph sitting low in the strip).
-                        let row_h = TINY_ICON + 8.0;
-                        let (rect, _response) = ui.allocate_exact_size(
-                            egui::vec2(ui.available_width(), row_h),
-                            egui::Sense::hover(),
-                        );
-                        ui.painter().rect_filled(rect, 2.0, sub_row_bg);
-                        let btn_w = TINY_ICON + 4.0;
-                        let remove_rect = egui::Rect::from_min_size(
-                            egui::pos2(rect.right() - btn_w - 4.0, rect.top()),
-                            egui::vec2(btn_w, row_h),
-                        );
-                        let text_rect = egui::Rect::from_min_max(
-                            egui::pos2(rect.left() + 8.0, rect.top()),
-                            egui::pos2(remove_rect.left() - 4.0, rect.bottom()),
-                        );
-                        ui.allocate_new_ui(egui::UiBuilder::new().max_rect(text_rect), |ui| {
-                            ui.with_layout(
-                                egui::Layout::left_to_right(egui::Align::Center),
-                                |ui| {
-                                    clipboard::topic_label(ui, sub, status);
-                                },
-                            );
-                        });
-                        let rm_id = ui.id().with(("sub_rm", i));
-                        let rm_resp = hover_tip::attach(
-                            ui.interact(remove_rect, rm_id, Sense::click()),
-                            "Remove filter",
-                        );
-                        if rm_resp.hovered() {
-                            ui.painter().rect_filled(remove_rect, 2.0, CHROME_HOVER());
-                        }
-                        if let Some(tex) = icons.get("delete_red") {
-                            egui::Image::new(tex)
-                                .fit_to_exact_size(egui::vec2(TINY_ICON, TINY_ICON))
-                                .maintain_aspect_ratio(true)
-                                .paint_at(
-                                    ui,
-                                    egui::Rect::from_center_size(
-                                        remove_rect.center(),
-                                        egui::vec2(TINY_ICON, TINY_ICON),
-                                    ),
-                                );
-                        }
-                        if rm_resp.clicked() {
-                            remove_at = Some(i);
-                        }
-                        ui.add_space(2.0);
-                    }
-                }
-            }
-            if let Some(i) = remove_at {
-                if let Some(profile) = profiles.profiles.get_mut(&id) {
-                    if i < profile.subscriptions.len() {
-                        let removed = profile.subscriptions.remove(i);
-                        let filters = profile.subscriptions.clone();
-                        let _ = sessions.apply_profile_subscriptions(&id, &filters);
-                        *status = format!("Removed filter {removed}");
-                    }
-                }
-            }
-
-            ui.horizontal(|ui| {
-                ui.add(
-                    egui::TextEdit::singleline(draft_filter)
-                        .desired_width(160.0)
-                        .hint_text("topic/#")
-                        .font(egui::TextStyle::Monospace),
-                );
-                if ui.button("Add").clicked() {
-                    let filter = draft_filter.trim().to_string();
-                    match profiles.profiles.get_mut(&id) {
-                        Some(profile) => match subscribe::add_subscription(&mut profile.subscriptions, &filter)
-                        {
-                            Ok(()) => {
-                                let filters = profile.subscriptions.clone();
-                                let _ = sessions.apply_profile_subscriptions(&id, &filters);
-                                draft_filter.clear();
-                                *status = format!("Added filter {filter}");
-                            }
-                            Err(e) => *status = e,
-                        },
-                        None => {}
-                    }
-                }
-            });
-
-            ui.add_space(6.0);
-            // Icon on the button: connected → disconnect; otherwise → connect.
-            let live = sessions.open.get(&id).map(|s| s.state);
-            let (label, icon_name) = match live {
-                Some(SessionState::Connected) | Some(SessionState::Connecting) => {
-                    ("Disconnect", "disconnect")
-                }
-                _ => ("Connect", "connect"),
-            };
-            let connect_tip = shortcuts::tip(
-                if label == "Disconnect" {
-                    "Disconnect selected profile"
-                } else {
-                    "Connect selected profile"
-                },
-                "Ctrl+Enter",
+    match selected_id {
+        Some(id) if profiles.profiles.contains_key(&id) => {
+            draw_selected(
+                ui,
+                profiles,
+                sessions,
+                pins,
+                settings,
+                icons,
+                draft_filter,
+                status,
+                ctx,
+                request_editor_focus,
+                show_password,
+                &id,
             );
-            let connect_clicked = if let Some(tex) = icons.get(icon_name) {
+        }
+        _ => {
+            ui.weak("No profile selected.");
+        }
+    }
+
+    // Debounced auto-save of edits.
+    if let Some(since) = profiles.dirty_since {
+        if since.elapsed() >= AUTOSAVE_DELAY {
+            flush_autosave(ctx, profiles, status);
+        } else {
+            ctx.request_repaint_after(AUTOSAVE_DELAY);
+        }
+    }
+
+    draw_delete_confirm(ctx, profiles, sessions, status, show_password);
+    new_clicked
+}
+
+fn draw_delete_confirm(
+    ctx: &egui::Context,
+    profiles: &mut ProfileStore,
+    sessions: &mut SessionManager,
+    status: &mut String,
+    show_password: &mut bool,
+) {
+    let Some(id) = ctx.data_mut(|d| d.get_temp::<String>(delete_pending_id())) else {
+        return;
+    };
+    let Some(name) = profiles.profiles.get(&id).map(|p| p.name.clone()) else {
+        ctx.data_mut(|d| d.remove::<String>(delete_pending_id()));
+        return;
+    };
+    let mut confirm = false;
+    let mut cancel = ctx.input(|i| i.key_pressed(egui::Key::Escape));
+    egui::Window::new("Delete profile?")
+        .collapsible(false)
+        .resizable(false)
+        .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+        .show(ctx, |ui| {
+            ui.label(format!("Delete profile \"{name}\"?"));
+            ui.weak("Its saved password is removed too. This cannot be undone.");
+            ui.add_space(8.0);
+            ui.horizontal(|ui| {
+                if ui
+                    .button(RichText::new("Delete").color(Color32::from_rgb(230, 110, 110)))
+                    .clicked()
+                {
+                    confirm = true;
+                }
+                if ui.button("Cancel").clicked() {
+                    cancel = true;
+                }
+            });
+        });
+    if confirm {
+        ctx.data_mut(|d| d.remove::<String>(delete_pending_id()));
+        sessions.close(&id);
+        if profiles.delete(&id) {
+            *show_password = false;
+            *status = match profiles.save() {
+                Ok(()) => format!("Deleted profile {name}"),
+                Err(e) => format!("Deleted profile {name}; disk: {e}"),
+            };
+        }
+    } else if cancel {
+        ctx.data_mut(|d| d.remove::<String>(delete_pending_id()));
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn draw_selected(
+    ui: &mut egui::Ui,
+    profiles: &mut ProfileStore,
+    sessions: &mut SessionManager,
+    pins: &mut PinBoard,
+    settings: &mut AppSettings,
+    icons: &IconSet,
+    draft_filter: &mut String,
+    status: &mut String,
+    ctx: &egui::Context,
+    request_editor_focus: &mut bool,
+    show_password: &mut bool,
+    id: &str,
+) {
+    let id = id.to_string();
+
+    // Connect / Disconnect sits above the editor.
+    let live = sessions.open.get(&id).map(|s| s.state);
+    let (label, icon_name) = match live {
+        Some(SessionState::Connected) | Some(SessionState::Connecting) => {
+            ("Disconnect", "disconnect")
+        }
+        _ => ("Connect", "connect"),
+    };
+    let connect_tip = shortcuts::tip(
+        if label == "Disconnect" {
+            "Disconnect selected profile"
+        } else {
+            "Connect selected profile"
+        },
+        "Ctrl+Enter",
+    );
+    let btn_size = egui::vec2(ui.available_width(), 30.0);
+    let connect_clicked = if let Some(tex) = icons.get(icon_name) {
+        hover_tip::attach(
+            ui.add(
+                egui::Button::image_and_text(
+                    egui::Image::new(tex).fit_to_exact_size(egui::vec2(TINY_ICON, TINY_ICON)),
+                    label,
+                )
+                .min_size(btn_size),
+            ),
+            connect_tip,
+        )
+        .clicked()
+    } else {
+        hover_tip::attach(
+            ui.add(egui::Button::new(label).min_size(btn_size)),
+            connect_tip,
+        )
+        .clicked()
+    };
+    if connect_clicked {
+        flush_autosave(ctx, profiles, status);
+        let profile = profiles.profiles.get(&id).cloned();
+        if let Some(profile) = profile {
+            let connecting = !matches!(
+                sessions.open.get(&id).map(|s| s.state),
+                Some(SessionState::Connected) | Some(SessionState::Connecting)
+            );
+            let max_pkt = AppSettings::clamp_max_packet(settings.max_packet_bytes);
+            match sessions.toggle(&profile, max_pkt, ctx, pins) {
+                Ok(msg) => {
+                    settings.remember_connected(&id, connecting);
+                    if connecting {
+                        if let Some(p) = profiles.profiles.get(&id) {
+                            pins.restore_from_profile(p);
+                        }
+                    }
+                    *status = msg;
+                }
+                Err(e) => *status = e,
+            }
+        }
+    }
+    if let Some(session) = sessions.open.get(&id) {
+        ui.weak(&session.detail);
+    }
+    ui.add_space(6.0);
+
+    let Some(profile) = profiles.profiles.get_mut(&id) else {
+        return;
+    };
+    // Snapshot to detect edits for auto-save.
+    let before = serde_json::to_string(&*profile).ok();
+
+    collapsible_section(ui, icons, "connection", "broker_server", "Connection", true, |ui| {
+        ui.horizontal(|ui| {
+            hover_tip::attach(
+                ui.label("Name"),
+                shortcuts::tip("Focus profile editor", "Ctrl+E / F2"),
+            );
+            let resp = hover_tip::attach(
+                ui.add(egui::TextEdit::singleline(&mut profile.name).id_salt(PROFILE_NAME_ID)),
+                shortcuts::tip("Focus profile editor", "Ctrl+E / F2"),
+            );
+            if *request_editor_focus {
+                resp.request_focus();
+                *request_editor_focus = false;
+            }
+        });
+        ui.horizontal(|ui| {
+            ui.label("Color");
+            let mut rgb = profile.color_rgb;
+            let color_resp = hover_tip::attach(
+                ui.color_edit_button_srgb(&mut rgb),
+                "Topic tree + sticky labels",
+            );
+            if color_resp.changed() {
+                profile.color_rgb = rgb;
+            }
+        });
+        ui.horizontal(|ui| {
+            ui.label("Host");
+            ui.text_edit_singleline(&mut profile.host);
+        });
+        // Port + MQTT / WebSocket beside it; TLS turns MQTT→MQTTS and WS→WSS.
+        ui.horizontal(|ui| {
+            ui.label("Port");
+            ui.add(egui::DragValue::new(&mut profile.port).range(1..=65535));
+            let prev = profile.transport;
+            egui::ComboBox::from_id_salt(("profile_transport", id.as_str()))
+                .selected_text(profile.transport.label())
+                .width(100.0)
+                .show_ui(ui, |ui| {
+                    ui.selectable_value(&mut profile.transport, ProfileTransport::Mqtt, "MQTT");
+                    ui.selectable_value(
+                        &mut profile.transport,
+                        ProfileTransport::WebSocket,
+                        "WebSocket",
+                    );
+                });
+            if profile.transport != prev {
+                nudge_port_for_transport(profile, prev);
+            }
+            ui.weak(profile.protocol_badge());
+        });
+        if profile.transport == ProfileTransport::WebSocket {
+            ui.horizontal(|ui| {
+                ui.label("WS path");
+                ui.add(
+                    egui::TextEdit::singleline(&mut profile.ws_path)
+                        .desired_width(160.0)
+                        .hint_text("/mqtt"),
+                );
+            });
+        }
+        ui.horizontal(|ui| {
+            ui.label("MQTT");
+            egui::ComboBox::from_id_salt(("profile_mqtt_ver", id.as_str()))
+                .selected_text(profile.mqtt_version.label())
+                .width(72.0)
+                .show_ui(ui, |ui| {
+                    ui.selectable_value(&mut profile.mqtt_version, MqttVersion::V311, "3.1.1");
+                    ui.selectable_value(&mut profile.mqtt_version, MqttVersion::V5, "5");
+                });
+            if profile.mqtt_version.is_v5() {
+                ui.label("Session expiry (s)");
                 hover_tip::attach(
                     ui.add(
-                        egui::Button::image_and_text(
-                            egui::Image::new(tex).fit_to_exact_size(egui::vec2(TINY_ICON, TINY_ICON)),
-                            label,
-                        )
-                        .min_size(egui::vec2(120.0, 28.0)),
+                        egui::DragValue::new(&mut profile.session_expiry_secs)
+                            .range(0..=u32::MAX)
+                            .speed(1.0),
                     ),
-                    connect_tip,
-                )
+                    "MQTT 5 session expiry interval. 0 = expire on disconnect (like clean session).",
+                );
+            }
+        });
+        let tls_label = if profile.transport == ProfileTransport::WebSocket {
+            "Use TLS (WSS)"
+        } else {
+            "Use TLS"
+        };
+        hover_tip::attach(
+            ui.checkbox(&mut profile.use_tls, tls_label),
+            "TLS for MQTT TCP, or WSS for WebSocket (HTTPS-style encryption)",
+        );
+        // Optional certs folder for AWS IoT–style CA + client cert + key.
+        ui.horizontal(|ui| {
+            icons::tiny_image(ui, icons, "tls_security");
+            ui.label("Certs folder");
+            ui.add(
+                egui::TextEdit::singleline(&mut profile.certs_dir)
+                    .desired_width(140.0)
+                    .hint_text("/path/to/certs"),
+            );
+            // Off-thread native dialog — avoid Linux Wayland "app hung" ANR.
+            let certs_dlg = egui::Id::new("dlg_certs_folder");
+            if icons
+                .tiny(ui, "certificates", false, "Choose certs folder")
                 .clicked()
-            } else {
-                hover_tip::attach(
-                    ui.add(egui::Button::new(label).min_size(egui::vec2(120.0, 28.0))),
-                    connect_tip,
-                )
-                .clicked()
-            };
-            if connect_clicked {
-                let profile = profiles.profiles.get(&id).cloned();
-                if let Some(profile) = profile {
-                    let connecting = match sessions.open.get(&id).map(|s| s.state) {
-                        Some(SessionState::Connected) | Some(SessionState::Connecting) => false,
-                        _ => true,
-                    };
-                    let max_pkt =
-                        AppSettings::clamp_max_packet(settings.max_packet_bytes);
-                    match sessions.toggle(&profile, max_pkt, ctx, pins) {
-                        Ok(msg) => {
-                            settings.remember_connected(&id, connecting);
-                            if connecting {
-                                if let Some(p) = profiles.profiles.get(&id) {
-                                    pins.restore_from_profile(p);
-                                }
-                            }
-                            *status = msg;
-                        }
-                        Err(e) => *status = e,
+            {
+                crate::ui::native_dialog::begin_path(
+                    ui.ctx(),
+                    certs_dlg,
+                    crate::ui::native_dialog::PathOp::PickFolder,
+                    |d| d.set_title("MQTT TLS / WSS certs folder"),
+                );
+            }
+            if let Some(Some(path)) = crate::ui::native_dialog::poll_path(ui.ctx(), certs_dlg) {
+                profile.certs_dir = path.display().to_string();
+                profile.use_tls = true;
+            }
+            if !profile.certs_dir.trim().is_empty()
+                && icons
+                    .tiny(ui, "close_red", false, "Clear certs folder")
+                    .clicked()
+            {
+                profile.certs_dir.clear();
+            }
+        });
+        // Show which three files were auto-detected (or the error).
+        let certs_trim = profile.certs_dir.trim().to_string();
+        if !certs_trim.is_empty() {
+            match certs::discover(Path::new(&certs_trim)) {
+                Ok(resolved) => {
+                    ui.weak(format!(
+                        "CA: {}  ·  Cert: {}  ·  Key: {}",
+                        resolved.ca_name(),
+                        resolved.cert_name(),
+                        resolved.key_name()
+                    ));
+                    if profile.transport == ProfileTransport::Mqtt && profile.port == 1883 {
+                        ui.weak("Tip: AWS IoT typically uses port 8883 with TLS.");
                     }
+                }
+                Err(e) => {
+                    ui.colored_label(Color32::from_rgb(220, 140, 100), e);
                 }
             }
         }
+    });
+
+    collapsible_section(ui, icons, "credentials", "user_credentials", "Credentials", false, |ui| {
+        ui.horizontal(|ui| {
+            ui.label("Client ID");
+            // Static ID kept when Unique is off; disabled while UUID overrides CONNECT.
+            let edit = egui::TextEdit::singleline(&mut profile.client_id);
+            if profile.unique_client_id {
+                ui.add_enabled(false, edit);
+            } else {
+                ui.add(edit);
+            }
+        });
+        hover_tip::attach(
+            ui.checkbox(&mut profile.unique_client_id, "Unique client ID (UUID)"),
+            "Use a fresh UUID as the MQTT client ID on each connect. Avoids \"client already connected\" when multiple TopicBench instances share this profile.",
+        );
+        ui.horizontal(|ui| {
+            ui.label("Username");
+            ui.text_edit_singleline(&mut profile.username);
+        });
+        // Password + Show/Hide text toggle (masked by default).
+        ui.horizontal(|ui| {
+            ui.label("Password");
+            ui.add(
+                egui::TextEdit::singleline(&mut profile.password)
+                    .password(!*show_password)
+                    .desired_width(160.0),
+            );
+            let label = if *show_password { "Hide" } else { "Show" };
+            if ui
+                .small_button(label)
+                .on_hover_text(if *show_password {
+                    "Hide password"
+                } else {
+                    "Show password"
+                })
+                .clicked()
+            {
+                *show_password = !*show_password;
+            }
+        });
+    });
+
+    // Last Will — broker publishes on unclean disconnect only.
+    let will_open = profile.will_enabled;
+    collapsible_section(ui, icons, "last_will", "last_will_security", "Last Will", will_open, |ui| {
+        hover_tip::attach(
+            ui.checkbox(&mut profile.will_enabled, "Enable Last Will"),
+            "Broker publishes this message only if the client disconnects uncleanly (crash / network drop). Graceful Disconnect discards the will.",
+        );
+        ui.add_enabled_ui(profile.will_enabled, |ui| {
+            ui.horizontal(|ui| {
+                ui.label("Topic");
+                ui.add(
+                    egui::TextEdit::singleline(&mut profile.will_topic)
+                        .desired_width(200.0)
+                        .hint_text("status/topicbench"),
+                );
+            });
+            ui.horizontal(|ui| {
+                ui.label("Payload");
+                ui.add(
+                    egui::TextEdit::singleline(&mut profile.will_payload)
+                        .desired_width(200.0)
+                        .hint_text("offline"),
+                );
+            });
+            ui.horizontal(|ui| {
+                ui.label("QoS");
+                ui.selectable_value(&mut profile.will_qos, Qos::AtMostOnce, "0");
+                ui.selectable_value(&mut profile.will_qos, Qos::AtLeastOnce, "1");
+                ui.selectable_value(&mut profile.will_qos, Qos::ExactlyOnce, "2");
+                ui.checkbox(&mut profile.will_retain, "Retain");
+            });
+        });
+    });
+
+    // Profile subscriptions (saved with profile; applied on connect)
+    let sub_title = if profile.subscriptions.is_empty() {
+        "Subscriptions".to_string()
     } else {
-        ui.weak("No profile selected.");
+        format!("Subscriptions ({})", profile.subscriptions.len())
+    };
+    collapsible_section(ui, icons, "subscriptions", "subscribe_topic", &sub_title, true, |ui| {
+        ui.weak("Topic filters for this profile (`+` / `#` OK).");
+
+        // Topic filters as a Profiles-style list (row strip + centered red trash).
+        let mut remove_at: Option<usize> = None;
+        let sub_row_bg = CHROME_ROW();
+        if profile.subscriptions.is_empty() {
+            ui.weak("No filters yet.");
+        } else {
+            for (i, sub) in profile.subscriptions.iter().enumerate() {
+                // Full-height remove hit target; paint delete_red at its center.
+                let row_h = TINY_ICON + 8.0;
+                let (rect, _response) = ui.allocate_exact_size(
+                    egui::vec2(ui.available_width(), row_h),
+                    egui::Sense::hover(),
+                );
+                ui.painter().rect_filled(rect, 2.0, sub_row_bg);
+                let btn_w = TINY_ICON + 4.0;
+                let remove_rect = egui::Rect::from_min_size(
+                    egui::pos2(rect.right() - btn_w - 4.0, rect.top()),
+                    egui::vec2(btn_w, row_h),
+                );
+                let text_rect = egui::Rect::from_min_max(
+                    egui::pos2(rect.left() + 8.0, rect.top()),
+                    egui::pos2(remove_rect.left() - 4.0, rect.bottom()),
+                );
+                ui.allocate_new_ui(egui::UiBuilder::new().max_rect(text_rect), |ui| {
+                    ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                        clipboard::topic_label(ui, sub, status);
+                    });
+                });
+                let rm_id = ui.id().with(("sub_rm", i));
+                let rm_resp = hover_tip::attach(
+                    ui.interact(remove_rect, rm_id, Sense::click()),
+                    "Remove filter",
+                );
+                if rm_resp.hovered() {
+                    ui.painter().rect_filled(remove_rect, 2.0, CHROME_HOVER());
+                }
+                if let Some(tex) = icons.get("delete_red") {
+                    egui::Image::new(tex)
+                        .fit_to_exact_size(egui::vec2(TINY_ICON, TINY_ICON))
+                        .maintain_aspect_ratio(true)
+                        .paint_at(
+                            ui,
+                            egui::Rect::from_center_size(
+                                remove_rect.center(),
+                                egui::vec2(TINY_ICON, TINY_ICON),
+                            ),
+                        );
+                }
+                if rm_resp.clicked() {
+                    remove_at = Some(i);
+                }
+                ui.add_space(2.0);
+            }
+        }
+        if let Some(i) = remove_at {
+            if i < profile.subscriptions.len() {
+                let removed = profile.subscriptions.remove(i);
+                let filters = profile.subscriptions.clone();
+                let _ = sessions.apply_profile_subscriptions(&id, &filters);
+                *status = format!("Removed filter {removed}");
+            }
+        }
+
+        ui.horizontal(|ui| {
+            ui.add(
+                egui::TextEdit::singleline(draft_filter)
+                    .desired_width(160.0)
+                    .hint_text("topic/#")
+                    .font(egui::TextStyle::Monospace),
+            );
+            if ui.button("Add").clicked() {
+                let filter = draft_filter.trim().to_string();
+                match subscribe::add_subscription(&mut profile.subscriptions, &filter) {
+                    Ok(()) => {
+                        let filters = profile.subscriptions.clone();
+                        let _ = sessions.apply_profile_subscriptions(&id, &filters);
+                        draft_filter.clear();
+                        *status = format!("Added filter {filter}");
+                    }
+                    Err(e) => *status = e,
+                }
+            }
+        });
+    });
+
+    sessions.sync_profile_name(&id, &profile.name);
+
+    // Mark dirty when anything changed this frame; the debounced tick in `draw` saves.
+    let after = serde_json::to_string(&*profile).ok();
+    if before != after {
+        profiles.dirty_since.get_or_insert_with(Instant::now);
+        ctx.request_repaint_after(AUTOSAVE_DELAY);
     }
 }
 

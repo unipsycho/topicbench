@@ -1,7 +1,7 @@
 //! Progressive ribbon collapse for narrow windows.
 //!
 //! Collapse order (first → last):
-//! App compact → Pro compact (when licensed) → Profiles compact → Panels compact → hide TopicBench title → hide Stats.
+//! App compact → Pro compact (when licensed) → Panels compact → hide TopicBench title → hide Stats.
 //! Expand reverses that order when width returns. Unlicensed builds omit the Pro group entirely.
 
 use crate::ui::icons::{estimate_group_compact_w, estimate_group_full_w, estimate_separator_w};
@@ -18,7 +18,6 @@ pub enum SectionMode {
 /// Planned ribbon density for the current available width.
 #[derive(Clone, Copy, Debug)]
 pub struct RibbonPlan {
-    pub profiles: SectionMode,
     pub panels: SectionMode,
     pub pro: SectionMode,
     pub app: SectionMode,
@@ -30,7 +29,6 @@ pub struct RibbonPlan {
 impl Default for RibbonPlan {
     fn default() -> Self {
         Self {
-            profiles: SectionMode::Full,
             panels: SectionMode::Full,
             pro: SectionMode::Full,
             app: SectionMode::Full,
@@ -70,8 +68,7 @@ pub fn plan_width(
 ) -> f32 {
     let sep = estimate_separator_w();
     let mut w = brand_w(logo_w, title_w, plan.show_title) + sep;
-    w += section_w(plan.profiles, 4, zoom) + sep;
-    w += section_w(plan.panels, 5, zoom) + sep;
+    w += section_w(plan.panels, 6, zoom) + sep;
     if show_pro {
         w += section_w(plan.pro, 3, zoom) + sep;
     }
@@ -86,7 +83,7 @@ pub fn plan_width(
 
 /// Choose the least-collapsed layout that fits `avail_w`.
 ///
-/// Steps: App compact → Pro compact (if shown) → Profiles compact → Panels compact → hide title → hide Stats.
+/// Steps: App compact → Pro compact (if shown) → Panels compact → hide title → hide Stats.
 /// `zoom` is the font-zoom factor (widens full caption cells when > 1).
 /// `show_pro` must match whether the Pro ribbon group is rendered.
 pub fn plan_for_width(
@@ -110,10 +107,6 @@ pub fn plan_for_width(
         if plan_width(logo_w, title_w, stats_w, plan, zoom, show_pro) <= avail_w {
             return plan;
         }
-    }
-    plan.profiles = SectionMode::Compact;
-    if plan_width(logo_w, title_w, stats_w, plan, zoom, show_pro) <= avail_w {
-        return plan;
     }
     plan.panels = SectionMode::Compact;
     if plan_width(logo_w, title_w, stats_w, plan, zoom, show_pro) <= avail_w {
@@ -145,14 +138,12 @@ mod tests {
         let tiny = plan_for_width(100.0, logo, title, stats, z, true);
         assert_eq!(tiny.app, SectionMode::Compact);
         assert_eq!(tiny.pro, SectionMode::Compact);
-        assert_eq!(tiny.profiles, SectionMode::Compact);
         assert_eq!(tiny.panels, SectionMode::Compact);
         assert!(!tiny.show_title);
         assert!(!tiny.show_stats);
 
         // Width that fits all-compact + logo-only + Stats, but not with title.
         let mut p = RibbonPlan {
-            profiles: SectionMode::Compact,
             panels: SectionMode::Compact,
             pro: SectionMode::Compact,
             app: SectionMode::Compact,

@@ -163,6 +163,9 @@ pub struct AppSettings {
     /// Live traffic panel scroll height (px); user-resizable.
     #[serde(default = "default_live_traffic_height")]
     pub live_traffic_height: f32,
+    /// Pro payload history kept per topic for the Payload scrubber (0 = off, max 1000).
+    #[serde(default = "default_payload_history_samples")]
+    pub payload_history_samples: usize,
     /// Search bar text (supports `|` OR terms) — restored on reload.
     #[serde(default)]
     pub search_query: String,
@@ -258,6 +261,13 @@ fn default_live_traffic_height() -> f32 {
     160.0
 }
 
+/// Payload-scrubber depth options (0 = off). Charts keep their own data.
+pub const PAYLOAD_HISTORY_CHOICES: [usize; 6] = [0, 50, 100, 250, 500, 1000];
+
+fn default_payload_history_samples() -> usize {
+    250
+}
+
 fn default_profiles_panel_width() -> f32 {
     320.0
 }
@@ -314,6 +324,7 @@ impl Default for AppSettings {
             show_color_rules: false,
             show_scenarios: false,
             live_traffic_height: default_live_traffic_height(),
+            payload_history_samples: default_payload_history_samples(),
             search_query: String::new(),
             search_scope: SearchScope::All,
             search_apply_to_stickies: true,

@@ -408,6 +408,8 @@ pub struct ProfileStore {
     pub selected_id: Option<String>,
     /// Last save/load message for the status bar.
     pub last_io: String,
+    /// Set when the profile editor changed something; auto-save debounces then clears it.
+    pub dirty_since: Option<std::time::Instant>,
 }
 
 impl ProfileStore {
@@ -611,13 +613,24 @@ impl ProfileStore {
         id
     }
 
-    pub fn delete_selected(&mut self) -> Option<String> {
-        let id = self.selected_id.take()?;
-        self.profiles.remove(&id);
-        self.order.retain(|x| x != &id);
-        secrets::delete_password(&id);
-        self.selected_id = self.order.first().cloned();
-        Some(id)
+    /// Save now if the editor left unsaved changes (used on quit / periodic app save).
+    pub fn flush_if_dirty(&mut self) {
+        if self.dirty_since.take().is_some() {
+            let _ = self.save();
+        }
+    }
+
+    /// Remove a profile by id (and its stored password). Selection falls back to the first row.
+    pub fn delete(&mut self, id: &str) -> bool {
+        if self.profiles.remove(id).is_none() {
+            return false;
+        }
+        self.order.retain(|x| x != id);
+        secrets::delete_password(id);
+        if self.selected_id.as_deref() == Some(id) {
+            self.selected_id = self.order.first().cloned();
+        }
+        true
     }
 
     /// Persist a sticky topic change on a profile and save to disk.

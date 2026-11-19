@@ -502,11 +502,21 @@ fn set_subtree_open(ctx: &egui::Context, profile_id: &str, path: &str, node: &To
     }
 }
 
-fn node_matches(node: &TopicNode, path: &str, filter: &SearchFilter) -> bool {
-    if !filter.is_active() {
+fn node_matches(node: &TopicNode, path: &str, filter: &SearchFilter, now: Instant) -> bool {
+    let window = filter.recent.window();
+    if !filter.is_active() && window.is_none() && !filter.retained_only {
         return true;
     }
-    if filter.matches(path, node.last_payload.as_deref()) {
+    let text_ok = !filter.is_active() || filter.matches(path, node.last_payload.as_deref());
+    let recent_ok = match window {
+        None => true,
+        Some(w) => node
+            .last_update
+            .is_some_and(|t| now.saturating_duration_since(t) <= w),
+    };
+    // Retained = this leaf's last message carried the RETAIN flag (cleared retains drop out).
+    let retained_ok = !filter.retained_only || (node.last_payload.is_some() && node.last_retain);
+    if text_ok && recent_ok && retained_ok {
         return true;
     }
     for (seg, child) in &node.children {
@@ -515,7 +525,7 @@ fn node_matches(node: &TopicNode, path: &str, filter: &SearchFilter) -> bool {
         } else {
             format!("{path}/{seg}")
         };
-        if node_matches(child, &child_path, filter) {
+        if node_matches(child, &child_path, filter, now) {
             return true;
         }
     }
@@ -579,7 +589,7 @@ fn draw_node(
             format!("{path}/{segment}")
         };
         if !reveal_for_scroll(&child_path, profile_id, scroll_to)
-            && !node_matches(child, &child_path, filter)
+            && !node_matches(child, &child_path, filter, now)
         {
             continue;
         }
@@ -1800,5 +1810,69 @@ pub fn draw_import_modal(
     if close && !busy {
         state.open = false;
         state.error = None;
+    }
+}
+
+#[cfg(test)]
+mod recent_filter_tests {
+    use super::*;
+    use crate::mqtt::topic_tree::TopicTree;
+    use crate::ui::search_bar::RecentWindow;
+    use std::time::Duration;
+
+    #[test]
+    fn recent_window_keeps_only_fresh_leaves_and_their_ancestors() {
+        let t0 = Instant::now();
+        let mut tree = TopicTree::default();
+        tree.observe("plant/old", "1", false, t0);
+        let later = t0 + Duration::from_secs(40);
+        tree.observe("plant/new", "2", false, later);
+        tree.observe("lab/stale", "3", false, t0);
+
+        let f = SearchFilter {
+            recent: RecentWindow::S30,
+            ..SearchFilter::default()
+        };
+        let root = &tree.root;
+        assert!(node_matches(&root.children["plant"], "plant", &f, later));
+        assert!(node_matches(&root.children["plant"].children["new"], "plant/new", &f, later));
+        assert!(!node_matches(&root.children["plant"].children["old"], "plant/old", &f, later));
+        assert!(!node_matches(&root.children["lab"], "lab", &f, later));
+        // Any time → everything shows.
+        assert!(node_matches(&root.children["lab"], "lab", &SearchFilter::default(), later));
+    }
+
+    #[test]
+    fn recent_combines_with_text_search() {
+        let t0 = Instant::now();
+        let mut tree = TopicTree::default();
+        tree.observe("a/temp", "1", false, t0);
+        tree.observe("a/hum", "2", false, t0);
+        let f = SearchFilter {
+            query: "temp".into(),
+            recent: RecentWindow::S5,
+            ..SearchFilter::default()
+        };
+        let a = &tree.root.children["a"];
+        assert!(node_matches(&a.children["temp"], "a/temp", &f, t0));
+        assert!(!node_matches(&a.children["hum"], "a/hum", &f, t0));
+    }
+
+    #[test]
+    fn retained_only_shows_retained_leaves() {
+        let t0 = Instant::now();
+        let mut tree = TopicTree::default();
+        tree.observe("a/kept", "1", true, t0);
+        tree.observe("a/live", "2", false, t0);
+        tree.observe("b/live", "3", false, t0);
+        let f = SearchFilter {
+            retained_only: true,
+            ..SearchFilter::default()
+        };
+        let r = &tree.root;
+        assert!(node_matches(&r.children["a"], "a", &f, t0));
+        assert!(node_matches(&r.children["a"].children["kept"], "a/kept", &f, t0));
+        assert!(!node_matches(&r.children["a"].children["live"], "a/live", &f, t0));
+        assert!(!node_matches(&r.children["b"], "b", &f, t0));
     }
 }
