@@ -656,8 +656,9 @@ fn merge_payload_history(
     history_fwd: Option<&HistoryForwarder>,
 ) -> Vec<(Instant, String)> {
     let mut out: Vec<(Instant, String)> = short.iter().cloned().collect();
+    let limit = history_client::payload_history_limit();
     if let Some(fwd) = history_fwd {
-        if pro::has(Entitlement::HistoryScrubber) {
+        if limit > 0 && pro::has(Entitlement::HistoryScrubber) {
             let series_id = PinBoard::key(profile_id, topic);
             let (from_ms, to_ms) = if let (Some((t0, _)), Some((t1, _))) =
                 (short.front(), short.back())
@@ -670,7 +671,7 @@ fn merge_payload_history(
                 let now = history_client::instant_to_t_ms(Instant::now());
                 (now.saturating_sub(86_400_000), now)
             };
-            for s in fwd.query_cached(&series_id, from_ms, to_ms, 8000) {
+            for s in fwd.query_cached(&series_id, from_ms, to_ms, limit) {
                 let payload = if s.payload.is_empty() {
                     s.v.map(|v| v.to_string()).unwrap_or_default()
                 } else {
@@ -685,6 +686,10 @@ fn merge_payload_history(
     }
     out.sort_by(|a, b| a.0.cmp(&b.0));
     out.dedup_by(|a, b| a.0 == b.0 && a.1 == b.1);
+    // Honour the configured depth (0 = off → just the short ring).
+    if limit > 0 && out.len() > limit {
+        out.drain(..out.len() - limit);
+    }
     out
 }
 

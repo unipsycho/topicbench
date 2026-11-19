@@ -439,7 +439,7 @@ fn paint_bookmarks_body(
                     ui.painter().rect_stroke(
                         row_rect,
                         2.0,
-                        egui::Stroke::new(1.0, CHROME_ACCENT_BORDER()),
+                        egui::Stroke::new(1.0_f32, CHROME_ACCENT_BORDER()),
                         egui::StrokeKind::Inside,
                     );
                 }

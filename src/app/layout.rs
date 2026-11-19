@@ -5,7 +5,7 @@ use crate::mqtt::publish::PublishFromTree;
 use crate::mqtt::session::SessionState;
 use crate::ui::icons::{
     self, ribbon_compact_columns, CHROME_ACCENT_BORDER, CHROME_BG, CHROME_CAPTION, CHROME_MUTED,
-    CHROME_SEP, CHROME_TEXT, RIBBON_ROW_H, TINT_APP, TINT_PANELS, TINT_PRO, TINT_PROFILES,
+    CHROME_SEP, CHROME_TEXT, RIBBON_ROW_H, TINT_APP, TINT_PANELS, TINT_PRO,
 };
 use crate::ui::ribbon_layout::{self, SectionMode};
 use crate::ui::shortcuts;
@@ -40,113 +40,12 @@ pub(super) struct TopChromeRects {
 }
 
 impl MqttMonitorApp {
-    /// Profiles ribbon group (full captions or compact 2-high icons).
-    fn draw_ribbon_profiles(&mut self, ui: &mut egui::Ui, mode: SectionMode) {
-        icons::ribbon_group(ui, "Profiles", TINT_PROFILES(), |ui| {
-            let tip_new = shortcuts::tip("New profile", "Ctrl+N");
-            let tip_save = shortcuts::tip("Save profiles", "Ctrl+S");
-            let tip_del = shortcuts::tip("Delete selected profile", "Delete / Ctrl+Backspace");
-            let tip_panel = shortcuts::tip("Show or hide the profiles side panel", "Ctrl+Shift+P");
-            if mode == SectionMode::Full {
-                if self
-                    .icons
-                    .command(ui, "profile_add", "New", false, &tip_new)
-                    .clicked()
-                {
-                    self.action_new_profile();
-                }
-                if self
-                    .icons
-                    .command(ui, "save", "Save", false, &tip_save)
-                    .clicked()
-                {
-                    self.action_save_profiles();
-                }
-                if self
-                    .icons
-                    .command_enabled(
-                        ui,
-                        "delete",
-                        "Delete",
-                        false,
-                        &tip_del,
-                        self.panels.profiles,
-                    )
-                    .clicked()
-                {
-                    if let Some(id) = self.profiles.delete_selected() {
-                        self.sessions.close(&id);
-                        self.status = format!("Deleted profile {id}");
-                    }
-                }
-                if self
-                    .icons
-                    .command(ui, "panel_docked", "Profiles", self.panels.profiles, &tip_panel)
-                    .clicked()
-                {
-                    self.panels.profiles = !self.panels.profiles;
-                    self.profiles_auto_opened = false;
-                    self.persist_panels();
-                }
-            } else {
-                let mut clicks = [false; 4];
-                ribbon_compact_columns(ui, 4, |i, ui| {
-                    clicks[i] = match i {
-                        0 => self
-                            .icons
-                            .command_compact(ui, "profile_add", false, &tip_new)
-                            .clicked(),
-                        1 => self
-                            .icons
-                            .command_compact(ui, "save", false, &tip_save)
-                            .clicked(),
-                        2 => self
-                            .icons
-                            .command_compact_enabled(
-                                ui,
-                                "delete",
-                                false,
-                                &tip_del,
-                                self.panels.profiles,
-                            )
-                            .clicked(),
-                        _ => self
-                            .icons
-                            .command_compact(
-                                ui,
-                                "panel_docked",
-                                self.panels.profiles,
-                                &tip_panel,
-                            )
-                            .clicked(),
-                    };
-                });
-                if clicks[0] {
-                    self.action_new_profile();
-                }
-                if clicks[1] {
-                    self.action_save_profiles();
-                }
-                if clicks[2] {
-                    if let Some(id) = self.profiles.delete_selected() {
-                        self.sessions.close(&id);
-                        self.status = format!("Deleted profile {id}");
-                    }
-                }
-                if clicks[3] {
-                    self.panels.profiles = !self.panels.profiles;
-                    self.profiles_auto_opened = false;
-                    self.persist_panels();
-                }
-            }
-        });
-    }
-
     /// Panels ribbon group (full or compact).
     /// Order mirrors layout: center panels left, then Payload / Publish on the right.
     fn draw_ribbon_panels(&mut self, ui: &mut egui::Ui, mode: SectionMode) {
         icons::ribbon_group(ui, "Panels", TINT_PANELS(), |ui| {
             let tips = [
+                shortcuts::tip("Show or hide the profiles side panel", "Ctrl+Shift+P"),
                 shortcuts::tip("Live traffic", "Ctrl+Shift+T"),
                 shortcuts::tip("Sticky topics", "Ctrl+Shift+K"),
                 shortcuts::tip("Topic tree", "Ctrl+Shift+R"),
@@ -154,30 +53,32 @@ impl MqttMonitorApp {
                 shortcuts::tip("Publish panel", "Ctrl+Shift+U"),
             ];
             let icons_names = [
+                "profile",
                 "traffic",
                 "sticky_topic",
                 "topic_tree",
                 "panel_undock",
                 "publish_message",
             ];
-            let labels = ["Traffic", "Stickies", "Tree", "Payload", "Publish"];
+            let labels = ["Profiles", "Traffic", "Stickies", "Tree", "Payload", "Publish"];
             let selected = [
+                self.panels.profiles,
                 self.panels.live_traffic,
                 self.panels.stickies,
                 self.panels.topic_tree,
                 self.panels.payload,
                 self.panels.publish,
             ];
-            let mut clicks = [false; 5];
+            let mut clicks = [false; 6];
             if mode == SectionMode::Full {
-                for i in 0..5 {
+                for i in 0..6 {
                     clicks[i] = self
                         .icons
                         .command(ui, icons_names[i], labels[i], selected[i], &tips[i])
                         .clicked();
                 }
             } else {
-                ribbon_compact_columns(ui, 5, |i, ui| {
+                ribbon_compact_columns(ui, 6, |i, ui| {
                     clicks[i] = self
                         .icons
                         .command_compact(ui, icons_names[i], selected[i], &tips[i])
@@ -185,22 +86,26 @@ impl MqttMonitorApp {
                 });
             }
             if clicks[0] {
-                self.panels.live_traffic = !self.panels.live_traffic;
+                self.panels.profiles = !self.panels.profiles;
                 self.persist_panels();
             }
             if clicks[1] {
-                self.panels.stickies = !self.panels.stickies;
+                self.panels.live_traffic = !self.panels.live_traffic;
                 self.persist_panels();
             }
             if clicks[2] {
-                self.panels.topic_tree = !self.panels.topic_tree;
+                self.panels.stickies = !self.panels.stickies;
                 self.persist_panels();
             }
             if clicks[3] {
-                self.panels.payload = !self.panels.payload;
+                self.panels.topic_tree = !self.panels.topic_tree;
                 self.persist_panels();
             }
             if clicks[4] {
+                self.panels.payload = !self.panels.payload;
+                self.persist_panels();
+            }
+            if clicks[5] {
                 self.panels.publish = !self.panels.publish;
                 self.persist_panels();
             }
@@ -225,7 +130,7 @@ impl MqttMonitorApp {
                 "color_rules",
                 "clipboard_checklist",
             ];
-            let labels = ["Simulate", "Book-\nmarks", "Color\nRules", "Scen-\narios"];
+            let labels = ["Simulate", "Book-\nmarks", "Color\nRules", "Scenarios"];
             let tips = [tip.as_str(), bm_tip.as_str(), cr_tip.as_str(), sc_tip];
             let selected = [
                 self.simulation_open,
@@ -503,8 +408,6 @@ impl MqttMonitorApp {
                 );
 
                 icons::ribbon_separator(ui);
-                self.draw_ribbon_profiles(ui, plan.profiles);
-                icons::ribbon_separator(ui);
                 self.draw_ribbon_panels(ui, plan.panels);
                 if show_pro {
                     icons::ribbon_separator(ui);
@@ -666,11 +569,20 @@ impl MqttMonitorApp {
                         // Keep ScrollArea's viewport clip — do not widen to content max_rect.
                         if self.panels.live_traffic {
                             let mut traffic_h = self.settings.live_traffic_height;
+                            // Topics take the selected profile's accent (like the topic tree).
+                            let traffic_topic_color = self
+                                .profiles
+                                .selected_id
+                                .as_ref()
+                                .and_then(|id| self.profiles.profiles.get(id))
+                                .map(|p| p.color())
+                                .unwrap_or_else(crate::ui::json_view::topic_path_color);
                             traffic_panel::draw(
                                 ui,
                                 &mut self.sessions,
                                 &self.profiles.selected_id,
                                 &self.search,
+                                traffic_topic_color,
                                 &self.icons,
                                 &mut self.traffic_view,
                                 &mut traffic_h,
@@ -789,20 +701,21 @@ impl MqttMonitorApp {
         if let Some(rect) = profiles_rect {
             side_panel_overlay(ctx, "profiles_front", rect, SideResizeEdge::Right, |ui| {
                 egui::ScrollArea::vertical().show(ui, |ui| {
-                    profiles::draw(
+                    if profiles::draw(
                         ui,
                         &mut self.profiles,
                         &mut self.sessions,
                         &mut self.pins,
                         &mut self.settings,
-                        &mut self.profile_filter,
                         &self.icons,
                         &mut self.sub_draft,
                         &mut self.status,
                         ctx,
                         &mut self.focus_profile_editor,
                         &mut self.show_profile_password,
-                    );
+                    ) {
+                        self.action_new_profile();
+                    }
                 });
             });
             // Grip owns desired width — never sync from layout-clamped rect.
