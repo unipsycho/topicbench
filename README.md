@@ -143,7 +143,7 @@ cargo run --release
 Profiles: `~/.config/topicbench/profiles.json`  
 Settings: `~/.config/topicbench/settings.json`
 
-**Windows:** native `cargo build --release` on Windows works; the Windows icon is embedded via `winres` (MinGW `windres` when cross-compiling from Linux).
+**Windows:** native `cargo build --release` on Windows works; the Windows icon is embedded via `winres` (MinGW `windres` when cross-compiling from Linux — see `scripts/build-windows-mingw.sh` and `packaging/README.md`).
 
 ## License
 
