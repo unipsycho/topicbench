@@ -298,6 +298,29 @@ fn draw_pro_tab(ui: &mut egui::Ui, draft: &mut AppSettings, theme: ThemeSection<
     }
 
     ui.add_space(14.0);
+    ui.strong("Payload history");
+    ui.horizontal(|ui| {
+        ui.label("Samples per topic");
+        let label = |n: usize| {
+            if n == 0 {
+                "Off (recent only)".to_string()
+            } else {
+                n.to_string()
+            }
+        };
+        egui::ComboBox::from_id_salt("payload_history_samples")
+            .selected_text(label(draft.payload_history_samples))
+            .show_ui(ui, |ui| {
+                for n in crate::mqtt::settings::PAYLOAD_HISTORY_CHOICES {
+                    ui.selectable_value(&mut draft.payload_history_samples, n, label(n));
+                }
+            });
+    });
+    ui.weak(
+        "How many past payloads the Payload scrubber can step back through (sticky topics). \
+         Lower = less memory. Charts keep their own data.",
+    );
+    ui.add_space(14.0);
     ui.hyperlink_to(
         RichText::new("Learn about TopicBench Pro").color(CHROME_ACCENT_BORDER()),
         TOPICBENCH_PRO_URL,

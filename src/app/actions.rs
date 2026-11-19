@@ -63,11 +63,10 @@ impl MqttMonitorApp {
         seed_slot.unwrap_or(default)
     }
 
-    /// New profile: auto-show Profiles if hidden; remember for Save auto-close.
+    /// New profile: show the Profiles panel if hidden (edits auto-save, so it stays open).
     pub(super) fn action_new_profile(&mut self) {
         if !self.panels.profiles {
             self.panels.profiles = true;
-            self.profiles_auto_opened = true;
             self.persist_panels();
         }
         let id = self.profiles.add_new();
@@ -76,16 +75,12 @@ impl MqttMonitorApp {
         self.focus_profile_editor = true;
     }
 
-    /// Save profiles; if New auto-opened the panel, close it again.
+    /// Ctrl+S: save profiles immediately (edits also auto-save shortly after each change).
     pub(super) fn action_save_profiles(&mut self) {
+        self.profiles.dirty_since = None;
         match self.profiles.save() {
             Ok(()) => self.status = self.profiles.last_io.clone(),
             Err(e) => self.status = e,
-        }
-        if self.profiles_auto_opened {
-            self.panels.profiles = false;
-            self.profiles_auto_opened = false;
-            self.persist_panels();
         }
     }
 
@@ -191,9 +186,8 @@ impl MqttMonitorApp {
                         }
                     } else if self.panels.profiles {
                         // Delete profile only when Profiles panel is visible.
-                        if let Some(id) = self.profiles.delete_selected() {
-                            self.sessions.close(&id);
-                            self.status = format!("Deleted profile {id}");
+                        if let Some(id) = self.profiles.selected_id.clone() {
+                            crate::ui::profiles::request_delete(ctx, &id);
                         }
                     }
                 }
@@ -202,11 +196,9 @@ impl MqttMonitorApp {
                 }
                 ShortcutAction::ShowProfiles => {
                     self.panels.profiles = true;
-                    self.profiles_auto_opened = false;
                 }
                 ShortcutAction::FocusProfileEditor => {
                     self.panels.profiles = true;
-                    self.profiles_auto_opened = false;
                     self.focus_profile_editor = true;
                 }
                 ShortcutAction::ProfileSelectPrev => {

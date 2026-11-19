@@ -79,6 +79,8 @@ impl SessionState {
 pub struct TrafficLine {
     pub topic: String,
     pub payload: String,
+    /// Local arrival time (shown as HH:MM:SS in Live traffic).
+    pub at: chrono::DateTime<chrono::Local>,
 }
 
 pub struct Session {
@@ -99,7 +101,7 @@ pub struct Session {
     pub topic_tree: TopicTree,
 }
 
-const TRAFFIC_CAP: usize = 80;
+const TRAFFIC_CAP: usize = 500;
 
 /// Latest payload for one topic (background inbox coalesces floods here).
 struct CoalescedMsg {
@@ -478,7 +480,7 @@ impl SessionManager {
             ctx.clone(),
             self.ui_focused.clone(),
         )?;
-        let mut subscriptions = if profile.subscriptions.is_empty() {
+        let subscriptions = if profile.subscriptions.is_empty() {
             self.open
                 .get(&profile.id)
                 .map(|s| s.subscriptions.clone())
@@ -739,6 +741,7 @@ impl SessionManager {
                 session.traffic.push_front(TrafficLine {
                     topic: topic.clone(),
                     payload: msg.payload.clone(),
+                    at: chrono::Local::now(),
                 });
                 while session.traffic.len() > TRAFFIC_CAP {
                     session.traffic.pop_back();

@@ -42,6 +42,8 @@ pub struct TopicNode {
     pub last_props: MqttMsgProps,
     pub message_count: u64,
     pub flash_until: Option<Instant>,
+    /// When this leaf last received a message (drives the “updated within …” tree filter).
+    pub last_update: Option<Instant>,
     /// Timed full payloads for Payload scrub (oldest → newest).
     pub payload_history: VecDeque<(Instant, String)>,
 }
@@ -91,6 +93,7 @@ impl TopicNode {
                 node.last_props = props.cloned().unwrap_or_default();
                 node.message_count = node.message_count.saturating_add(n);
                 node.flash_until = Some(flash);
+                node.last_update = Some(now);
             }
         }
     }

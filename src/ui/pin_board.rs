@@ -532,7 +532,7 @@ fn draw_sticky(
                 ui.painter().hline(
                     drop_response.rect.x_range(),
                     y,
-                    egui::Stroke::new(2.0, CHROME_ACCENT_BORDER()),
+                    egui::Stroke::new(2.0_f32, CHROME_ACCENT_BORDER()),
                 );
                 ui.painter().rect_filled(
                     drop_response.rect,

@@ -29,6 +29,19 @@ const DEEP_FRESH: Duration = Duration::from_secs(1);
 const META_FRESH: Duration = Duration::from_secs(2);
 const QUERY_BACKOFF: Duration = Duration::from_secs(2);
 
+/// Payload-scrubber depth per topic (0 = off). Mirrors `AppSettings::payload_history_samples`;
+/// kept in an atomic so the paint path and forwarder need no extra plumbing.
+static PAYLOAD_HISTORY_LIMIT: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(250);
+
+pub fn set_payload_history_limit(n: usize) {
+    PAYLOAD_HISTORY_LIMIT.store(n.min(1000), std::sync::atomic::Ordering::Relaxed);
+}
+
+pub fn payload_history_limit() -> usize {
+    PAYLOAD_HISTORY_LIMIT.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 /// One sample to append (matches Pro `AppendItem`).
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct FwdSample {
@@ -44,6 +57,9 @@ pub struct FwdSample {
     pub payload: String,
     #[serde(default)]
     pub v: Option<f64>,
+    /// Max samples Pro keeps for this series (older drop first).
+    #[serde(default)]
+    pub cap: usize,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

@@ -11,7 +11,6 @@ use crate::mqtt::session::SessionManager;
 use crate::mqtt::settings::AppSettings;
 use crate::mqtt::window_geom::WinGeom;
 use crate::ui::icons::{IconSet, CHROME_BG};
-use crate::ui::profiles::ProfileListFilter;
 use crate::ui::search_bar::SearchFilter;
 use crate::ui::payload_panel::{PayloadSearch, PoppedPayload};
 use crate::ui::flash;
@@ -62,7 +61,6 @@ pub struct MqttMonitorApp {
     pub publish: PublishDraft,
     pub publish_history: PublishHistory,
     pub settings: AppSettings,
-    pub profile_filter: ProfileListFilter,
     pub search: SearchFilter,
     /// Draft topic filter while editing a profile’s subscriptions.
     pub sub_draft: String,
@@ -86,7 +84,6 @@ pub struct MqttMonitorApp {
     focus_search: bool,
     focus_profile_editor: bool,
     /// Profiles panel was opened by New (auto-close on next Save).
-    profiles_auto_opened: bool,
     auto_reconnect_done: bool,
     /// Find-in-payload query / match cursor for the Payload side panel.
     payload_search: PayloadSearch,
@@ -274,7 +271,6 @@ impl MqttMonitorApp {
             publish: PublishDraft::default(),
             publish_history: PublishHistory::load(),
             settings,
-            profile_filter: ProfileListFilter::All,
             search,
             sub_draft: String::new(),
             status: status.clone(),
@@ -291,7 +287,6 @@ impl MqttMonitorApp {
             about_opened_at: None,
             focus_search: false,
             focus_profile_editor: false,
-            profiles_auto_opened: false,
             auto_reconnect_done: false,
             payload_search: PayloadSearch::default(),
             show_profile_password: false,
@@ -384,9 +379,12 @@ impl eframe::App for MqttMonitorApp {
             self.status = msg;
         }
         // Forward topic payloads to Pro deep store (non-blocking; drop if down).
-        if let Some(fwd) = self.history_fwd.as_ref() {
+        crate::pro::history_client::set_payload_history_limit(self.settings.payload_history_samples);
+        let hist_cap = crate::pro::history_client::payload_history_limit();
+        if let (Some(fwd), true) = (self.history_fwd.as_ref(), hist_cap > 0) {
             for s in self.pins.drain_history_fwd() {
                 fwd.try_enqueue(crate::pro::history_client::FwdSample {
+                    cap: hist_cap,
                     series_id: s.series_id,
                     profile: s.profile,
                     topic: s.topic,
@@ -626,6 +624,8 @@ impl eframe::App for MqttMonitorApp {
         // Flush panel / pop-out / geometry into settings.json on eframe autosave + quit.
         self.geometry_dirty = false;
         self.persist_panels();
+        // Profile edits are debounced in the editor — don't lose them on quit / periodic save.
+        self.profiles.flush_if_dirty();
         self.combined_boards.save_session_if_dirty();
     }
 }

@@ -54,7 +54,7 @@ const CMD_ICON: f32 = 36.0;
 /// Section header icons (Profiles / Topic tree / …) — same visual weight as ribbon CMD.
 pub const SECTION_ICON: f32 = 36.0;
 /// Slightly tighter horizontal; taller cell for caption bottom clearance.
-const CMD_W: f32 = 52.0;
+const CMD_W: f32 = 58.0;
 pub const CMD_H: f32 = 64.0;
 /// Shared ribbon row outer height: command cells + group frame pad (3+3).
 /// Brand, Profiles, Panels, App, Stats, and separators all use this exact height.
@@ -174,7 +174,7 @@ pub fn STATUS_BG() -> Color32 {
 pub fn CHROME_COMBO_BG() -> Color32 {
     chrome().status
 }
-#[allow(non_snake_case)]
+#[allow(non_snake_case, dead_code)]
 #[inline]
 pub fn TINT_PROFILES() -> Color32 {
     chrome().tint_profiles

@@ -192,9 +192,9 @@ fn paint_body(
             split_rect.y_range(),
             egui::Stroke::new(
                 if split_resp.hovered() || split_resp.dragged() {
-                    2.0
+                    2.0_f32
                 } else {
-                    1.0
+                    1.0_f32
                 },
                 if split_resp.hovered() || split_resp.dragged() {
                     CHROME_ACCENT_BORDER()
@@ -558,7 +558,7 @@ fn paint_group_header(
         ui.painter().rect_stroke(
             rect,
             4.0,
-            egui::Stroke::new(1.0, CHROME_ACCENT_BORDER()),
+            egui::Stroke::new(1.0_f32, CHROME_ACCENT_BORDER()),
             egui::StrokeKind::Inside,
         );
     }
@@ -659,7 +659,7 @@ fn paint_group_header(
         ui.painter().rect_stroke(
             rect,
             4.0,
-            egui::Stroke::new(2.0, CHROME_ACCENT_BORDER()),
+            egui::Stroke::new(2.0_f32, CHROME_ACCENT_BORDER()),
             egui::StrokeKind::Inside,
         );
         let _ = payload;
@@ -680,7 +680,7 @@ fn paint_group_header(
                 ui.painter().hline(
                     rect.x_range(),
                     y,
-                    egui::Stroke::new(2.0, CHROME_ACCENT_BORDER()),
+                    egui::Stroke::new(2.0_f32, CHROME_ACCENT_BORDER()),
                 );
             }
         }
@@ -742,7 +742,7 @@ fn paint_scenario_row(
         ui.painter().rect_stroke(
             chip,
             4.0,
-            egui::Stroke::new(1.0, CHROME_ACCENT_BORDER()),
+            egui::Stroke::new(1.0_f32, CHROME_ACCENT_BORDER()),
             egui::StrokeKind::Inside,
         );
     }
@@ -834,7 +834,7 @@ fn paint_scenario_row(
             ui.painter().hline(
                 chip.x_range(),
                 y,
-                egui::Stroke::new(2.0, CHROME_ACCENT_BORDER()),
+                egui::Stroke::new(2.0_f32, CHROME_ACCENT_BORDER()),
             );
         }
     }
@@ -1278,7 +1278,7 @@ fn paint_right(
                     ui.painter().rect_stroke(
                         row_rect,
                         4.0,
-                        egui::Stroke::new(1.0, CHROME_ACCENT_BORDER()),
+                        egui::Stroke::new(1.0_f32, CHROME_ACCENT_BORDER()),
                         egui::StrokeKind::Inside,
                     );
                 }
@@ -1399,7 +1399,7 @@ fn paint_right(
                         ui.painter().hline(
                             drop_response.rect.x_range(),
                             y,
-                            egui::Stroke::new(2.0, CHROME_ACCENT_BORDER()),
+                            egui::Stroke::new(2.0_f32, CHROME_ACCENT_BORDER()),
                         );
                     }
                 }
@@ -1686,7 +1686,7 @@ fn paint_disclosure_chevron(ui: &mut egui::Ui, rect: egui::Rect, open: bool, hov
     } else {
         CHROME_MUTED()
     };
-    let stroke = egui::Stroke::new(1.6, color);
+    let stroke = egui::Stroke::new(1.6_f32, color);
     let c = rect.center();
     let s = 4.0_f32;
     let painter = ui.painter();

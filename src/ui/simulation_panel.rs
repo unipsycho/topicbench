@@ -917,7 +917,7 @@ fn handle_marquee(
                     rect,
                     2.0,
                     Color32::from_rgba_unmultiplied(80, 140, 200, 40),
-                    egui::Stroke::new(1.0, CHROME_ACCENT_BORDER()),
+                    egui::Stroke::new(1.0_f32, CHROME_ACCENT_BORDER()),
                     egui::StrokeKind::Outside,
                 );
                 let mut hit = m.base.clone();
@@ -1745,7 +1745,7 @@ fn edit_generator_inline(
                 ui.painter().rect_stroke(
                     resp.rect.expand(1.0),
                     3.0,
-                    egui::Stroke::new(1.5, border),
+                    egui::Stroke::new(1.5_f32, border),
                     egui::StrokeKind::Outside,
                 );
                 if !ok {
@@ -2049,7 +2049,7 @@ fn draw_open_playback_modal(
         .show(ui.ctx(), |ui| {
             egui::Frame::NONE
                 .fill(Color32::from_rgb(36, 38, 44))
-                .stroke(egui::Stroke::new(1.0, Color32::from_rgb(90, 96, 110)))
+                .stroke(egui::Stroke::new(1.0_f32, Color32::from_rgb(90, 96, 110)))
                 .corner_radius(8.0)
                 .inner_margin(egui::Margin::symmetric(16, 14))
                 .show(ui, |ui| {
