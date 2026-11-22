@@ -1232,30 +1232,17 @@ fn draw_topic_cell(ui: &mut egui::Ui, draft: &mut SimRow, dirty: &mut bool, widt
         egui::Layout::left_to_right(egui::Align::Center),
         |ui| {
             ui.set_min_width(width);
-            // Keep keystrokes in a focus buffer; upsert only on blur/Enter.
-            // A running sim restarts on every upsert and publishes immediately, so
-            // per-character dirty would drip partial topic roots into the tree.
-            let buf_id = egui::Id::new(("sim_topic_buf", draft.id.as_str()));
-            let mut text = ui
-                .ctx()
-                .data(|d| d.get_temp::<String>(buf_id))
-                .unwrap_or_else(|| draft.topic.clone());
-            let resp = ui.add(
-                egui::TextEdit::singleline(&mut text)
-                    .id_salt(("sim_topic", draft.id.as_str()))
-                    .desired_width((width - 6.0).max(40.0))
-                    .hint_text("topic"),
-            );
-            if resp.has_focus() {
-                ui.ctx()
-                    .data_mut(|d| d.insert_temp(buf_id, text.clone()));
-            }
-            if resp.lost_focus() {
-                ui.ctx().data_mut(|d| d.remove_temp::<String>(buf_id));
-                if text != draft.topic {
-                    draft.topic = text;
-                    *dirty = true;
-                }
+            // Keystrokes stay in a focus buffer; upsert only after confirmed blur
+            // or Enter. One-frame pending confirm ignores focus flicker that made
+            // #41 still drip partial roots (tlab → tolab → …) while typing.
+            if crate::ui::commit_text::commit_on_blur_text_edit(
+                ui,
+                ("sim_topic", draft.id.as_str()),
+                &mut draft.topic,
+                (width - 6.0).max(40.0),
+                "topic",
+            ) {
+                *dirty = true;
             }
         },
     );
