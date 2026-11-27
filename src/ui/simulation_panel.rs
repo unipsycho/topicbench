@@ -10,7 +10,7 @@ use crate::ui::icons::{
     self, IconSet, CHROME_ACCENT_BORDER, CHROME_ACCENT_SOFT, CHROME_BG, CHROME_CAPTION,
     CHROME_MUTED, CHROME_ROW, CHROME_TEXT, TINY_ICON,
 };
-use eframe::egui::{self, Color32, Pos2, RichText, Vec2, ViewportBuilder, ViewportClass};
+use eframe::egui::{self, Color32, Pos2, RichText, Vec2};
 use serde_json::{json, Value};
 use std::collections::HashSet;
 
@@ -198,64 +198,49 @@ pub fn draw(
 
     let mut close = false;
     const MIN: [f32; 2] = [900.0, 220.0];
-    // OS window (Payload undock pattern) — draggable outside the main TopicBench frame.
-    // Seed is frozen for this open session so patch does not fight live resize.
-    ctx.show_viewport_immediate(
-        egui::ViewportId::from_hash_of("topicbench_simulation_vp"),
-        builder_seed
-            .apply(ViewportBuilder::default().with_title("Simulation"), MIN)
-            .with_min_inner_size(MIN),
-        |ctx, class| {
-            // Same chords as global — viewport focus does not reach main handle_shortcuts.
+    // In-app window by default, with a header pop-out to a native OS window.
+    let spec = crate::ui::panel_window::PanelSpec {
+        key: "simulation",
+        title: "Simulation",
+        subtitle: "Generators and CSV playback",
+        glyph: "data_table",
+        min: MIN,
+        default_size: [1100.0, 360.0],
+    };
+    crate::ui::panel_window::show(
+        ctx,
+        &spec,
+        icons,
+        builder_seed,
+        saved_geom,
+        geom_dirty,
+        &mut close,
+        |ui| {
+            // Same chords as global: a popped-out window's focus does not reach main handle_shortcuts.
             if licensed {
-                match consume_transport_keys(ctx) {
+                match consume_transport_keys(ui.ctx()) {
                     Some("start") => action_start(client, status),
                     Some("stop") => action_stop(client, status),
                     _ => {}
                 }
                 // Delete/arrows while the floating Simulation window is focused.
-                handle_sim_list_keys(ctx, client, status);
+                handle_sim_list_keys(ui.ctx(), client, status);
             }
-            let mut paint = |ui: &mut egui::Ui| {
-                // Profiles Body/Small fonts + blue checkbox/slider accents.
-                icons::apply_pro_panel_chrome(ui);
-                header_bar(ui, icons, floating, open, client);
-                ui.separator();
-                // Viewport owns both axes — sheet scrolls inside.
-                body(ui, licensed, client, sessions, profiles, icons, status, true);
-            };
-            match class {
-                ViewportClass::Embedded => {
-                    // Backend cannot spawn real windows — fall back to egui Window.
-                    egui::Window::new("Simulation")
-                        .id(egui::Id::new("topicbench_simulation_win"))
-                        .title_bar(false)
-                        .collapsible(false)
-                        .default_size([1100.0, 360.0])
-                        .min_width(900.0)
-                        .min_height(220.0)
-                        .frame(egui::Frame::window(&ctx.style()).fill(CHROME_BG()))
-                        .show(ctx, |ui| paint(ui));
-                }
-                _ => {
-                    egui::CentralPanel::default()
-                        .frame(
-                            egui::Frame::central_panel(&ctx.style())
-                                .fill(CHROME_BG())
-                                .inner_margin(egui::Margin::same(8)),
-                        )
-                        .show(ctx, |ui| paint(ui));
-                }
-            }
-            if ctx.input(|i| i.viewport().close_requested()) {
-                close = true;
-            }
-            // Track live size/pos for next launch (does not update builder_seed).
-            if let Some(g) = crate::mqtt::window_geom::capture(ctx) {
-                if crate::mqtt::window_geom::sync_slot(saved_geom, g, MIN) {
-                    *geom_dirty = true;
-                }
-            }
+            // Profiles Body/Small fonts + blue checkbox/slider accents.
+            icons::apply_pro_panel_chrome(ui);
+            // Hosted in the shared window: status chip and dock button live in the toolbar row.
+            // Window owns both axes: the sheet scrolls inside.
+            body(
+                ui,
+                licensed,
+                client,
+                sessions,
+                profiles,
+                icons,
+                status,
+                true,
+                Some(floating),
+            );
         },
     );
     if close {
@@ -290,20 +275,12 @@ pub fn draw_docked(
     header_bar(ui, icons, floating, open, client);
     ui.separator();
     // Parent central ScrollArea owns vertical; sheet only scrolls horizontally.
-    body(ui, licensed, client, sessions, profiles, icons, status, false);
+    body(ui, licensed, client, sessions, profiles, icons, status, false, None);
 }
 
-fn header_bar(
-    ui: &mut egui::Ui,
-    icons: &IconSet,
-    floating: &mut bool,
-    open: &mut bool,
-    client: &SimClientState,
-) {
-    icons::section_header_bar(ui, |ui| {
-        icons::section_icon(ui, icons, "data_table");
-        icons::section_title(ui, "Simulation");
-        // Status pill — playback takes priority over generator Running/Stopped.
+/// Running / playback status chip plus loop counter.
+fn status_cluster(ui: &mut egui::Ui, client: &SimClientState) {
+    // Status pill — playback takes priority over generator Running/Stopped.
         ui.add_space(8.0);
         let pb = &client.playback;
         let any_running = client.statuses.iter().any(|s| s.running);
@@ -373,6 +350,36 @@ fn header_bar(
                  0 means still on the first pass.",
             );
         }
+}
+
+/// Dock to the main column / float as a window.
+fn dock_button(ui: &mut egui::Ui, icons: &IconSet, floating: &mut bool) {
+    let dock_tip = if *floating {
+        "Dock to main column"
+    } else {
+        "Float as window"
+    };
+    let dock_icon = if *floating {
+        "panel_docked"
+    } else {
+        "panel_undock"
+    };
+    if icons.tiny_header(ui, dock_icon, false, dock_tip).clicked() {
+        *floating = !*floating;
+    }
+}
+
+fn header_bar(
+    ui: &mut egui::Ui,
+    icons: &IconSet,
+    floating: &mut bool,
+    open: &mut bool,
+    client: &SimClientState,
+) {
+    icons::section_header_bar(ui, |ui| {
+        icons::section_icon(ui, icons, "data_table");
+        icons::section_title(ui, "Simulation");
+        status_cluster(ui, client);
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             if icons
                 .tiny_header(ui, "close_red", false, "Close Simulation panel")
@@ -380,22 +387,7 @@ fn header_bar(
             {
                 *open = false;
             }
-            let dock_tip = if *floating {
-                "Dock to main column"
-            } else {
-                "Float as window"
-            };
-            let dock_icon = if *floating {
-                "panel_docked"
-            } else {
-                "panel_undock"
-            };
-            if icons
-                .tiny_header(ui, dock_icon, false, dock_tip)
-                .clicked()
-            {
-                *floating = !*floating;
-            }
+            dock_button(ui, icons, floating);
         });
     });
 }
@@ -410,6 +402,8 @@ fn body(
     status: &mut String,
     // True in the floating window (both-axis scroll); false when docked in central column.
     scroll_both: bool,
+    // Some when hosted in the shared window: the toolbar then also carries status + dock.
+    mut hosted_dock: Option<&mut bool>,
 ) {
     // Dev/screenshot: TOPICBENCH_OPEN_PLAYBACK_MODAL=/path/to.csv seeds the Open playback modal once.
     seed_open_playback_modal(client, sessions, profiles);
@@ -449,6 +443,10 @@ fn body(
     // Toolbar — Start/Stop control the CSV tape while playback is active.
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 6.0;
+        if hosted_dock.is_some() {
+            status_cluster(ui, client);
+            ui.separator();
+        }
         if toolbar_btn(ui, icons, "add_blue", "Add", true)
             .on_hover_text("Add a simulation row")
             .clicked()
@@ -555,6 +553,9 @@ fn body(
         let toolbar_ok = client.toolbar_armed();
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             ui.spacing_mut().item_spacing.x = 6.0;
+            if let Some(floating) = hosted_dock.as_deref_mut() {
+                dock_button(ui, icons, floating);
+            }
             if toolbar_btn(ui, icons, "playback", "Open playback", toolbar_ok)
                 .on_hover_text("Open a topicbench-recording CSV — play back and/or suggest sims")
                 .clicked()

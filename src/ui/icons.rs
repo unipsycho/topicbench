@@ -871,16 +871,50 @@ const ICONS: &[(&str, &[u8])] = &[
     ("retained_message", include_bytes!("../../assets/icons/retained_message.png")),
     ("save", include_bytes!("../../assets/icons/save.png")),
     ("search", include_bytes!("../../assets/icons/search.png")),
-    ("server_settings", include_bytes!("../../assets/icons/server_settings.png")),
-    ("split_view", include_bytes!("../../assets/icons/split_view.png")),
-    ("sticky_topic", include_bytes!("../../assets/icons/sticky_topic.png")),
-    ("subscribe_topic", include_bytes!("../../assets/icons/subscribe_topic.png")),
-    ("terminal", include_bytes!("../../assets/icons/terminal.png")),
-    ("tls_security", include_bytes!("../../assets/icons/tls_security.png")),
-    ("topic_filter", include_bytes!("../../assets/icons/topic_filter.png")),
-    ("topic_tags", include_bytes!("../../assets/icons/topic_tags.png")),
-    ("topic_tree", include_bytes!("../../assets/icons/topic_tree.png")),
-    ("topic_wildcards", include_bytes!("../../assets/icons/topic_wildcards.png")),
+    (
+        "server_settings",
+        include_bytes!("../../assets/icons/server_settings.png"),
+    ),
+    (
+        "split_view",
+        include_bytes!("../../assets/icons/split_view.png"),
+    ),
+    (
+        "stethoscope",
+        include_bytes!("../../assets/icons/stethoscope.png"),
+    ),
+    (
+        "sticky_topic",
+        include_bytes!("../../assets/icons/sticky_topic.png"),
+    ),
+    (
+        "subscribe_topic",
+        include_bytes!("../../assets/icons/subscribe_topic.png"),
+    ),
+    (
+        "terminal",
+        include_bytes!("../../assets/icons/terminal.png"),
+    ),
+    (
+        "tls_security",
+        include_bytes!("../../assets/icons/tls_security.png"),
+    ),
+    (
+        "topic_filter",
+        include_bytes!("../../assets/icons/topic_filter.png"),
+    ),
+    (
+        "topic_tags",
+        include_bytes!("../../assets/icons/topic_tags.png"),
+    ),
+    (
+        "topic_tree",
+        include_bytes!("../../assets/icons/topic_tree.png"),
+    ),
+    (
+        "topic_wildcards",
+        include_bytes!("../../assets/icons/topic_wildcards.png"),
+    ),
     ("traffic", include_bytes!("../../assets/icons/traffic.png")),
     ("unsubscribe_topic", include_bytes!("../../assets/icons/unsubscribe_topic.png")),
     ("user_credentials", include_bytes!("../../assets/icons/user_credentials.png")),

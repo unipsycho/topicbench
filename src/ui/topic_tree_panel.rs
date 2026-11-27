@@ -89,6 +89,7 @@ pub fn draw(
         }
     });
     // Topic filter lives under the section header, above broker/tree rows.
+    ui.add_space(4.0);
     crate::ui::search_bar::draw(ui, filter, focus_search);
     ui.add_space(4.0);
     // Wrap help to whatever width the central column currently has.
@@ -406,9 +407,11 @@ fn draw_broker_block(
                 Layout::left_to_right(Align::Center),
                 |ui| {
                     ui.spacing_mut().item_spacing.x = 4.0;
+                    // Broker glyph (the old "▸" text is not in the UI font and drew as a box).
+                    icons::tiny_image(ui, icons, "broker_server");
                     ui.add(
                         egui::Label::new(
-                            RichText::new(format!("▸ {profile_name}"))
+                            RichText::new(profile_name.as_str())
                                 .heading()
                                 .color(color)
                                 .strong(),

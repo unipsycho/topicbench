@@ -5,12 +5,10 @@ use crate::mqtt::session::SessionManager;
 use crate::mqtt::topic_tree::TopicNode;
 use crate::pro::bookmarks::{Bookmark, BookmarkJump, BookmarksStore};
 use crate::ui::icons::{
-    self, IconSet, CHROME_ACCENT_BORDER, CHROME_BG, CHROME_HOVER, CHROME_MUTED, CHROME_ROW,
+    self, IconSet, CHROME_ACCENT_BORDER, CHROME_HOVER, CHROME_MUTED, CHROME_ROW,
     CHROME_TEXT,
 };
-use eframe::egui::{
-    self, CursorIcon, Key, RichText, Sense, ViewportBuilder, ViewportClass,
-};
+use eframe::egui::{self, CursorIcon, Key, RichText, Sense};
 
 const ROW_H: f32 = 28.0;
 const GRIP_W: f32 = 14.0;
@@ -55,53 +53,33 @@ pub fn draw_popup(
     }
     let mut close = false;
     const MIN: [f32; 2] = [320.0, 200.0];
-    ctx.show_viewport_immediate(
-        egui::ViewportId::from_hash_of("topicbench_bookmarks_vp"),
-        builder_seed
-            .apply(ViewportBuilder::default().with_title("Bookmarks"), MIN)
-            .with_min_inner_size(MIN),
-        |ctx, class| {
-            let mut paint = |ui: &mut egui::Ui| {
-                paint_bookmarks_body(
-                    ui,
-                    store,
-                    profiles_names,
-                    icons,
-                    status,
-                    pending_jump,
-                    &mut close,
-                );
-            };
-            match class {
-                ViewportClass::Embedded => {
-                    egui::Window::new("Bookmarks")
-                        .id(egui::Id::new("topicbench_bookmarks"))
-                        .title_bar(false)
-                        .collapsible(false)
-                        .resizable(true)
-                        .default_width(360.0)
-                        .default_height(280.0)
-                        .frame(egui::Frame::window(&ctx.style()).fill(CHROME_BG()))
-                        .show(ctx, |ui| paint(ui));
-                }
-                _ => {
-                    egui::CentralPanel::default()
-                        .frame(
-                            egui::Frame::central_panel(&ctx.style())
-                                .fill(CHROME_BG())
-                                .inner_margin(egui::Margin::same(8)),
-                        )
-                        .show(ctx, |ui| paint(ui));
-                }
-            }
-            if ctx.input(|i| i.viewport().close_requested()) {
-                close = true;
-            }
-            if let Some(g) = crate::mqtt::window_geom::capture(ctx) {
-                if crate::mqtt::window_geom::sync_slot(saved_geom, g, MIN) {
-                    *geom_dirty = true;
-                }
-            }
+    let spec = crate::ui::panel_window::PanelSpec {
+        key: "bookmarks",
+        title: "Bookmarks",
+        subtitle: "Saved topics, one click to jump",
+        glyph: "bookmarks",
+        min: MIN,
+        default_size: [420.0, 320.0],
+    };
+    crate::ui::panel_window::show(
+        ctx,
+        &spec,
+        icons,
+        builder_seed,
+        saved_geom,
+        geom_dirty,
+        &mut close,
+        |ui| {
+            let mut unused_close = false;
+            paint_bookmarks_body(
+                ui,
+                store,
+                profiles_names,
+                icons,
+                status,
+                pending_jump,
+                &mut unused_close,
+            );
         },
     );
     if close {
@@ -122,13 +100,13 @@ fn paint_bookmarks_body(
 ) {
     let mut open_add = false;
     icons::section_header_bar(ui, |ui| {
-        icons::section_icon(ui, icons, "bookmarks");
-        icons::section_title(ui, "Bookmarks");
+        let hosted = crate::ui::panel_window::hosted(ui.ctx());
+        if !hosted {
+            icons::section_icon(ui, icons, "bookmarks");
+            icons::section_title(ui, "Bookmarks");
+        }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if icons
-                .tiny_header(ui, "close_red", false, "Close")
-                .clicked()
-            {
+            if !hosted && icons.tiny_header(ui, "close_red", false, "Close").clicked() {
                 *close = true;
             }
             // Off-thread native dialogs — avoid Linux Wayland "app hung" ANR.

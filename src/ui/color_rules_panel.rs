@@ -5,11 +5,11 @@
 
 use crate::pro::color_rules::{ColorRule, ColorRulesStore, MatchPred, RuleStyle};
 use crate::ui::icons::{
-    self, IconSet, CHROME_ACCENT_BORDER, CHROME_BG, CHROME_CAPTION, CHROME_HOVER, CHROME_MUTED,
+    self, IconSet, CHROME_ACCENT_BORDER, CHROME_CAPTION, CHROME_HOVER, CHROME_MUTED,
     CHROME_ROW, CHROME_SEP,
 };
 use eframe::egui::{
-    self, Color32, CursorIcon, Id, Pos2, RichText, Sense, TextStyle, ViewportBuilder, ViewportClass,
+    self, Color32, CursorIcon, Id, Pos2, RichText, Sense, TextStyle,
 };
 
 /// DnD payload — rule id; drop inserts before/after target by pointer Y.
@@ -79,27 +79,60 @@ pub fn draw_popup(
     }
     let mut close = false;
     const MIN: [f32; 2] = [720.0, 280.0];
-    // OS window — draggable outside the main TopicBench frame.
-    ctx.show_viewport_immediate(
-        // Id bump resets stale tiny OS window size from earlier sessions.
-        egui::ViewportId::from_hash_of("topicbench_color_rules_vp_v3"),
-        builder_seed
-            .apply(ViewportBuilder::default().with_title("Color Rules"), MIN)
-            .with_min_inner_size(MIN),
-        |ctx, class| {
-            let mut paint = |ui: &mut egui::Ui| {
+    let spec = crate::ui::panel_window::PanelSpec {
+        key: "color_rules",
+        title: "Color Rules",
+        subtitle: "First match wins, top to bottom",
+        glyph: "color_rules",
+        min: MIN,
+        default_size: [760.0, 340.0],
+    };
+    let mut unused_close = false;
+    crate::ui::panel_window::show(
+        ctx,
+        &spec,
+        icons,
+        builder_seed,
+        saved_geom,
+        geom_dirty,
+        &mut close,
+        |ui| {
                 // Profiles-matching Body/Small + blue checkbox accent (also set globally).
                 icons::apply_pro_panel_chrome(ui);
                 // Header bar: icon + title + actions only (no subtitle here).
                 icons::section_header_bar(ui, |ui| {
-                    icons::section_icon(ui, icons, "color_rules");
-                    icons::section_title(ui, "Color Rules");
+                    let hosted = crate::ui::panel_window::hosted(ui.ctx());
+                    if !hosted {
+                        icons::section_icon(ui, icons, "color_rules");
+                        icons::section_title(ui, "Color Rules");
+                    }
+                    if hosted {
+                        // Hint sits in the same bar as the Add button.
+                        let w = (ui.available_width() - 40.0).max(60.0);
+                        ui.allocate_ui_with_layout(
+                            egui::vec2(w, 22.0),
+                            egui::Layout::left_to_right(egui::Align::Center),
+                            |ui| {
+                                ui.add(
+                                    egui::Label::new(
+                                        RichText::new(
+                                            "First match wins · drag ↕ to reorder · nested fields use dotted paths (meta.channel)",
+                                        )
+                                        .text_style(TextStyle::Body)
+                                        .color(CHROME_CAPTION()),
+                                    )
+                                    .truncate(),
+                                );
+                            },
+                        );
+                    }
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if icons
-                            .tiny_header(ui, "close_red", false, "Close Color Rules")
-                            .clicked()
+                        if !hosted
+                            && icons
+                                .tiny_header(ui, "close_red", false, "Close Color Rules")
+                                .clicked()
                         {
-                            close = true;
+                            unused_close = true;
                         }
                         if icons
                             .tiny_header(ui, "add_blue", false, "Add rule")
@@ -112,15 +145,17 @@ pub fn draw_popup(
                         }
                     });
                 });
-                // Own line under the header — body font (same as panel text, not tiny/muted).
-                ui.add_space(6.0);
-                ui.label(
-                    RichText::new(
-                        "First match wins · drag ↕ to reorder · nested fields use dotted paths (meta.channel)",
-                    )
-                    .text_style(TextStyle::Body)
-                    .color(CHROME_CAPTION()),
-                );
+                if !crate::ui::panel_window::hosted(ui.ctx()) {
+                    // Own line under the header — body font (same as panel text, not tiny/muted).
+                    ui.add_space(6.0);
+                    ui.label(
+                        RichText::new(
+                            "First match wins · drag ↕ to reorder · nested fields use dotted paths (meta.channel)",
+                        )
+                        .text_style(TextStyle::Body)
+                        .color(CHROME_CAPTION()),
+                    );
+                }
                 ui.add_space(4.0);
                 ui.separator();
 
@@ -158,37 +193,6 @@ pub fn draw_popup(
                 } else if dirty {
                     let _ = store.save();
                 }
-            };
-            match class {
-                ViewportClass::Embedded => {
-                    egui::Window::new("Color Rules")
-                        .id(egui::Id::new("topicbench_color_rules"))
-                        .title_bar(false)
-                        .collapsible(false)
-                        .resizable(true)
-                        .default_width(520.0)
-                        .default_height(320.0)
-                        .frame(egui::Frame::window(&ctx.style()).fill(CHROME_BG()))
-                        .show(ctx, |ui| paint(ui));
-                }
-                _ => {
-                    egui::CentralPanel::default()
-                        .frame(
-                            egui::Frame::central_panel(&ctx.style())
-                                .fill(CHROME_BG())
-                                .inner_margin(egui::Margin::same(8)),
-                        )
-                        .show(ctx, |ui| paint(ui));
-                }
-            }
-            if ctx.input(|i| i.viewport().close_requested()) {
-                close = true;
-            }
-            if let Some(g) = crate::mqtt::window_geom::capture(ctx) {
-                if crate::mqtt::window_geom::sync_slot(saved_geom, g, MIN) {
-                    *geom_dirty = true;
-                }
-            }
         },
     );
     if close {

@@ -541,26 +541,39 @@ fn draw_selected(
         },
         "Ctrl+Enter",
     );
-    let btn_size = egui::vec2(ui.available_width(), 30.0);
-    let connect_clicked = if let Some(tex) = icons.get(icon_name) {
-        hover_tip::attach(
-            ui.add(
-                egui::Button::image_and_text(
-                    egui::Image::new(tex).fit_to_exact_size(egui::vec2(TINY_ICON, TINY_ICON)),
-                    label,
-                )
-                .min_size(btn_size),
-            ),
-            connect_tip,
-        )
-        .clicked()
+    let row_h = 30.0;
+    let dx_w = if crate::ui::diagnose_panel::button_visible(ctx) {
+        row_h + ui.spacing().item_spacing.x
     } else {
-        hover_tip::attach(
-            ui.add(egui::Button::new(label).min_size(btn_size)),
-            connect_tip,
-        )
-        .clicked()
+        0.0
     };
+    let btn_size = egui::vec2((ui.available_width() - dx_w).max(60.0), row_h);
+    let connect_clicked = ui
+        .horizontal(|ui| {
+            let clicked = if let Some(tex) = icons.get(icon_name) {
+                hover_tip::attach(
+                    ui.add(
+                        egui::Button::image_and_text(
+                            egui::Image::new(tex)
+                                .fit_to_exact_size(egui::vec2(TINY_ICON, TINY_ICON)),
+                            label,
+                        )
+                        .min_size(btn_size),
+                    ),
+                    connect_tip,
+                )
+                .clicked()
+            } else {
+                hover_tip::attach(
+                    ui.add(egui::Button::new(label).min_size(btn_size)),
+                    connect_tip,
+                )
+                .clicked()
+            };
+            crate::ui::diagnose_panel::draw_button(ui, ctx, icons, &id, row_h);
+            clicked
+        })
+        .inner;
     if connect_clicked {
         flush_autosave(ctx, profiles, status);
         let profile = profiles.profiles.get(&id).cloned();
@@ -593,7 +606,8 @@ fn draw_selected(
         return;
     };
     // Snapshot to detect edits for auto-save.
-    let before = serde_json::to_string(&*profile).ok();
+    // `password` is skip_serializing, so track it separately from the JSON snapshot.
+    let before = (serde_json::to_string(&*profile).ok(), profile.password.clone());
 
     collapsible_section(ui, icons, "connection", "broker_server", "Connection", true, |ui| {
         ui.horizontal(|ui| {
@@ -915,7 +929,7 @@ fn draw_selected(
     sessions.sync_profile_name(&id, &profile.name);
 
     // Mark dirty when anything changed this frame; the debounced tick in `draw` saves.
-    let after = serde_json::to_string(&*profile).ok();
+    let after = (serde_json::to_string(&*profile).ok(), profile.password.clone());
     if before != after {
         profiles.dirty_since.get_or_insert_with(Instant::now);
         ctx.request_repaint_after(AUTOSAVE_DELAY);

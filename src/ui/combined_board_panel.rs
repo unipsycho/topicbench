@@ -12,8 +12,7 @@ use crate::ui::icons::{
     CHROME_COMBO_BG, CHROME_MUTED, CHROME_SEP, CHROME_TEXT, TINY_ICON,
 };
 use eframe::egui::{
-    self, Align, Color32, Pos2, RichText, Sense, Stroke, ViewportBuilder,
-    ViewportClass,
+    self, Align, Color32, Pos2, RichText, Sense, Stroke,
 };
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::LazyLock;
@@ -98,77 +97,65 @@ pub fn draw_viewports(
         let saved = board.window_geom.unwrap_or_else(|| WinGeom::size(720.0, 360.0));
         let seed = builder_seeds.entry(board_id.clone()).or_insert(saved);
         let mut close = false;
+        let mut local_close = false;
         let mut focused = false;
         let mut local_persist = false;
         let mut local_status: Option<String> = None;
 
-        // Snapshot mutable fields we need inside the viewport closure via temps.
-        let vp_id = egui::ViewportId::from_hash_of(format!("topicbench_combined_{board_id}"));
-
-        ctx.show_viewport_immediate(
-            vp_id,
-            seed.apply(
-                ViewportBuilder::default().with_title(title.clone()),
-                MIN_VP,
-            )
-            .with_min_inner_size(MIN_VP),
-            |ctx, class| {
-                if ctx.input(|i| i.focused) {
+        // The window geometry slot lives on the board, which the body also borrows: edit a copy.
+        let mut geom_slot = board.window_geom;
+        let geom_before = geom_slot;
+        let mut win_dirty = false;
+        let subtitle = {
+            let n = board.series.len();
+            if n == 1 { "1 series".to_string() } else { format!("{n} series") }
+        };
+        let key = format!("combined_{board_id}");
+        let spec = crate::ui::panel_window::PanelSpec {
+            key: &key,
+            title: &title,
+            subtitle: &subtitle,
+            glyph: "node_graph",
+            min: MIN_VP,
+            default_size: [720.0, 360.0],
+        };
+        let seed = *seed;
+        crate::ui::panel_window::show(
+            ctx,
+            &spec,
+            icons,
+            seed,
+            &mut geom_slot,
+            &mut win_dirty,
+            &mut close,
+            |ui| {
+                if ui.ctx().input(|i| i.focused) {
                     focused = true;
                 }
-                let mut paint = |ui: &mut egui::Ui| {
-                    icons::apply_pro_panel_chrome(ui);
-                    paint_board(
-                        ui,
-                        store,
-                        &board_id,
-                        &connected,
-                        &name_by_id,
-                        icons,
-                        &mut close,
-                        &mut local_persist,
-                        &mut local_status,
-                    );
-                };
-                match class {
-                    ViewportClass::Embedded => {
-                        egui::Window::new(title.clone())
-                            .id(egui::Id::new(("combined_win", &board_id)))
-                            .title_bar(false)
-                            .collapsible(false)
-                            .default_size([720.0, 360.0])
-                            .min_width(MIN_VP[0])
-                            .min_height(MIN_VP[1])
-                            .frame(egui::Frame::window(&ctx.style()).fill(CHROME_BG()))
-                            .show(ctx, |ui| paint(ui));
-                    }
-                    _ => {
-                        egui::CentralPanel::default()
-                            .frame(
-                                egui::Frame::central_panel(&ctx.style())
-                                    .fill(CHROME_BG())
-                                    .inner_margin(egui::Margin::same(8)),
-                            )
-                            .show(ctx, |ui| paint(ui));
-                    }
-                }
-                if ctx.input(|i| i.viewport().close_requested()) {
-                    close = true;
-                }
-                if let Some(g) = crate::mqtt::window_geom::capture(ctx) {
-                    if let Some(board) = store.get_mut(&board_id) {
-                        if crate::mqtt::window_geom::sync_slot(
-                            &mut board.window_geom,
-                            g,
-                            MIN_VP,
-                        ) {
-                            *geom_dirty = true;
-                            local_persist = true;
-                        }
-                    }
-                }
+                icons::apply_pro_panel_chrome(ui);
+                paint_board(
+                    ui,
+                    store,
+                    &board_id,
+                    &connected,
+                    &name_by_id,
+                    icons,
+                    &mut local_close,
+                    &mut local_persist,
+                    &mut local_status,
+                );
             },
         );
+        if local_close {
+            close = true;
+        }
+        if win_dirty || geom_slot != geom_before {
+            if let Some(b) = store.get_mut(&board_id) {
+                b.window_geom = geom_slot;
+            }
+            *geom_dirty = true;
+            local_persist = true;
+        }
 
         if focused {
             store.mark_focused(&board_id);
@@ -236,7 +223,8 @@ fn paint_board(
         ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
             let icon_gap = 4.0;
             let icon_cell = TINY_ICON + 4.0; // tiny_header pad 2px each side
-            let n_icons = if series_count > 0 { 5.0 } else { 4.0 };
+            let hosted = crate::ui::panel_window::hosted(ui.ctx());
+            let n_icons = (if series_count > 0 { 5.0 } else { 4.0 }) - if hosted { 1.0 } else { 0.0 };
             let strip_w = n_icons * icon_cell + (n_icons - 1.0) * icon_gap;
             ui.allocate_ui_with_layout(
                 egui::vec2(strip_w, icon_cell),
@@ -245,9 +233,10 @@ fn paint_board(
                     ui.set_max_size(egui::vec2(strip_w, icon_cell));
                     ui.spacing_mut().item_spacing = egui::vec2(icon_gap, 0.0);
                     // RTL paint order → visual LTR: save | delete | import | export | close
-                    if icons
-                        .tiny_header(ui, "close_red", false, "Close board")
-                        .clicked()
+                    if !hosted
+                        && icons
+                            .tiny_header(ui, "close_red", false, "Close board")
+                            .clicked()
                     {
                         *close = true;
                     }
@@ -298,8 +287,10 @@ fn paint_board(
             // Left chrome fills remaining width.
             ui.with_layout(egui::Layout::left_to_right(Align::Center), |ui| {
                 ui.spacing_mut().item_spacing.x = 4.0;
-                icons::section_icon(ui, icons, "node_graph");
-                icons::section_title(ui, &header_title);
+                if !crate::ui::panel_window::hosted(ui.ctx()) {
+                    icons::section_icon(ui, icons, "node_graph");
+                    icons::section_title(ui, &header_title);
+                }
                 if series_count > 0 {
                     ui.label(
                         RichText::new(format!("{series_count} series"))

@@ -6,17 +6,18 @@
 //!
 //! Localhost IPC for Pro MCP lives in [`bridge`] — started only when licensed.
 
-mod license_format;
-pub mod machine_id;
 pub mod bookmarks;
 pub mod bridge;
 pub mod bridge_pro_tools;
 pub mod color_rules;
 pub mod combined_boards;
+pub mod diagnose_client;
 pub mod history_client;
+mod license_format;
+pub mod machine_id;
 pub mod recording;
-pub mod sidecar_launch;
 pub mod scenario_client;
+pub mod sidecar_launch;
 pub mod sim_client;
 pub mod theme_client;
 pub mod topic_tree_io;
@@ -28,9 +29,7 @@ use std::sync::OnceLock;
 use crate::mqtt::paths;
 use license_format::{load_license_path, LICENSE_FILE_ALT, LICENSE_FILE_NAME};
 
-pub use license_format::{
-    write_license_request, LicenseRequestV1, LICENSE_REQUEST_FILE_NAME,
-};
+pub use license_format::{write_license_request, LicenseRequestV1, LICENSE_REQUEST_FILE_NAME};
 
 /// Named capability flags (UI / call sites). All true when Pro is licensed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -48,6 +47,8 @@ pub enum Entitlement {
     TopicBookmarks,
     ColorRules,
     AutoSuggestSims,
+    /// Connection diagnosis panel (sidecar `/diagnose`).
+    Diagnose,
 }
 
 /// Snapshot of which capabilities are unlocked (all-or-nothing).
@@ -261,5 +262,6 @@ mod tests {
         assert!(e.get(Entitlement::Simulation));
         assert!(e.get(Entitlement::ScenarioPlayer));
         assert!(e.get(Entitlement::TreeExport));
+        assert!(e.get(Entitlement::Diagnose));
     }
 }

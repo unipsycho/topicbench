@@ -6,10 +6,10 @@ use crate::pro::scenario_client::{
 };
 use crate::ui::hover_tip;
 use crate::ui::icons::{
-    self, IconSet, CHROME_ACCENT_BORDER, CHROME_ACCENT_SOFT, CHROME_BG, CHROME_HOVER, CHROME_MUTED,
+    self, IconSet, CHROME_ACCENT_BORDER, CHROME_ACCENT_SOFT, CHROME_HOVER, CHROME_MUTED,
     CHROME_ROW, CHROME_SEP, CHROME_TEXT, TINY_ICON,
 };
-use eframe::egui::{self, Color32, CursorIcon, RichText, Sense, ViewportBuilder, ViewportClass};
+use eframe::egui::{self, Color32, CursorIcon, RichText, Sense};
 use std::collections::HashSet;
 
 const ROW_H: f32 = 28.0;
@@ -72,57 +72,41 @@ pub fn draw_popup(
 
     let mut close = false;
     const MIN: [f32; 2] = [720.0, 420.0];
-    ctx.show_viewport_immediate(
-        egui::ViewportId::from_hash_of("topicbench_scenarios_vp"),
-        builder_seed
-            .apply(ViewportBuilder::default().with_title("Scenarios"), MIN)
-            .with_min_inner_size(MIN),
-        |ctx, class| {
-            let mut paint = |ui: &mut egui::Ui| {
-                icons::apply_pro_panel_chrome(ui);
-                paint_body(
-                    ui,
-                    client,
-                    profiles_names,
-                    icons,
-                    status,
-                    left_width,
-                    geom_dirty,
-                    &mut close,
-                );
-            };
-            match class {
-                ViewportClass::Embedded => {
-                    egui::Window::new("Scenarios")
-                        .id(egui::Id::new("topicbench_scenarios"))
-                        .title_bar(false)
-                        .collapsible(false)
-                        .resizable(true)
-                        .default_width(900.0)
-                        .default_height(520.0)
-                        .frame(egui::Frame::window(&ctx.style()).fill(CHROME_BG()))
-                        .show(ctx, |ui| paint(ui));
-                }
-                _ => {
-                    egui::CentralPanel::default()
-                        .frame(
-                            egui::Frame::central_panel(&ctx.style())
-                                .fill(CHROME_BG())
-                                .inner_margin(egui::Margin::same(8)),
-                        )
-                        .show(ctx, |ui| paint(ui));
-                }
-            }
-            if ctx.input(|i| i.viewport().close_requested()) {
-                close = true;
-            }
-            if let Some(g) = crate::mqtt::window_geom::capture(ctx) {
-                if crate::mqtt::window_geom::sync_slot(saved_geom, g, MIN) {
-                    *geom_dirty = true;
-                }
-            }
+    let spec = crate::ui::panel_window::PanelSpec {
+        key: "scenarios",
+        title: "Scenarios",
+        subtitle: "Scripted publish sequences",
+        glyph: "clipboard_checklist",
+        min: MIN,
+        default_size: [900.0, 520.0],
+    };
+    let mut unused_close = false;
+    let mut body_dirty = false;
+    crate::ui::panel_window::show(
+        ctx,
+        &spec,
+        icons,
+        builder_seed,
+        saved_geom,
+        geom_dirty,
+        &mut close,
+        |ui| {
+            icons::apply_pro_panel_chrome(ui);
+            paint_body(
+                ui,
+                client,
+                profiles_names,
+                icons,
+                status,
+                left_width,
+                &mut body_dirty,
+                &mut unused_close,
+            );
         },
     );
+    if body_dirty {
+        *geom_dirty = true;
+    }
     if close {
         *open = false;
         client.disarm_toolbar();
@@ -141,8 +125,12 @@ fn paint_body(
 ) {
     // Header
     icons::section_header_bar(ui, |ui| {
-        icons::section_icon(ui, icons, "clipboard_checklist");
-        icons::section_title(ui, "Scenarios");
+        let hosted = crate::ui::panel_window::hosted(ui.ctx());
+        if !hosted {
+            icons::section_icon(ui, icons, "clipboard_checklist");
+            icons::section_title(ui, "Scenarios");
+        }
+        paint_transport(ui, client, profiles_names, icons, status);
         if !client.sidecar_up {
             ui.label(
                 RichText::new("Pro sidecar offline")
@@ -151,7 +139,7 @@ fn paint_body(
             );
         }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if icons.tiny_header(ui, "close_red", false, "Close").clicked() {
+            if !hosted && icons.tiny_header(ui, "close_red", false, "Close").clicked() {
                 *close = true;
             }
             handle_import_export(ui, client, icons, status);
@@ -233,7 +221,8 @@ fn paint_body(
     }
 }
 
-fn paint_left(
+/// Play / Pause / Step / Add / Add group — drawn in the header bar beside Import / Export.
+fn paint_transport(
     ui: &mut egui::Ui,
     client: &mut ScenarioClientState,
     profiles_names: &[(String, String)],
@@ -373,6 +362,15 @@ fn paint_left(
         }
     });
     draw_add_group_modal(ui.ctx(), client, icons, status);
+}
+
+fn paint_left(
+    ui: &mut egui::Ui,
+    client: &mut ScenarioClientState,
+    _profiles_names: &[(String, String)],
+    icons: &IconSet,
+    status: &mut String,
+) {
     ui.add_space(4.0);
     ui.label(RichText::new("Scenarios").color(CHROME_MUTED()).small());
 

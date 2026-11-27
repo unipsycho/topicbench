@@ -10,10 +10,10 @@ use crate::mqtt::publish::{PublishDraft, PublishHistory};
 use crate::mqtt::session::SessionManager;
 use crate::mqtt::settings::AppSettings;
 use crate::mqtt::window_geom::WinGeom;
-use crate::ui::icons::{IconSet, CHROME_BG};
-use crate::ui::search_bar::SearchFilter;
-use crate::ui::payload_panel::{PayloadSearch, PoppedPayload};
 use crate::ui::flash;
+use crate::ui::icons::{IconSet, CHROME_BG};
+use crate::ui::payload_panel::{PayloadSearch, PoppedPayload};
+use crate::ui::search_bar::SearchFilter;
 use crate::ui::splash::SplashIntro;
 use crate::update::{self, ReleaseInfo, UpdateService, UpdateStatus};
 use eframe::egui::{self};
@@ -147,6 +147,8 @@ pub struct MqttMonitorApp {
     scenarios_open: bool,
     /// HTTP client for `topicbench-pro` `/scenario`.
     scenario_client: crate::pro::scenario_client::ScenarioClientState,
+    /// Pro connection diagnosis (sidecar `/diagnose`); inert on free installs.
+    diagnose: crate::ui::diagnose_panel::DiagnosePanel,
     /// Pro live CSV recording (per-broker, tree header controls).
     recordings: crate::pro::recording::RecordingStore,
     /// Topic-tree Export scope modal open.
@@ -220,15 +222,15 @@ impl MqttMonitorApp {
         } else {
             None
         };
-        let simulation_open = settings.show_simulation
-            || std::env::var_os("TOPICBENCH_OPEN_SIMULATION").is_some();
+        let simulation_open =
+            settings.show_simulation || std::env::var_os("TOPICBENCH_OPEN_SIMULATION").is_some();
         let simulation_floating = settings.simulation_floating;
-        let bookmarks_open = settings.show_bookmarks
-            || std::env::var_os("TOPICBENCH_OPEN_BOOKMARKS").is_some();
-        let color_rules_open = settings.show_color_rules
-            || std::env::var_os("TOPICBENCH_OPEN_COLOR_RULES").is_some();
-        let scenarios_open = settings.show_scenarios
-            || std::env::var_os("TOPICBENCH_OPEN_SCENARIOS").is_some();
+        let bookmarks_open =
+            settings.show_bookmarks || std::env::var_os("TOPICBENCH_OPEN_BOOKMARKS").is_some();
+        let color_rules_open =
+            settings.show_color_rules || std::env::var_os("TOPICBENCH_OPEN_COLOR_RULES").is_some();
+        let scenarios_open =
+            settings.show_scenarios || std::env::var_os("TOPICBENCH_OPEN_SCENARIOS").is_some();
         // Recreate pop-outs from last session (topic trees wait until brokers reconnect).
         let topic_tree_undocked: HashSet<String> =
             settings.topic_tree_undocked.iter().cloned().collect();
@@ -326,6 +328,7 @@ impl MqttMonitorApp {
             color_rules_open,
             scenarios_open,
             scenario_client: crate::pro::scenario_client::ScenarioClientState::new(),
+            diagnose: crate::ui::diagnose_panel::DiagnosePanel::new(),
             recordings: crate::pro::recording::RecordingStore::default(),
             tree_export_open: false,
             tree_import: crate::ui::topic_tree_panel::TreeImportUi::load_recent(),
@@ -366,9 +369,7 @@ impl eframe::App for MqttMonitorApp {
         // so inbox drops to 1 Hz even if keyboard leave is delayed.
         let compositor_visible = self.sessions.ui_visible.load(Ordering::Relaxed);
         let focused = ctx.input(|i| i.focused) && compositor_visible;
-        self.sessions
-            .ui_focused
-            .store(focused, Ordering::Relaxed);
+        self.sessions.ui_focused.store(focused, Ordering::Relaxed);
 
         // Always apply a capped inbox batch so Stats/counts stay alive (even off-workspace).
         let combined = crate::pro::has(crate::pro::Entitlement::MultiGraph)
@@ -379,7 +380,9 @@ impl eframe::App for MqttMonitorApp {
             self.status = msg;
         }
         // Forward topic payloads to Pro deep store (non-blocking; drop if down).
-        crate::pro::history_client::set_payload_history_limit(self.settings.payload_history_samples);
+        crate::pro::history_client::set_payload_history_limit(
+            self.settings.payload_history_samples,
+        );
         let hist_cap = crate::pro::history_client::payload_history_limit();
         if let (Some(fwd), true) = (self.history_fwd.as_ref(), hist_cap > 0) {
             for s in self.pins.drain_history_fwd() {
@@ -417,8 +420,9 @@ impl eframe::App for MqttMonitorApp {
                     m.retain,
                 );
             }
-            let max_pkt =
-                crate::mqtt::settings::AppSettings::clamp_max_packet(self.settings.max_packet_bytes);
+            let max_pkt = crate::mqtt::settings::AppSettings::clamp_max_packet(
+                self.settings.max_packet_bytes,
+            );
             bridge.poll(
                 &self.profiles,
                 &mut self.sessions,
@@ -441,6 +445,9 @@ impl eframe::App for MqttMonitorApp {
                 ctx.request_repaint_after(std::time::Duration::from_millis(750));
             }
         }
+        // Connection diagnosis: probe the sidecar, run requested diagnoses, draw the window.
+        self.diagnose
+            .update(ctx, &mut self.profiles, &self.sessions, &self.icons);
         if crate::pro::has(crate::pro::Entitlement::ScenarioPlayer) {
             self.scenario_client.bind_egui_ctx(ctx);
             self.scenario_client.poll_if_due(false);
